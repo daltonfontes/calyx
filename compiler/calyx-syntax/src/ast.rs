@@ -23,6 +23,7 @@ pub enum Decl {
     Prompt(PromptDecl),
     Graph(GraphDecl),
     Entity(EntityDecl),
+    Def(DefDecl),
 }
 
 impl Decl {
@@ -34,6 +35,7 @@ impl Decl {
             Decl::Prompt(d) => &d.name,
             Decl::Graph(d) => &d.name,
             Decl::Entity(d) => &d.name,
+            Decl::Def(d) => &d.name,
         }
     }
 }
@@ -72,6 +74,33 @@ pub struct Param {
     /// `box: reads Sandbox` or `box: edits Sandbox`: how a tool borrows a
     /// resource (decision D26).
     pub borrow: Option<Ident>,
+}
+
+/// `def name(params) -> T:` and a body: a pure function (decision D27).
+/// Values are never changed in place: `x = ...` names a new value, even
+/// when `x` was used before.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DefDecl {
+    pub name: Ident,
+    pub params: Vec<Param>,
+    pub ret: TypeExpr,
+    pub body: Vec<DefStmt>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DefStmt {
+    /// `x = value`
+    Assign(Ident, Expr),
+    /// `if cond:` block, then `elif` / `else` blocks (as nested `If`s).
+    If {
+        cond: Expr,
+        then: Vec<DefStmt>,
+        els: Vec<DefStmt>,
+        span: Span,
+    },
+    /// `return value`: the last statement of the body.
+    Return(Expr),
 }
 
 /// `entity Name(key k: T):` with `state` fields and `on` handlers: a
@@ -285,6 +314,15 @@ pub enum ExprKind {
     /// `ask Entity(key).Handler(args)` (waits for the answer) or `send ...`
     /// (changes the entity's state; nothing to wait for) (decision D21).
     Message(Box<MessageExpr>),
+    /// `true` or `false`.
+    Bool(bool),
+    /// `[body for var in list]` or `[body for var in list if cond]`.
+    Comprehension {
+        body: Box<Expr>,
+        var: Ident,
+        over: Box<Expr>,
+        cond: Option<Box<Expr>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

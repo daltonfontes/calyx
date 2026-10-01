@@ -120,6 +120,30 @@ pub enum Expr {
     /// checks, known only to the tool. In an entity's handler, a field of
     /// the entity's state.
     State(String),
+    Bool(bool),
+    /// `value` in local `slot` while `body` is computed (a `def`'s `x = ...`).
+    Let {
+        slot: usize,
+        value: Box<Expr>,
+        body: Box<Expr>,
+    },
+    /// `[body for x in over if cond]`, with `x` in local `slot`.
+    Comprehension {
+        slot: usize,
+        over: Box<Expr>,
+        body: Box<Expr>,
+        cond: Option<Box<Expr>>,
+    },
+    /// A call to a `def`; arguments follow its parameters.
+    Def {
+        def: usize,
+        args: Vec<Expr>,
+    },
+    /// `len`, `take`, `sum`, `join`, `lower`, `upper`, `trim`.
+    Builtin {
+        name: String,
+        args: Vec<Expr>,
+    },
     /// `ask Entity(key).Handler(args)` or `send ...` (decisions D15, D21).
     Message {
         send: bool,
@@ -337,7 +361,10 @@ impl Graph {
                     3.0 + args.iter().map(calls).sum::<f64>()
                 }
                 Expr::Tool { args, .. } => 1.0 + args.iter().map(calls).sum::<f64>(),
-                Expr::State(_) => 0.0,
+                Expr::State(_) | Expr::Bool(_) => 0.0,
+                Expr::Let { value, body, .. } => calls(value) + calls(body),
+                Expr::Comprehension { over, body, .. } => calls(over) + calls(body),
+                Expr::Def { args, .. } | Expr::Builtin { args, .. } => args.iter().map(calls).sum(),
                 Expr::Message { key, args, .. } => {
                     0.1 + calls(key) + args.iter().map(calls).sum::<f64>()
                 }
@@ -410,6 +437,17 @@ pub struct Program {
     pub prompts: Vec<Prompt>,
     pub graphs: Vec<Graph>,
     pub entities: Vec<Entity>,
+    pub defs: Vec<Def>,
+}
+
+/// A pure function (decision D27): parameters in local slots `0..n`, its
+/// body one expression (statements become `Let`s and `If`s).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Def {
+    pub name: String,
+    pub params: Vec<String>,
+    pub nlocals: usize,
+    pub body: Expr,
 }
 
 /// An entity (decision D15): state kept between runs, one per key, changed

@@ -1,0 +1,22 @@
+# The pure layer (M7): `def`, booleans, `[... for ...]`, `in`, built-ins.
+type Item:
+    name: Text
+    price: Float
+
+def total(items: List[Item]) -> Float:
+    return sum([i.price for i in items])
+
+def label(items: List[Item], vip: Bool) -> Text:
+    tag = "normal"
+    if vip and total(items) > 100:
+        tag = "vip"
+    elif len(items) == 0:
+        tag = "vazio"
+    return upper(tag)
+
+graph g(items: List[Item], vip: Bool, wanted: Text) -> Text:
+    names = [lower(i.name) for i in items if i.price > 0]
+    found = lower(wanted) in names
+    kind = label(items, vip)
+    first = join(take(names, 3), ", ")
+    return "{kind}: {first} {found}"

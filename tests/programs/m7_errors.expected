@@ -1,0 +1,51 @@
+error[E0660]: a `def` cannot call models, tools, graphs or entities
+- expected : a value computed from the parameters; make the calls in a graph and pass the results
+- observed : a call with effects
+Location: m7_errors.clyx:11:12
+
+error[E0661]: a `def` cannot call itself
+- expected : a `def` without recursion (it always finishes); for repetition, a `loop` in a graph, or a recursive graph with `decreases`
+- observed : `forever` calls itself, directly or through other `def`s
+Location: m7_errors.clyx:13:5
+
+error[E0661]: a `def` cannot call itself
+- expected : a `def` without recursion (it always finishes); for repetition, a `loop` in a graph, or a recursive graph with `decreases`
+- observed : `ping` calls itself, directly or through other `def`s
+Location: m7_errors.clyx:16:5
+
+error[E0661]: a `def` cannot call itself
+- expected : a `def` without recursion (it always finishes); for repetition, a `loop` in a graph, or a recursive graph with `decreases`
+- observed : `pong` calls itself, directly or through other `def`s
+Location: m7_errors.clyx:19:5
+
+error[E0664]: a name keeps its type
+- expected : a `Text`, as `y` was before
+- observed : `Int`; use another name for a value of another type
+Location: m7_errors.clyx:24:9
+
+error[E0665]: `return` only at the end of a `def`
+- expected : one `return`, the last line; inside `if`, give a name a value instead
+Location: m7_errors.clyx:29:16
+
+error[E0665]: a `def` ends with `return`
+- expected : `return value` as the last line of the body
+Location: m7_errors.clyx:32:5
+
+error[E0663]: a list built with `for` is pure
+- expected : `name = for each x in list: ...` for calls, one step per item
+- observed : a call with effects inside `[... for ...]`
+Location: m7_errors.clyx:36:14
+
+error[E0662]: `join` does not take these arguments
+- expected : `join(list_of_texts, separator)`
+- observed : (`List[Text]`, `Int`)
+Location: m7_errors.clyx:37:11
+
+error[E0662]: `sum` does not take these arguments
+- expected : `sum(list)` of numbers or money
+- observed : (`List[Text]`)
+Location: m7_errors.clyx:38:13
+
+error[E0613]: operator `in` does not apply to these types
+- observed : `Nat` in `List[Text]`
+Location: m7_errors.clyx:39:11

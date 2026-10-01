@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 use calyx_ir::{self as ir, Effect, NodeId, Part, PromptPart};
 use calyx_syntax::ast::{
-    Arg, Decl, EntityDecl, Expr, ExprKind, GraphDecl, Ident, OnLimit, Program, Stmt, StrLit,
-    ToolDecl, TypeDecl, TypeExpr, TypeKind,
+    Arg, Decl, DefDecl, DefStmt, EntityDecl, Expr, ExprKind, GraphDecl, Ident, OnLimit, Program,
+    Stmt, StrLit, ToolDecl, TypeDecl, TypeExpr, TypeKind,
 };
 
 pub fn lower(program: &Program, out: &mut ir::Program) {
@@ -22,6 +22,7 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
         types: HashMap::new(),
         variants: HashMap::new(),
         entities: HashMap::new(),
+        defs: HashMap::new(),
         graphs: out
             .graphs
             .iter()
@@ -53,6 +54,9 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
             }
             Decl::Entity(e) => {
                 cx.entities.insert(&e.name.name, (cx.entities.len(), e));
+            }
+            Decl::Def(d) => {
+                cx.defs.insert(&d.name.name, (cx.defs.len(), d));
             }
             Decl::Tool(_) | Decl::Prompt(_) | Decl::Graph(_) => {}
         }
@@ -142,8 +146,10 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
         }
     }
     for d in &program.decls {
-        if let Decl::Entity(e) = d {
-            out.entities.push(cx.entity(e));
+        match d {
+            Decl::Entity(e) => out.entities.push(cx.entity(e)),
+            Decl::Def(f) => out.defs.push(cx.def(f)),
+            _ => {}
         }
     }
 }
@@ -161,6 +167,24 @@ struct Lower<'p> {
     graphs: HashMap<String, (usize, Vec<String>)>,
     /// Index in the IR and declaration.
     entities: HashMap<&'p str, (usize, &'p EntityDecl)>,
+    defs: HashMap<&'p str, (usize, &'p DefDecl)>,
+}
+
+/// Functions every program has (the checker types them).
+const BUILTINS: &[&str] = &["len", "take", "sum", "join", "lower", "upper", "trim"];
+
+/// The names `stmts` give values to, including inside `if`s.
+fn assigned(stmts: &[DefStmt], out: &mut Vec<String>) {
+    for s in stmts {
+        match s {
+            DefStmt::Assign(x, _) => out.push(x.name.clone()),
+            DefStmt::If { then, els, .. } => {
+                assigned(then, out);
+                assigned(els, out);
+            }
+            DefStmt::Return(_) => {}
+        }
+    }
 }
 
 /// `for each var in list` of a statement, if it has one.
@@ -264,6 +288,25 @@ impl Lower<'_> {
             }
             ExprKind::Call { callee, args } => self.call(callee, args, scope),
             ExprKind::Borrow { target, .. } => self.name(&target.name, scope),
+            ExprKind::Bool(b) => ir::Expr::Bool(*b),
+            ExprKind::Comprehension {
+                body,
+                var,
+                over,
+                cond,
+            } => {
+                let over = self.expr(over, scope);
+                let slot = scope.bind(&var.name);
+                let body = self.expr(body, scope);
+                let cond = cond.as_ref().map(|c| Box::new(self.expr(c, scope)));
+                scope.unbind(1);
+                ir::Expr::Comprehension {
+                    slot,
+                    over: Box::new(over),
+                    body: Box::new(body),
+                    cond,
+                }
+            }
             ExprKind::Message(m) => {
                 // The checker guarantees the entity and the handler exist.
                 let (entity, handler, params) = match self.entities.get(m.entity.name.as_str()) {
@@ -479,6 +522,89 @@ impl Lower<'_> {
         }
     }
 
+    /// A `def`: parameters in slots `0..n`; its statements become one
+    /// expression.
+    fn def(&self, d: &DefDecl) -> ir::Def {
+        let scope = Scope {
+            params: Vec::new(),
+            nodes: HashMap::new(),
+            item: None,
+            locals: RefCell::new(Vec::new()),
+            slots: Cell::new(0),
+            state: Vec::new(),
+        };
+        for p in &d.params {
+            scope.bind(&p.name.name);
+        }
+        let body = self.block(&d.body, &scope, &|_| ir::Expr::Text(String::new()));
+        ir::Def {
+            name: d.name.name.clone(),
+            params: d.params.iter().map(|p| p.name.name.clone()).collect(),
+            nlocals: scope.slots.get(),
+            body,
+        }
+    }
+
+    /// Statements as one expression: `x = v` then the rest is `Let`; an
+    /// `if` gives each name it assigns a new value, `If(cond, value at the
+    /// end of the then-branch, value at the end of the other)`; `return`
+    /// ends. `tail` is the value when the statements run out.
+    fn block(
+        &self,
+        stmts: &[DefStmt],
+        scope: &Scope,
+        tail: &dyn Fn(&Scope) -> ir::Expr,
+    ) -> ir::Expr {
+        let Some((first, rest)) = stmts.split_first() else {
+            return tail(scope);
+        };
+        match first {
+            DefStmt::Return(e) => self.expr(e, scope),
+            DefStmt::Assign(x, e) => {
+                let value = self.expr(e, scope);
+                let slot = scope.bind(&x.name);
+                let body = self.block(rest, scope, tail);
+                scope.unbind(1);
+                ir::Expr::Let {
+                    slot,
+                    value: Box::new(value),
+                    body: Box::new(body),
+                }
+            }
+            DefStmt::If {
+                cond, then, els, ..
+            } => {
+                let mut names = Vec::new();
+                assigned(then, &mut names);
+                assigned(els, &mut names);
+                names.sort();
+                names.dedup();
+                // Every new value is built before any is bound: names in
+                // them still mean the values from before the `if`.
+                let c = self.expr(cond, scope);
+                let values: Vec<ir::Expr> = names
+                    .iter()
+                    .map(|n| ir::Expr::If {
+                        cond: Box::new(c.clone()),
+                        then: Box::new(self.block(then, scope, &|s| self.name(n, s))),
+                        els: Box::new(self.block(els, scope, &|s| self.name(n, s))),
+                    })
+                    .collect();
+                let slots: Vec<usize> = names.iter().map(|n| scope.bind(n)).collect();
+                let mut body = self.block(rest, scope, tail);
+                scope.unbind(names.len());
+                for (slot, value) in slots.into_iter().zip(values).rev() {
+                    body = ir::Expr::Let {
+                        slot,
+                        value: Box::new(value),
+                        body: Box::new(body),
+                    };
+                }
+                body
+            }
+        }
+    }
+
     /// The `on_uncertain` policy of a tool, if it has one.
     fn uncertain(&self, t: &ToolDecl) -> Option<ir::Uncertain> {
         let p = t.props.iter().find(|p| p.key.name == "on_uncertain")?;
@@ -641,6 +767,13 @@ impl Lower<'_> {
             }
             return ir::Expr::Text(String::new());
         }
+        if let Some((def, decl)) = self.defs.get(name.as_str()) {
+            let params = decl.params.iter().map(|p| p.name.name.as_str());
+            return ir::Expr::Def {
+                def: *def,
+                args: self.ordered(params, args, scope),
+            };
+        }
         if let Some((tool, decl)) = self.tools.get(name.as_str()) {
             let params = decl.params.iter().map(|p| p.name.name.as_str());
             return ir::Expr::Tool {
@@ -660,6 +793,16 @@ impl Lower<'_> {
         {
             let names: Vec<String> = fields.iter().map(|f| f.name.name.clone()).collect();
             return self.construct(None, &names, args, scope);
+        }
+        // Declared names win over built-in functions.
+        if BUILTINS.contains(&name.as_str())
+            && !self.types.contains_key(name.as_str())
+            && !self.variants.contains_key(name.as_str())
+        {
+            return ir::Expr::Builtin {
+                name: name.clone(),
+                args: args.iter().map(|a| self.expr(&a.value, scope)).collect(),
+            };
         }
         if self.variants.contains_key(name.as_str()) {
             for decl in self.types.values() {

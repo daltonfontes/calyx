@@ -50,6 +50,7 @@
 #include "json.h"
 #include "sha256.h"
 
+#include <ctype.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <sys/file.h>
@@ -175,7 +176,7 @@ struct exec {
     pthread_mutex_t mu, jmu;
     pthread_cond_t work_cv, io_cv;
     cx_arena arena; /* the main thread's */
-    cx_value *models, *tools, *prompts, *graphs, *entities;
+    cx_value *models, *tools, *prompts, *graphs, *entities, *defs;
     /* Identifies this run in entities' records of applied messages: the
      * run's directory name, the same when it is resumed. */
     const char *run_id;
@@ -1471,6 +1472,15 @@ static cx_value *binary(ctx *c, cx_value *e) {
     cx_value *r = eval(c, cx_get(e, "r"));
     if (!r || r == PENDING) return r;
     if (strcmp(op, "and") == 0 || strcmp(op, "or") == 0) return r;
+    if (strcmp(op, "in") == 0) {
+        if (r->kind == CX_LIST) {
+            for (size_t i = 0; i < r->u.list.len; i++)
+                if (cx_equal(l, r->u.list.items[i])) return cx_bool(a, 1);
+            return cx_bool(a, 0);
+        }
+        if (r->kind == CX_STR && l->kind == CX_STR) return cx_bool(a, strstr(r->u.str.s, l->u.str.s) != NULL);
+        return failf(c, "`in` needs a list or a text on the right");
+    }
     if (strcmp(op, "==") == 0) return cx_bool(a, cx_equal(l, r));
     if (strcmp(op, "!=") == 0) return cx_bool(a, !cx_equal(l, r));
     int same_kind = l->kind == r->kind && (l->kind == CX_NUM || l->kind == CX_STR);
@@ -1496,6 +1506,134 @@ static cx_value *binary(ctx *c, cx_value *e) {
         if (y == 0) return failf(c, "division by zero");
         return cx_num(a, x / y);
     }
+}
+
+/* ----- the pure layer (D27) -------------------------------------------------- */
+
+/* A call to a `def`: its own local slots, parameters first. */
+static cx_value *call_def(ctx *c, cx_value *e) {
+    cx_value *def = at(c->x->defs, index_of(e, "def"));
+    if (!def) return fatalf(c, "invalid IR: unknown def");
+    cx_value *args_e = cx_get(e, "args");
+    size_t n = len_of(args_e);
+    size_t nl = (size_t)cx_get_num(def, "nlocals", 0);
+    if (nl < n) nl = n;
+    cx_value **locals = cx_alloc(&c->w->arena, (nl ? nl : 1) * sizeof *locals);
+    for (size_t i = 0; i < nl; i++) locals[i] = NULL;
+    for (size_t i = 0; i < n; i++) {
+        locals[i] = eval(c, at(args_e, i));
+        if (!locals[i] || locals[i] == PENDING) return locals[i];
+    }
+    cx_value **outer = c->locals;
+    cx_value *outer_state = c->estate;
+    c->locals = locals;
+    c->estate = NULL;
+    cx_value *v = eval(c, cx_get(def, "body"));
+    c->locals = outer;
+    c->estate = outer_state;
+    return v;
+}
+
+/* `[body for x in over if cond]` */
+static cx_value *comprehension(ctx *c, cx_value *e) {
+    cx_value *over = eval(c, cx_get(e, "over"));
+    if (!over || over == PENDING) return over;
+    if (over->kind != CX_LIST) return failf(c, "`for` over a value that is not a list");
+    size_t slot = index_of(e, "slot");
+    cx_value *cond_e = cx_get(e, "cond");
+    cx_value **items = cx_alloc(&c->w->arena, (over->u.list.len ? over->u.list.len : 1) * sizeof *items);
+    size_t n = 0;
+    for (size_t i = 0; i < over->u.list.len; i++) {
+        c->locals[slot] = over->u.list.items[i];
+        if (cond_e && cond_e->kind != CX_NULL) {
+            cx_value *ok = eval(c, cond_e);
+            if (!ok || ok == PENDING) return ok;
+            if (ok->kind != CX_BOOL || !ok->u.b) continue;
+        }
+        cx_value *v = eval(c, cx_get(e, "body"));
+        if (!v || v == PENDING) return v;
+        items[n++] = v;
+    }
+    return cx_list(&c->w->arena, items, n);
+}
+
+/* Lower or upper case: ASCII, and the accented Latin letters of UTF-8
+ * (`é` / `É`: 0xC3 followed by 0xA0-0xBE / 0x80-0x9E, except × and ÷). */
+static cx_value *text_case(cx_arena *a, const cx_value *t, int upper) {
+    size_t n = t->u.str.len;
+    const unsigned char *in = (const unsigned char *)t->u.str.s;
+    char *s = cx_alloc(a, n + 1);
+    for (size_t i = 0; i < n; i++) {
+        unsigned char ch = in[i];
+        if (i > 0 && in[i - 1] == 0xC3) {
+            if (upper && ch >= 0xA0 && ch <= 0xBE && ch != 0xB7) ch -= 0x20;
+            else if (!upper && ch >= 0x80 && ch <= 0x9E && ch != 0x97) ch += 0x20;
+        } else if (ch < 0x80) {
+            ch = (unsigned char)(upper ? toupper(ch) : tolower(ch));
+        }
+        s[i] = (char)ch;
+    }
+    s[n] = '\0';
+    return cx_str(a, s, n);
+}
+
+static int is_space(int ch) {
+    return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
+}
+
+/* `len`, `take`, `sum`, `join`, `lower`, `upper`, `trim`. */
+static cx_value *builtin(ctx *c, cx_value *e) {
+    cx_arena *a = &c->w->arena;
+    const char *name = cx_get_str(e, "name", "");
+    cx_value *args_e = cx_get(e, "args");
+    size_t n = len_of(args_e);
+    cx_value **v = cx_alloc(a, (n ? n : 1) * sizeof *v);
+    EVAL_ALL(c, args_e, v);
+    cx_value *x = n > 0 ? v[0] : NULL;
+    if (!x) return failf(c, "`%s` needs an argument", name);
+    if (strcmp(name, "len") == 0) {
+        if (x->kind == CX_LIST) return cx_num(a, (double)x->u.list.len);
+        if (x->kind == CX_STR) {
+            /* Characters, not bytes: count what does not continue UTF-8. */
+            size_t chars = 0;
+            for (size_t i = 0; i < x->u.str.len; i++)
+                if (((unsigned char)x->u.str.s[i] & 0xC0) != 0x80) chars++;
+            return cx_num(a, (double)chars);
+        }
+    }
+    if (strcmp(name, "take") == 0 && x->kind == CX_LIST && n == 2 && v[1]->kind == CX_NUM) {
+        double k = v[1]->u.num;
+        size_t m = k <= 0 ? 0 : k >= (double)x->u.list.len ? x->u.list.len : (size_t)k;
+        return cx_list(a, x->u.list.items, m);
+    }
+    if (strcmp(name, "sum") == 0 && x->kind == CX_LIST) {
+        double s = 0;
+        for (size_t i = 0; i < x->u.list.len; i++)
+            if (x->u.list.items[i]->kind == CX_NUM) s += x->u.list.items[i]->u.num;
+        return cx_num(a, s);
+    }
+    if (strcmp(name, "join") == 0 && x->kind == CX_LIST && n == 2 && v[1]->kind == CX_STR) {
+        cx_buf b = {0};
+        for (size_t i = 0; i < x->u.list.len; i++) {
+            if (i) cx_buf_put(&b, v[1]->u.str.s, v[1]->u.str.len);
+            cx_value *it = x->u.list.items[i];
+            if (it->kind == CX_STR) cx_buf_put(&b, it->u.str.s, it->u.str.len);
+        }
+        cx_value *r = cx_str(a, b.data ? b.data : "", b.len);
+        cx_buf_free(&b);
+        return r;
+    }
+    if (x->kind == CX_STR) {
+        if (strcmp(name, "lower") == 0) return text_case(a, x, 0);
+        if (strcmp(name, "upper") == 0) return text_case(a, x, 1);
+        if (strcmp(name, "trim") == 0) {
+            size_t s = 0, t = x->u.str.len;
+            while (s < t && is_space((unsigned char)x->u.str.s[s])) s++;
+            while (t > s && is_space((unsigned char)x->u.str.s[t - 1])) t--;
+            return cx_str(a, x->u.str.s + s, t - s);
+        }
+    }
+    return failf(c, "`%s` cannot take these values", name);
 }
 
 /* ----- choices and loops ----------------------------------------------------- */
@@ -2173,6 +2311,16 @@ static cx_value *eval(ctx *c, cx_value *e) {
     if (strcmp(k, "try") == 0) return eval_try(c, e);
     if (strcmp(k, "agent") == 0) return call_agent(c, e);
     if (strcmp(k, "ask") == 0 || strcmp(k, "send") == 0) return call_message(c, e);
+    if (strcmp(k, "bool") == 0) return cx_get(e, "v");
+    if (strcmp(k, "let") == 0) {
+        cx_value *v = eval(c, cx_get(e, "v"));
+        if (!v || v == PENDING) return v;
+        c->locals[index_of(e, "slot")] = v;
+        return eval(c, cx_get(e, "body"));
+    }
+    if (strcmp(k, "def") == 0) return call_def(c, e);
+    if (strcmp(k, "comp") == 0) return comprehension(c, e);
+    if (strcmp(k, "builtin") == 0) return builtin(c, e);
     if (strcmp(k, "state") == 0 && c->estate) {
         cx_value *v = cx_get(c->estate, cx_get_str(e, "field", ""));
         return v ? v : cx_null(&c->w->arena);
@@ -2364,6 +2512,7 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
     x->prompts = cx_get(ir, "prompts");
     x->graphs = cx_get(ir, "graphs");
     x->entities = cx_get(ir, "entities");
+    x->defs = cx_get(ir, "defs");
 
     size_t gi = (size_t)-1;
     for (size_t i = 0; i < len_of(x->graphs); i++)

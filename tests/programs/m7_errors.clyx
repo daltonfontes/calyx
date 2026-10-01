@@ -1,0 +1,40 @@
+# Each check of the pure layer (M7), once.
+model m = "m"
+
+prompt p(x: Text) -> Text:
+    """{x}"""
+
+def len(x: Text) -> Nat:
+    return 0
+
+def ask_model(x: Text) -> Text:
+    return m(p(x))
+
+def forever(n: Nat) -> Nat:
+    return forever(n)
+
+def ping(n: Nat) -> Nat:
+    return pong(n)
+
+def pong(n: Nat) -> Nat:
+    return ping(n)
+
+def retyped(x: Text) -> Text:
+    y = "a"
+    y = 1
+    return y
+
+def early(x: Nat) -> Nat:
+    if x > 1:
+        return 1
+    return x
+
+def no_return(x: Nat) -> Nat:
+    y = x
+
+graph g(words: List[Text], n: Nat) -> Text:
+    calls = [m(p(w)) for w in words]
+    bad = join(words, 1)
+    sizes = sum(words)
+    odd = n in words
+    return "{bad}"

@@ -156,6 +156,26 @@ def NOME(parametros) -> Tipo:
 
 Sem efeitos; o compilador pode recalculá-la à vontade; não vai para o diário. Dentro de `def`, `x = ...` cria um valor novo; nada é alterado no lugar.
 
+**Como está implementado (M7):**
+
+```
+def check(c: Contract) -> List[Text]:
+    problems = []
+    if len(c.parties) < 2:
+        problems = problems + ["menos de duas partes"]
+    elif c.value > 1000:
+        problems = problems + ["valor alto"]
+    return problems
+```
+
+- O corpo tem linhas `nome = valor`, `if` / `elif` / `else` com blocos e um `return` na última linha (`E0665`). Um nome pode receber um valor novo, do mesmo tipo (`E0664`; listas podem crescer). Um nome novo criado dentro de um `if` só existe depois dele se todos os ramos lhe dão valor.
+- **Puro:** nada de modelos, tools, grafos ou entidades (`E0660`). Pode chamar outros `def`s, mas **sem recursão** (`E0661`): todo `def` termina. Repetição fica para `loop` ou para grafos com `decreases` (D17).
+- Usável em qualquer lugar: grafos, handlers de entidades, outros `def`s.
+- **Listas por compreensão:** `[f.content for f in facts if f.topic == t]`. Também puras (`E0663`); para chamadas por item, `for each`.
+- **`in`:** `x in lista`, `"parte" in texto`.
+- **Literais:** `true` e `false`.
+- **Funções embutidas:** `len` (itens ou caracteres), `take(lista, n)`, `sum(lista)`, `join(textos, separador)`, `lower`, `upper` (com letras acentuadas), `trim`. Um nome declarado no programa tem prioridade sobre elas. Argumentos errados: `E0662`.
+
 ### 4.8 Grafo
 
 ```

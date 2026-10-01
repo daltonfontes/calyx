@@ -37,11 +37,10 @@ const UNITS: &[&str] = &[
 /// Units accepted after `/` in a rate, as in `50/s`.
 const RATE_UNITS: &[&str] = &["s", "min", "h"];
 
-const DECLS: &[&str] = &["model", "tool", "type", "prompt", "graph", "entity"];
+const DECLS: &[&str] = &["model", "tool", "type", "prompt", "graph", "entity", "def"];
 
 /// Declarations planned for later milestones.
 const FUTURE_DECLS: &[(&str, &str)] = &[
-    ("def", "a later milestone"),
     ("message", "a later milestone"),
     ("router", "a later milestone"),
 ];
@@ -370,6 +369,7 @@ impl Parser<'_> {
             "prompt" => self.prompt_decl().map(Decl::Prompt),
             "graph" => self.graph_decl().map(Decl::Graph),
             "entity" => self.entity_decl().map(Decl::Entity),
+            "def" => self.def_decl().map(Decl::Def),
             w => {
                 if let Some((_, m)) = FUTURE_DECLS.iter().find(|(k, _)| *k == w) {
                     Err(self.unsupported(w, m))
@@ -377,7 +377,7 @@ impl Parser<'_> {
                     Err(self.error_here(
                         "E0100",
                         "syntax error",
-                        "a declaration (`model`, `tool`, `type`, `prompt`, `graph` or `entity`)",
+                        "a declaration (`model`, `tool`, `type`, `prompt`, `graph`, `entity` or `def`)",
                     ))
                 }
             }
@@ -683,6 +683,84 @@ impl Parser<'_> {
             body,
             incomplete,
             span: self.span_from(start),
+        })
+    }
+
+    /// `def name(params) -> T:` then statements, ending with `return`.
+    fn def_decl(&mut self) -> PResult<DefDecl> {
+        let start = self.advance().span;
+        let name = self.ident("a function name")?;
+        let params = self.params()?;
+        self.expect(TokenKind::Arrow, "`->` and the return type")?;
+        let ret = self.type_expr()?;
+        self.block_start("the function's body")?;
+        let body = self.def_block()?;
+        Ok(DefDecl {
+            name,
+            params,
+            ret,
+            body,
+            span: self.span_from(start),
+        })
+    }
+
+    /// Statements of a `def` (or of an `if` inside one), until the block ends.
+    fn def_block(&mut self) -> PResult<Vec<DefStmt>> {
+        let mut out = Vec::new();
+        while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
+            out.push(self.def_stmt()?);
+        }
+        self.eat(TokenKind::Dedent);
+        Ok(out)
+    }
+
+    fn def_stmt(&mut self) -> PResult<DefStmt> {
+        if self.is_word("return") {
+            self.advance();
+            let e = self.expr()?;
+            self.end_of_line()?;
+            return Ok(DefStmt::Return(e));
+        }
+        if self.is_word("if") {
+            return self.def_if();
+        }
+        if self.kind() == TokenKind::Ident && self.nth_kind(1) == TokenKind::Eq {
+            let name = self.ident("a name")?;
+            self.advance(); // =
+            let e = self.expr()?;
+            // A value that ended with an indented block is complete.
+            if self.tokens[self.pos.saturating_sub(1)].kind != TokenKind::Dedent {
+                self.end_of_line()?;
+            }
+            return Ok(DefStmt::Assign(name, e));
+        }
+        Err(self.error_here(
+            "E0104",
+            "expected a statement",
+            "`name = ...`, `if ...:` or `return ...`",
+        ))
+    }
+
+    /// `if cond:` block, then `elif cond:` / `else:` blocks.
+    fn def_if(&mut self) -> PResult<DefStmt> {
+        let start = self.advance().span; // if / elif
+        let cond = self.expr()?;
+        self.block_start("the statements when the condition holds")?;
+        let then = self.def_block()?;
+        let els = if self.is_word("elif") {
+            vec![self.def_if()?]
+        } else if self.is_word("else") {
+            self.advance();
+            self.block_start("the statements when it does not")?;
+            self.def_block()?
+        } else {
+            Vec::new()
+        };
+        Ok(DefStmt::If {
+            cond,
+            then,
+            els,
+            span: start,
         })
     }
 
@@ -1084,6 +1162,8 @@ impl Parser<'_> {
             TokenKind::Le => "<=",
             TokenKind::Gt => ">",
             TokenKind::Ge => ">=",
+            // `x in list`, `part in text`.
+            TokenKind::Ident if self.is_word("in") => "in",
             _ => return Ok(e),
         };
         self.advance();
@@ -1549,10 +1629,13 @@ impl Parser<'_> {
         match t.kind {
             TokenKind::Ident => {
                 self.advance();
-                Ok(Expr {
-                    kind: ExprKind::Ident(self.text_of(t).to_owned()),
-                    span: t.span,
-                })
+                let text = self.text_of(t);
+                let kind = match text {
+                    "true" => ExprKind::Bool(true),
+                    "false" => ExprKind::Bool(false),
+                    _ => ExprKind::Ident(text.to_owned()),
+                };
+                Ok(Expr { kind, span: t.span })
             }
             TokenKind::Str | TokenKind::LongStr => {
                 self.advance();
@@ -1588,6 +1671,37 @@ impl Parser<'_> {
                         break;
                     }
                     items.push(self.expr()?);
+                    // `[body for x in list if cond]`
+                    if items.len() == 1 && self.is_word("for") {
+                        self.advance();
+                        let var = self.ident("the name of each item")?;
+                        if !self.is_word("in") {
+                            return Err(self.error_here(
+                                "E0105",
+                                "expected `in`",
+                                "`in` and the list",
+                            ));
+                        }
+                        self.advance();
+                        let over = self.or_expr()?;
+                        let cond = if self.is_word("if") {
+                            self.advance();
+                            Some(Box::new(self.or_expr()?))
+                        } else {
+                            None
+                        };
+                        self.expect(TokenKind::RBracket, "`]`")?;
+                        let body = items.pop().expect("one item");
+                        return Ok(Expr {
+                            kind: ExprKind::Comprehension {
+                                body: Box::new(body),
+                                var,
+                                over: Box::new(over),
+                                cond,
+                            },
+                            span: self.span_from(t.span),
+                        });
+                    }
                     if !self.eat(TokenKind::Comma) {
                         self.expect(TokenKind::RBracket, "`,` or `]`")?;
                         break;
@@ -1861,7 +1975,7 @@ graph research(topic: Text) -> List[Text]:
             "graph g() -> Text:\n    = f()\n    bogus x\n    return a\ndef h() -> Text:\n    x\ngraph k() -> Text:\n    return b\n",
         );
         let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
-        assert_eq!(codes, vec!["E0104", "E0104", "E0101"]);
+        assert_eq!(codes, vec!["E0104", "E0104", "E0104"]);
         assert_eq!(p.decls.len(), 2); // g and k
     }
 }

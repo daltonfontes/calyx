@@ -21,6 +21,7 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
         prompts: HashMap::new(),
         graphs: HashMap::new(),
         entities: HashMap::new(),
+        defs: HashMap::new(),
         types: HashMap::new(),
         unit_variants: HashMap::new(),
         variant_owners: HashMap::new(),
@@ -83,6 +84,23 @@ struct EntitySig {
     handlers: Vec<HandlerSig>,
 }
 
+/// A pure function (decision D27).
+struct DefSig {
+    params: Vec<(String, Ty)>,
+    ret: Ty,
+}
+
+/// Functions every program has. They are pure, like `def`s.
+const BUILTINS: &[(&str, &str)] = &[
+    ("len", "`len(list)` or `len(text)`"),
+    ("take", "`take(list, n)`: the first `n` items"),
+    ("sum", "`sum(list)` of numbers or money"),
+    ("join", "`join(list_of_texts, separator)`"),
+    ("lower", "`lower(text)`"),
+    ("upper", "`upper(text)`"),
+    ("trim", "`trim(text)`"),
+];
+
 struct PromptSig {
     params: Vec<(String, Ty)>,
     ret: Ty,
@@ -110,6 +128,7 @@ struct Cx<'a, 'p> {
     prompts: HashMap<&'p str, PromptSig>,
     graphs: HashMap<&'p str, (&'p GraphDecl, GraphSig)>,
     entities: HashMap<&'p str, EntitySig>,
+    defs: HashMap<&'p str, DefSig>,
     types: HashMap<&'p str, UserType>,
     /// Variants without fields, usable as values: `Optimist` is a `Role`.
     unit_variants: HashMap<&'p str, &'p str>,
@@ -140,7 +159,14 @@ impl<'p> Cx<'_, 'p> {
         let mut seen: HashMap<&str, Span> = HashMap::new();
         for d in &program.decls {
             let name = d.name();
-            if Ty::builtin(&name.name).is_some() || name.name == "List" || name.name == "Map" {
+            // Built-in functions (`len`, ...) may be redeclared: the
+            // program's own name wins.
+            if Ty::builtin(&name.name).is_some()
+                || name.name == "List"
+                || name.name == "Map"
+                || name.name == "true"
+                || name.name == "false"
+            {
                 self.push(
                     err("E0201", "name is reserved for a built-in type", name.span)
                         .observed(format!("`{}`", name.name)),
@@ -239,10 +265,22 @@ impl<'p> Cx<'_, 'p> {
                     let sig = self.entity_sig(e);
                     self.entities.insert(&e.name.name, sig);
                 }
+                Decl::Def(d) => {
+                    self.no_borrows(&d.params);
+                    let params = self.params(&d.params);
+                    let ret = self.ty(&d.ret);
+                    self.defs.insert(&d.name.name, DefSig { params, ret });
+                }
                 Decl::Model(_) | Decl::Type(_) => {}
             }
         }
         self.check_write_contracts(program);
+        for d in &program.decls {
+            if let Decl::Def(f) = d {
+                self.check_def(f);
+            }
+        }
+        self.no_recursive_defs(program);
         for d in &program.decls {
             if let Decl::Entity(e) = d {
                 self.check_entity(e);
@@ -763,6 +801,216 @@ impl<'p> Cx<'_, 'p> {
                 Typed::pure(Ty::Error)
             }
         }
+    }
+
+    /// A `def`'s body: statements that name values, `if`s, and a `return`
+    /// at the end. Names may be given new values (each a new value; nothing
+    /// changes in place), of the same type.
+    fn check_def(&mut self, d: &DefDecl) {
+        let sig = &self.defs[d.name.name.as_str()];
+        let ret = sig.ret.clone();
+        let mut gc = GraphCx::default();
+        for (n, t) in &sig.params {
+            gc.scope.insert(n.clone(), t.clone());
+        }
+        let returned = self.def_stmts(&d.body, &mut gc, &ret, true);
+        if !returned {
+            self.push(
+                err("E0665", "a `def` ends with `return`", d.name.span)
+                    .expected("`return value` as the last line of the body"),
+            );
+        }
+    }
+
+    /// Checks `stmts`, updating `gc`; whether they ended with `return`.
+    fn def_stmts(&mut self, stmts: &[DefStmt], gc: &mut GraphCx, ret: &Ty, top: bool) -> bool {
+        for (i, s) in stmts.iter().enumerate() {
+            let last = i + 1 == stmts.len();
+            match s {
+                DefStmt::Assign(name, e) => {
+                    let t = self.pure_expr(e, gc);
+                    // Lists grow: `problems = []`, then `problems = problems + [...]`.
+                    // A name keeps its element type, not its length.
+                    if let (Some(Ty::List(old, _)), Ty::List(new, _)) =
+                        (gc.scope.get(&name.name), &t)
+                    {
+                        let elem = match (old.as_ref(), new.as_ref()) {
+                            (Ty::Error, n) => Some(n.clone()),
+                            (o, n) if assignable(n, o) => Some(o.clone()),
+                            _ => None,
+                        };
+                        if let Some(elem) = elem {
+                            gc.scope
+                                .insert(name.name.clone(), Ty::List(Box::new(elem), None));
+                            continue;
+                        }
+                    }
+                    match gc.scope.get(&name.name) {
+                        Some(old) if !assignable(&t, old) && !matches!(t, Ty::Error) => {
+                            self.push(
+                                err("E0664", "a name keeps its type", e.span)
+                                    .expected(format!("a `{old}`, as `{}` was before", name.name))
+                                    .observed(format!(
+                                        "`{t}`; use another name for a value of another type",
+                                    )),
+                            );
+                        }
+                        Some(_) => {}
+                        None => {
+                            gc.scope.insert(name.name.clone(), t);
+                        }
+                    }
+                }
+                DefStmt::If {
+                    cond, then, els, ..
+                } => {
+                    let c = self.pure_expr(cond, gc);
+                    self.expect_bool(&c, cond.span);
+                    let mut g1 = gc.clone();
+                    let mut g2 = gc.clone();
+                    self.def_stmts(then, &mut g1, ret, false);
+                    self.def_stmts(els, &mut g2, ret, false);
+                    // A new name is visible after the `if` only if every
+                    // branch gives it a value; otherwise it stays inside.
+                    for (n, t) in &g1.scope {
+                        if !gc.scope.contains_key(n) && g2.scope.contains_key(n) {
+                            gc.scope.insert(n.clone(), t.clone());
+                        }
+                    }
+                }
+                DefStmt::Return(e) => {
+                    let t = self.pure_expr(e, gc);
+                    if !assignable(&t, ret) {
+                        self.push(
+                            err("E0610", "returned value has the wrong type", e.span)
+                                .expected(format!("`{ret}`"))
+                                .observed(format!("`{t}`")),
+                        );
+                    }
+                    if !(top && last) {
+                        self.push(
+                            err("E0665", "`return` only at the end of a `def`", e.span)
+                                .expected("one `return`, the last line; inside `if`, give a name a value instead"),
+                        );
+                    }
+                    return top && last;
+                }
+            }
+        }
+        false
+    }
+
+    /// An expression in a pure place: no calls with effects (E0660).
+    fn pure_expr(&mut self, e: &Expr, gc: &GraphCx) -> Ty {
+        if let Some(span) = self.impure(e) {
+            self.push(
+                err("E0660", "a `def` cannot call models, tools, graphs or entities", span)
+                    .expected("a value computed from the parameters; make the calls in a graph and pass the results")
+                    .observed("a call with effects"),
+            );
+            return Ty::Error;
+        }
+        self.expr(e, gc).ty
+    }
+
+    /// `def`s that call themselves, directly or through others (E0661):
+    /// without recursion, every `def` finishes (decision D17).
+    fn no_recursive_defs(&mut self, program: &Program) {
+        let mut calls: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut spans: HashMap<&str, Span> = HashMap::new();
+        for d in &program.decls {
+            let Decl::Def(f) = d else { continue };
+            spans.insert(&f.name.name, f.name.span);
+            let mut out = Vec::new();
+            for e in def_exprs(&f.body) {
+                visit(e, &mut |x| {
+                    if let ExprKind::Call { callee, .. } = &x.kind
+                        && let ExprKind::Ident(n) = &callee.kind
+                        && let Some((k, _)) = self.defs.get_key_value(n.as_str())
+                    {
+                        out.push(*k);
+                    }
+                });
+            }
+            calls.insert(&f.name.name, out);
+        }
+        let mut reported = HashSet::new();
+        let mut names: Vec<&str> = calls.keys().copied().collect();
+        names.sort_unstable();
+        for start in names {
+            // Can `start` reach itself?
+            let mut seen = HashSet::new();
+            let mut stack: Vec<&str> = calls[start].clone();
+            while let Some(n) = stack.pop() {
+                if n == start {
+                    if reported.insert(start) {
+                        self.push(
+                            err("E0661", "a `def` cannot call itself", spans[start])
+                                .expected("a `def` without recursion (it always finishes); for repetition, a `loop` in a graph, or a recursive graph with `decreases`")
+                                .observed(format!("`{start}` calls itself, directly or through other `def`s")),
+                        );
+                    }
+                    break;
+                }
+                if seen.insert(n) {
+                    stack.extend(calls.get(n).cloned().unwrap_or_default());
+                }
+            }
+        }
+    }
+
+    /// `len`, `take`, `sum`, `join`, `lower`, `upper`, `trim`.
+    fn builtin(&mut self, name: &str, args: &[Arg], span: Span, gc: &GraphCx) -> Option<Typed> {
+        let usage = BUILTINS.iter().find(|(b, _)| *b == name)?.1;
+        let typed: Vec<Typed> = args.iter().map(|a| self.expr(&a.value, gc)).collect();
+        let effect = typed
+            .iter()
+            .map(|t| t.effect)
+            .fold(Effect::Pure, Effect::join);
+        let tys: Vec<Ty> = typed.into_iter().map(|t| t.ty).collect();
+        let named = args.iter().any(|a| a.name.is_some());
+        let int = |t: &Ty| matches!(t, Ty::Nat | Ty::Int | Ty::IntLit | Ty::Error);
+        let ty = match (name, tys.as_slice()) {
+            _ if named => None,
+            ("len", [Ty::List(..) | Ty::Text | Ty::Error]) => Some(Ty::Nat),
+            ("take", [l @ (Ty::List(..) | Ty::Error), n]) if int(n) => Some(l.clone()),
+            ("sum", [Ty::List(t, _)])
+                if is_number(t) || matches!(**t, Ty::Money | Ty::Duration) =>
+            {
+                Some(if **t == Ty::IntLit {
+                    Ty::Int
+                } else {
+                    (**t).clone()
+                })
+            }
+            ("sum", [Ty::Error]) => Some(Ty::Error),
+            ("join", [l, Ty::Text | Ty::Error])
+                if matches!(l, Ty::Error)
+                    || matches!(l, Ty::List(t, _) if matches!(**t, Ty::Text | Ty::Error)) =>
+            {
+                Some(Ty::Text)
+            }
+            ("lower" | "upper" | "trim", [Ty::Text | Ty::Error]) => Some(Ty::Text),
+            _ => None,
+        };
+        let ty = ty.unwrap_or_else(|| {
+            let observed: Vec<String> = tys.iter().map(|t| format!("`{t}`")).collect();
+            self.push(
+                err(
+                    "E0662",
+                    format!("`{name}` does not take these arguments"),
+                    span,
+                )
+                .expected(usage)
+                .observed(format!("({})", observed.join(", "))),
+            );
+            Ty::Error
+        });
+        Some(Typed {
+            ty,
+            kind: NodeKind::Pure,
+            effect,
+        })
     }
 
     /// `reads` / `edits` belong to tool parameters only.
@@ -1665,7 +1913,8 @@ impl<'p> Cx<'_, 'p> {
     }
 
     fn is_global(&self, n: &str) -> bool {
-        self.entities.contains_key(n)
+        self.defs.contains_key(n)
+            || self.entities.contains_key(n)
             || self.models.contains_key(n)
             || self.tools.contains_key(n)
             || self.prompts.contains_key(n)
@@ -1769,6 +2018,51 @@ impl<'p> Cx<'_, 'p> {
         match &e.kind {
             ExprKind::Guarded { call, requires } => self.guarded(call, requires, gc),
             ExprKind::Message(m) => self.message(m, gc),
+            ExprKind::Bool(_) => Typed::pure(Ty::Bool),
+            ExprKind::Comprehension {
+                body,
+                var,
+                over,
+                cond,
+            } => {
+                let o = self.expr(over, gc);
+                let (elem, max) = match o.ty {
+                    Ty::List(t, m) => (*t, m),
+                    Ty::Error => (Ty::Error, None),
+                    other => {
+                        self.push(
+                            err("E0609", "`for` over a value that is not a list", over.span)
+                                .expected("a list")
+                                .observed(format!("`{other}`")),
+                        );
+                        (Ty::Error, None)
+                    }
+                };
+                let mut inner = gc.clone();
+                inner.scope.insert(var.name.clone(), elem);
+                if let Some(c) = cond {
+                    let t = self.expr(c, &inner);
+                    self.expect_bool(&t.ty, c.span);
+                }
+                let b = self.expr(body, &inner);
+                let calls = self
+                    .impure(body)
+                    .or_else(|| cond.as_ref().and_then(|c| self.impure(c)));
+                if let Some(span) = calls {
+                    self.push(
+                        err("E0663", "a list built with `for` is pure", span)
+                            .expected(
+                                "`name = for each x in list: ...` for calls, one step per item",
+                            )
+                            .observed("a call with effects inside `[... for ...]`"),
+                    );
+                }
+                Typed {
+                    ty: Ty::List(Box::new(b.ty), max),
+                    kind: NodeKind::Pure,
+                    effect: o.effect,
+                }
+            }
             ExprKind::Borrow { mode, target } => match gc.scope.get(&target.name) {
                 Some(Ty::Sandbox) => Typed::pure(Ty::Lent(mode.name == "edits")),
                 Some(Ty::Error) => Typed::pure(Ty::Error),
@@ -2040,6 +2334,11 @@ impl<'p> Cx<'_, 'p> {
                 (ordered(a) && (assignable(a, b) || assignable(b, a))).then_some(Ty::Bool)
             }
             "+" | "-" | "*" | "/" => arithmetic(op, a, b),
+            "in" => match b {
+                Ty::List(t, _) => (assignable(a, t) || assignable(t, a)).then_some(Ty::Bool),
+                Ty::Text => matches!(a, Ty::Text).then_some(Ty::Bool),
+                _ => None,
+            },
             _ => None,
         };
         let ty = match ty {
@@ -2507,6 +2806,15 @@ impl<'p> Cx<'_, 'p> {
             );
             return Typed::pure(Ty::Error);
         }
+        if let Some(sig) = self.defs.get(n) {
+            let (params, ret) = (sig.params.clone(), sig.ret.clone());
+            let inner = self.args(n, &params, args, e.span, gc);
+            return Typed {
+                ty: ret,
+                kind: NodeKind::Pure,
+                effect: inner,
+            };
+        }
         if let Some(sig) = self.tools.get(n) {
             let (params, ret, effect) = (sig.params.clone(), sig.ret.clone(), sig.effect);
             let inner = self.args(n, &params, args, e.span, gc);
@@ -2528,9 +2836,12 @@ impl<'p> Cx<'_, 'p> {
                 effect: effect.join(inner),
             };
         }
+        if let Some(t) = self.builtin(n, args, e.span, gc) {
+            return t;
+        }
         self.push(
             err("E0602", "unknown name", callee.span)
-                .expected("a model, tool or graph")
+                .expected("a model, tool, graph or `def`")
                 .observed(format!("`{n}`")),
         );
         Typed::pure(Ty::Error)
@@ -2811,6 +3122,15 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
                 walk(&m.key, f);
                 m.args.iter().for_each(|a| walk(&a.value, f));
             }
+            ExprKind::Comprehension {
+                body, over, cond, ..
+            } => {
+                walk(over, f);
+                walk(body, f);
+                if let Some(c) = cond {
+                    walk(c, f);
+                }
+            }
             _ => {}
         }
     }
@@ -2825,6 +3145,24 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
         Stmt::Return(e) => walk(e, f),
         Stmt::After { .. } => {}
     }
+}
+
+/// Every expression written in a `def`'s body.
+fn def_exprs(stmts: &[DefStmt]) -> Vec<&Expr> {
+    let mut out = Vec::new();
+    for s in stmts {
+        match s {
+            DefStmt::Assign(_, e) | DefStmt::Return(e) => out.push(e),
+            DefStmt::If {
+                cond, then, els, ..
+            } => {
+                out.push(cond);
+                out.extend(def_exprs(then));
+                out.extend(def_exprs(els));
+            }
+        }
+    }
+    out
 }
 
 /// `[]`: fits any list type.
@@ -2856,6 +3194,12 @@ fn visit(e: &Expr, f: &mut dyn FnMut(&Expr)) {
             .collect(),
         ExprKind::Message(m) => std::iter::once(&m.key)
             .chain(m.args.iter().map(|a| &a.value))
+            .collect(),
+        ExprKind::Comprehension {
+            body, over, cond, ..
+        } => [Some(body.as_ref()), Some(over.as_ref()), cond.as_deref()]
+            .into_iter()
+            .flatten()
             .collect(),
         _ => Vec::new(),
     };
@@ -3010,6 +3354,23 @@ fn collect_refs(e: &Expr, bound: Option<&str>, index: &HashMap<&str, usize>, out
                 collect_refs(&a.value, bound, index, out);
             }
         }
+        // The item's name hides a step of the same name inside.
+        ExprKind::Comprehension {
+            body,
+            var,
+            over,
+            cond,
+        } => {
+            collect_refs(over, bound, index, out);
+            let mut inner = Vec::new();
+            collect_refs(body, bound, index, &mut inner);
+            if let Some(c) = cond {
+                collect_refs(c, bound, index, &mut inner);
+            }
+            let hidden = index.get(var.name.as_str()).copied();
+            out.extend(inner.into_iter().filter(|i| Some(*i) != hidden));
+        }
+        ExprKind::Bool(_) => {}
         // Only graph parameters are lent: no step to depend on.
         ExprKind::Int { .. }
         | ExprKind::Float { .. }

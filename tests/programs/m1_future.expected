@@ -1,15 +1,11 @@
-error[E0101]: `def` is not supported yet (planned for a later milestone)
-- observed : `def`
-Location: m1_future.clyx:4:1
-
 error[E0101]: `race` is not supported yet (planned for a later milestone)
 - observed : `race`
-Location: m1_future.clyx:8:9
+Location: m1_future.clyx:5:9
 
 error[E0101]: `rounds` is not supported yet (planned for a later milestone)
 - observed : `rounds`
-Location: m1_future.clyx:10:9
+Location: m1_future.clyx:7:9
 
 error[E0101]: `receive` is not supported yet (planned for a later milestone)
 - observed : `receive`
-Location: m1_future.clyx:12:9
+Location: m1_future.clyx:9:9
