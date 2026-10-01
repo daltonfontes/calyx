@@ -1,6 +1,6 @@
 # Arquitetura do runtime
 
-**Status:** direção decidida (filosofia do Bend: nativo, emitindo C; verificação em até 1 segundo). Linguagem do compilador em aberto.
+**Status:** direção decidida. Filosofia do Bend (nativo, emitindo C; verificação em até 1 segundo); compilador em Rust; runtime em C.
 
 ## Decisão
 
@@ -114,9 +114,17 @@ Consequências:
 
 ## Linguagem de implementação
 
-Com a decisão de emitir C:
-- **O runtime é escrito em C**, porque vai junto, como modelo, no arquivo C gerado (como no BendRT).
-- **O compilador** pode ser escrito em qualquer linguagem rápida; a escolha está em aberto. A comparação abaixo, feita antes desta decisão, continua útil para ela.
+**Decidido:**
+- **Runtime em C**, porque vai junto, como modelo, no arquivo C gerado (como no BendRT).
+- **Compilador em Rust.**
+
+**Motivo decisivo:** o verificador (tipos, efeitos, recursos, limites) é usado em dois lugares: no `calyx check` / `calyx build` e **dentro do runtime**, para verificar grafos gerados por LLM antes de rodá-los (W7). Em Rust, o mesmo código do verificador é compilado também como **biblioteca estática com interface C**, sem coletor de lixo e sem runtime extra, e ligado ao runtime em C. Resultado: **um verificador só**, e o que o `check` aceita é exatamente o que o runtime aceita.
+
+Outros motivos: bibliotecas maduras para compilação incremental (ajudam a meta de 1 segundo e um futuro plugin de editor); tipos com variantes e `match` completo; um único binário estático; e um compilador que pega muitos erros antes de rodar, útil quando boa parte do código é escrita ou revisada por agentes de IA.
+
+Custo aceito: curva de aprendizado maior que C#, e duas linguagens no projeto (Rust e C).
+
+Alternativa considerada: C#, que exigiria embutir o .NET em todo binário ou manter um segundo verificador em C para os planos gerados por LLM.
 
 ### Comparação anterior (C# ou C)
 
