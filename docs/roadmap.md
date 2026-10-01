@@ -51,6 +51,8 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 
 ## Medidas
 
+**Comparação com Python e LangGraph:** ver [`docs/evaluation/comparacao.md`](evaluation/comparacao.md) (recuperação, bugs antes de rodar, paralelismo e escala) e o [plano de avaliação para o paper](evaluation/plano-paper.md).
+
 ### M1: tempo do `calyx check`
 
 Programas sintéticos (grafos de 21 nós com fan-out), binário de release, máquina de 4 núcleos:
