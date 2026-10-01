@@ -1,0 +1,4 @@
+graph g(amount: Float) -> Text [read]
+  %0 approval: Approval = receive Approval [read]
+  %1 return: Text = match [pure] <- %0
+  return %1

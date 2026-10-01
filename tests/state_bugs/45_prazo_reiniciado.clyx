@@ -1,0 +1,12 @@
+# Bug: A máquina reinicia durante uma espera de 3 dias; se o prazo fosse contado de novo, a espera nunca venceria.
+# Pego por: runtime
+message Approval = Approved | Denied(reason: Text)
+
+type Status = Open | Closed
+
+graph g(x: Text) -> Text:
+    a = receive Approval, timeout 3 days:
+        on timeout: Denied(reason="prazo")
+    return match a:
+        case Approved: x
+        case Denied(reason): reason

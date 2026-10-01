@@ -1,0 +1,30 @@
+# Aprovação humana com espera durável (marco M8).
+#
+# A execução para no `receive` e sai (código 4, estado `waiting`). O prazo
+# fica gravado com o diário, então vale mesmo se a máquina reiniciar.
+# Quando a resposta chega, a execução continua de onde parou, sem refazer
+# nada: a proposta do modelo vem do diário.
+#
+#   calyx run examples/approval.clyx --fake-models --request "reembolso de 300"
+#   calyx deliver <id> Approval Approved          # ou: '{"kind": "Denied", "reason": "..."}'
+#   calyx resume <id>                              # ou: calyx tick (num cron)
+#
+# Sem resposta em 3 dias, `calyx tick` continua a execução com `on timeout`.
+
+model gemini = "gemini-3.5-flash-lite"
+
+message Approval = Approved | Denied(reason: Text)
+
+prompt propose(request: Text) -> Text:
+    """
+    Um cliente pediu: {request}
+    Proponha, em uma frase, o que a empresa deve fazer.
+    """
+
+graph approve(request: Text) -> Text:
+    proposal = gemini(propose(request))
+    approval = receive Approval, timeout 3 days:
+        on timeout: Denied(reason="ninguém respondeu em 3 dias")
+    return match approval:
+        case Approved: "aprovado: {proposal}"
+        case Denied(reason): "recusado ({reason}): {proposal}"

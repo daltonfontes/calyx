@@ -141,6 +141,8 @@ pub struct Handler {
 pub struct TypeDecl {
     pub name: Ident,
     pub ty: TypeExpr,
+    /// Declared with `message`: values a run can `receive` (decision D21).
+    pub message: bool,
     pub span: Span,
 }
 
@@ -316,6 +318,13 @@ pub enum ExprKind {
     Message(Box<MessageExpr>),
     /// `true` or `false`.
     Bool(bool),
+    /// `receive Message, timeout 3 days:` then `on timeout: value`: waits,
+    /// durably, for a message from outside the run (decision D21).
+    Receive {
+        message: Ident,
+        timeout: Option<Box<Expr>>,
+        on_timeout: Option<Box<Expr>>,
+    },
     /// `[body for var in list]` or `[body for var in list if cond]`.
     Comprehension {
         body: Box<Expr>,

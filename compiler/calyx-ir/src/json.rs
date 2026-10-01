@@ -74,6 +74,14 @@ impl Program {
         list(&mut o, &self.graphs, graph);
         o.push_str(",\"entities\":");
         list(&mut o, &self.entities, entity);
+        o.push_str(",\"messages\":");
+        list(&mut o, &self.messages, |o, (n, s)| {
+            o.push_str("{\"name\":");
+            string(o, n);
+            o.push_str(",\"schema\":");
+            o.push_str(s);
+            o.push('}');
+        });
         o.push_str(",\"defs\":");
         list(&mut o, &self.defs, |o, d| {
             o.push_str("{\"name\":");
@@ -368,6 +376,20 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
             );
         }
         Expr::Bool(b) => o.push_str(&format!("{{\"k\":\"bool\",\"v\":{b}}}")),
+        // Journaled like a call, so it gets an id after what it contains.
+        Expr::Receive {
+            message,
+            timeout_s,
+            on_timeout,
+        } => {
+            let mut v = String::new();
+            expr(&mut v, on_timeout, ids);
+            let id = *ids;
+            *ids += 1;
+            o.push_str(&format!("{{\"k\":\"receive\",\"id\":{id},\"message\":"));
+            string(o, message);
+            o.push_str(&format!(",\"timeout_s\":{timeout_s},\"on_timeout\":{v}}}"));
+        }
         Expr::Let { slot, value, body } => {
             o.push_str(&format!("{{\"k\":\"let\",\"slot\":{slot},\"v\":"));
             expr(o, value, ids);

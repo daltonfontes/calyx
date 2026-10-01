@@ -1,0 +1,9 @@
+# Bug: A execução espera uma aprovação sem prazo: se ninguém responder, ela fica parada para sempre, segurando o que reservou.
+# Pego por: E0671
+message Approval = Approved | Denied(reason: Text)
+
+type Status = Open | Closed
+
+graph g(x: Text) -> Text:
+    a = receive Approval
+    return x

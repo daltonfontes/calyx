@@ -1,0 +1,30 @@
+error[E0670]: `receive` needs a `message` type
+- expected : a type declared with `message Name = ...`: what the run may receive from outside
+- observed : `Plain`
+Location: m8_errors.clyx:12:17
+
+error[E0671]: `receive` needs a `timeout`
+- expected : `receive M, timeout 3 days:` and `on timeout: value`; a run never waits forever
+Location: m8_errors.clyx:14:9
+
+error[E0672]: `receive` must say what happens `on timeout`
+- expected : an indented `on timeout: value` of the message's type
+Location: m8_errors.clyx:14:9
+
+error[E0671]: the timeout is a duration written in the program
+- expected : a number of `s`, `min`, `h` or `days`, e.g. `3 days`
+Location: m8_errors.clyx:15:35
+
+error[E0672]: `on timeout` gives a value of the wrong type
+- expected : `Approval`
+- observed : `Text`
+Location: m8_errors.clyx:18:21
+
+error[E0672]: `on timeout` is a value, not a call
+- expected : a value of the message's type, e.g. `Denied(reason="expirou")`
+Location: m8_errors.clyx:20:21
+
+error[E0672]: `on timeout` gives a value of the wrong type
+- expected : `Approval`
+- observed : `Text`
+Location: m8_errors.clyx:20:21
