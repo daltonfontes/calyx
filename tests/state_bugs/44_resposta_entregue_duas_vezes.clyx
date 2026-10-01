@@ -1,0 +1,12 @@
+# Bug: A mesma aprovação é entregue duas vezes (dois cliques): a segunda não pode ser aplicada a uma espera que já terminou.
+# Pego por: runtime
+message Approval = Approved | Denied(reason: Text)
+
+type Status = Open | Closed
+
+graph g(x: Text) -> Text:
+    a = receive Approval, timeout 1 days:
+        on timeout: Denied(reason="prazo")
+    return match a:
+        case Approved: x
+        case Denied(reason): reason

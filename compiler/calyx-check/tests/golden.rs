@@ -42,6 +42,7 @@ const FULLY_CHECKED: &[&str] = &[
     "examples/refund.clyx",
     "examples/fix.clyx",
     "examples/memory.clyx",
+    "examples/approval.clyx",
 ];
 
 #[test]

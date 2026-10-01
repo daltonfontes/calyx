@@ -1,0 +1,10 @@
+# Bug: A execução espera um valor de um tipo que ninguém pode entregar de fora (não é uma `message`).
+# Pego por: E0670
+message Approval = Approved | Denied(reason: Text)
+
+type Status = Open | Closed
+
+graph g(x: Text) -> Text:
+    s = receive Status, timeout 1 days:
+        on timeout: Open
+    return x

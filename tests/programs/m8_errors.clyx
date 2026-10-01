@@ -1,0 +1,21 @@
+# Each check of `receive` (M8), once.
+model m = "m"
+
+type Plain = A | B
+
+message Approval = Approved | Denied(reason: Text)
+
+prompt p(x: Text) -> Text:
+    """{x}"""
+
+graph g(x: Text) -> Text:
+    a = receive Plain, timeout 1 days:
+        on timeout: A
+    b = receive Approval
+    c = receive Approval, timeout 5 tokens:
+        on timeout: Approved
+    d = receive Approval, timeout 1 h:
+        on timeout: "não"
+    e = receive Approval, timeout 1 h:
+        on timeout: m(p(x))
+    return x

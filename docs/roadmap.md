@@ -44,7 +44,8 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | M6b | ✅ Concluído: sandboxes. Parâmetros `Sandbox` (a execução trabalha numa cópia do diretório), tools com `reads Sandbox` / `edits Sandbox`, empréstimos `reads repo` / `edits repo` nas chamadas e nas tools de agentes; a ordem entre passos sai dos empréstimos; erros para edições em paralelo e para a sandbox usada como valor. No runtime, travas (edições uma por vez), snapshots por conteúdo, chamada que falha desfeita antes de repetir, sandbox restaurada do diário na retomada. Exemplo: `examples/fix.clyx`, um agente de código que corrigiu um bug com o Gemini. `fork`/`share` ficam para depois |
 | M6c | ✅ Concluído: entidades. `entity` com `state` e handlers puros que respondem ou mudam o estado; `ask` e `send`; estado em `.calyx/entities/`, uma mudança por vez por chave também entre processos (`flock`), cada mensagem aplicada uma vez (ids gravados junto com o estado), ordem entre mensagens à mesma entidade pela ordem do texto, aviso de atualização perdida (`W0603`). Exemplo: `examples/memory.clyx`, memória entre conversas com o Gemini. `receive` e `respond` ficam para depois |
 | M7 | ✅ Concluído: camada pura (D27). `def` com valores novos, `if`/`elif`/`else` e `return`, sem efeitos e sem recursão; `true`/`false`; listas por compreensão (`[x.a for x in xs if ...]`); `in`; funções embutidas (`len`, `take`, `sum`, `join`, `lower`, `upper`, `trim`). Usáveis em grafos, handlers e outros `def`s |
-| M8 | Próximo (a definir) |
+| M8 | ✅ Concluído: `receive` com espera durável (D21). Tipos `message`; a execução para no estado `waiting` (código 4) e grava o prazo uma vez; `calyx deliver` confere a mensagem contra o tipo e a entrega; `calyx resume` e `calyx tick` (para cron, sem servidor) continuam; `on timeout` quando o prazo vence. Exemplo: `examples/approval.clyx` |
+| M9 | Próximo (a definir) |
 
 ## Medidas
 
@@ -66,7 +67,9 @@ Para repetir: `cargo run --release -p calyx-check --example phases -- arquivo.cl
 
 ### M6 (Q2): quantos bugs de estado o compilador pega
 
-**Com as entidades (M6c), a suíte tem 41 bugs:** o compilador pega 28 (68%), 1 não pode acontecer por construção, o runtime pega 6 e 6 escapam. **35 de 41 nunca causam dano.**
+**Com o `receive` (M8), a suíte tem 45 bugs:** o compilador pega 30, 1 não pode acontecer por construção, o runtime pega 8 e 6 escapam; **39 de 45 nunca causam dano**. Os 4 novos: espera sem prazo e espera de um tipo que não é `message` (compilador); resposta entregue duas vezes e prazo que sobrevive a um reinício (runtime).
+
+**Com as entidades (M6c), a suíte tinha 41 bugs:** o compilador pega 28 (68%), 1 não pode acontecer por construção, o runtime pega 6 e 6 escapam. **35 de 41 nunca causam dano.**
 
 | Quem pega | Bugs de entidade (9) |
 |---|---|

@@ -1,0 +1,9 @@
+# `receive` (M8): a run waits, durably, for a message from outside.
+message Approval = Approved | Denied(reason: Text)
+
+graph g(amount: Float) -> Text:
+    approval = receive Approval, timeout 2 days:
+        on timeout: Denied(reason="expirou")
+    return match approval:
+        case Approved: "ok {amount}"
+        case Denied(reason): "não: {reason}"

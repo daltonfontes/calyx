@@ -1,7 +1,7 @@
 //! The `calyx` command-line tool.
 //!
 //! Exit codes: 0 = ok, 1 = the program has errors, 2 = usage or I/O error,
-//! 3 = the execution failed.
+//! 3 = the execution failed, 4 = the run waits for a message (`receive`).
 
 mod bundle;
 mod runs;
@@ -49,6 +49,13 @@ commands:
       Run again using only the journal: no model or tool is called.
   runs
       List the runs in .calyx/runs.
+  deliver <run> <Message> <json>
+      Deliver a message to a run waiting on `receive Message`: checked
+      against the message's type, then given to the oldest such receive.
+      Continue the run with `calyx resume <run>` or `calyx tick`.
+  tick [--fake-models] [--quiet] [--config FILE]
+      Resume every waiting run that got a message or whose deadline passed.
+      Meant for a scheduler such as cron: no server is needed.
   build <file.clyx> [-o FILE] [--graph NAME] [--config FILE | --no-config]
       Check a program and write a standalone executable that runs it: a
       copy of this binary with the program (and its calyx.toml) inside.
@@ -81,6 +88,8 @@ fn main() -> ExitCode {
         Some("resume") => rerun(&args[1..], Mode::Resume),
         Some("replay") => rerun(&args[1..], Mode::Replay),
         Some("runs") => list_runs(),
+        Some("deliver") => deliver(&args[1..]),
+        Some("tick") => tick(&args[1..]),
         Some("version" | "--version" | "-V") => {
             println!("calyx {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -108,6 +117,8 @@ fn built(exe: PathBuf, bundle: bundle::Bundle, args: &[String]) -> ExitCode {
         Some("resume") => rerun(&args[1..], Mode::Resume),
         Some("replay") => rerun(&args[1..], Mode::Replay),
         Some("runs") => list_runs(),
+        Some("deliver") => deliver(&args[1..]),
+        Some("tick") => tick(&args[1..]),
         Some("--version" | "-V") => {
             println!("{} (calyx {})", command(), env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -575,6 +586,171 @@ fn rerun(args: &[String], mode: Mode) -> ExitCode {
     execute(&program, &header.graph, header.args, opts, Some(&id))
 }
 
+/// `calyx deliver <run> <Message> <json>`.
+fn deliver(args: &[String]) -> ExitCode {
+    let [id, message, raw] = args else {
+        return usage_error("deliver takes a run, a message type and the message as JSON");
+    };
+    let header = match runs::header(id) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("{}: {e}", command());
+            return ExitCode::from(2);
+        }
+    };
+    let program = match compile(&Origin::open(&header.program)) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
+    let Some((_, schema)) = program.messages.iter().find(|(n, _)| n == message) else {
+        let known: Vec<&str> = program.messages.iter().map(|(n, _)| n.as_str()).collect();
+        return usage_error(&format!(
+            "the program has no message `{message}` (messages: {})",
+            known.join(", ")
+        ));
+    };
+    let schema: serde_json::Value = serde_json::from_str(schema).unwrap_or_default();
+    // A bare variant name, as text or JSON text, for variants without fields.
+    let value =
+        serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.clone()));
+    let value = normalize(value, &schema);
+    if let Err(e) = conforms(&value, &schema) {
+        eprintln!("{}: not a `{message}`: {e}", command());
+        return ExitCode::from(2);
+    }
+    match runs::deliver(id, message, &value) {
+        Ok(key) => {
+            println!(
+                "delivered `{message}` to `{key}`; continue the run with `{} resume {id}` or `{} tick`",
+                command(),
+                command()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{}: {e}", command());
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// `Approved` for `{"kind": "Approved"}`, when the type has variants with
+/// fields (where every value is a record with `kind`).
+fn normalize(v: serde_json::Value, schema: &serde_json::Value) -> serde_json::Value {
+    if let (serde_json::Value::String(s), Some(_)) = (&v, schema.get("anyOf")) {
+        return serde_json::json!({ "kind": s });
+    }
+    v
+}
+
+/// Does `v` fit `schema` (the subset of JSON Schema the compiler emits)?
+fn conforms(v: &serde_json::Value, schema: &serde_json::Value) -> Result<(), String> {
+    use serde_json::Value;
+    if let Some(any) = schema.get("anyOf").and_then(Value::as_array) {
+        // Variants: name the one that does not exist, or check that one.
+        let kinds: Vec<&str> = any
+            .iter()
+            .filter_map(|a| a["properties"]["kind"]["enum"][0].as_str())
+            .collect();
+        if kinds.len() == any.len() {
+            let kind = v["kind"].as_str().unwrap_or_default();
+            return match kinds.iter().position(|k| *k == kind) {
+                Some(i) => conforms(v, &any[i]),
+                None => Err(format!(
+                    "`{}` is not one of its variants ({})",
+                    v.get("kind")
+                        .map_or_else(|| v.to_string(), |k| k.as_str().unwrap_or("?").to_owned()),
+                    kinds.join(", ")
+                )),
+            };
+        }
+        let mut last = String::from("no alternative fits");
+        for alt in any {
+            match conforms(v, alt) {
+                Ok(()) => return Ok(()),
+                Err(e) => last = e,
+            }
+        }
+        return Err(last);
+    }
+    if let Some(options) = schema.get("enum").and_then(Value::as_array)
+        && !options.contains(v)
+    {
+        return Err(format!(
+            "{v} is not one of {}",
+            Value::Array(options.clone())
+        ));
+    }
+    let ok = match schema["type"].as_str() {
+        Some("string") => v.is_string(),
+        Some("integer") => v.is_i64() || v.is_u64(),
+        Some("number") => v.is_number(),
+        Some("boolean") => v.is_boolean(),
+        Some("array") => {
+            let Some(items) = v.as_array() else {
+                return Err(format!("expected a list, got {v}"));
+            };
+            for i in items {
+                conforms(i, &schema["items"])?;
+            }
+            true
+        }
+        Some("object") => {
+            let Some(obj) = v.as_object() else {
+                return Err(format!("expected an object, got {v}"));
+            };
+            for r in schema["required"].as_array().into_iter().flatten() {
+                let name = r.as_str().unwrap_or_default();
+                let Some(field) = obj.get(name) else {
+                    return Err(format!("missing `{name}`"));
+                };
+                conforms(field, &schema["properties"][name])?;
+            }
+            true
+        }
+        _ => true,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "expected a {}, got {v}",
+            schema["type"].as_str().unwrap_or("value")
+        ))
+    }
+}
+
+/// `calyx tick`: resumes the waiting runs that can go on.
+fn tick(args: &[String]) -> ExitCode {
+    let now = runs::now();
+    let mut resumed = 0;
+    let mut waiting = 0;
+    let mut worst = ExitCode::SUCCESS;
+    for r in runs::list() {
+        if r.status != "waiting" {
+            continue;
+        }
+        let waits = runs::waits(&r.id);
+        if !waits.iter().any(|w| w.delivered || w.until <= now) {
+            waiting += 1;
+            continue;
+        }
+        eprintln!("{}: resuming {}", command(), r.id);
+        let mut a = vec![r.id.clone()];
+        a.extend(args.iter().cloned());
+        let code = rerun(&a, Mode::Resume);
+        if code != ExitCode::SUCCESS && code != ExitCode::from(4) {
+            worst = code;
+        }
+        resumed += 1;
+    }
+    eprintln!(
+        "{}: resumed {resumed} run(s); {waiting} still waiting",
+        command()
+    );
+    worst
+}
+
 fn list_runs() -> ExitCode {
     let all = runs::list();
     if all.is_empty() {
@@ -667,6 +843,20 @@ fn execute(
                 serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string())
             );
             ExitCode::SUCCESS
+        }
+        Err(e) if e.starts_with(runs::WAITING) => {
+            let cmd = command();
+            eprintln!("{cmd}: the run is {e}");
+            if let Some(id) = id {
+                for w in runs::waits(id) {
+                    eprintln!(
+                        "{cmd}: deliver it with `{cmd} deliver {id} {} '<json>'`; after {} it continues with `on timeout` (`{cmd} resume {id}` or `{cmd} tick`)",
+                        w.message,
+                        runs::utc(w.until)
+                    );
+                }
+            }
+            ExitCode::from(4)
         }
         Err(e) => {
             let cmd = command();

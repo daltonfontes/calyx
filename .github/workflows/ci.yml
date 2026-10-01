@@ -33,6 +33,18 @@ jobs:
           ./target/release/calyx run examples/memory.clyx --fake-models --user ana --text "Moro em Recife"
           ./target/release/calyx run examples/memory.clyx --fake-models --user ana --text "Onde eu moro?"
 
+      - name: Wait for a message, deliver it, continue (receive)
+        run: |
+          set +e
+          ./target/release/calyx run examples/approval.clyx --fake-models --request "reembolso" 2> wait.log
+          code=$?
+          set -e
+          cat wait.log
+          test "$code" -eq 4
+          id=$(sed -n 's/^calyx: run //p' wait.log)
+          ./target/release/calyx deliver "$id" Approval Approved
+          ./target/release/calyx resume "$id" --fake-models
+
       - name: Build a standalone program and run it from another directory
         run: |
           ./target/release/calyx build examples/agent.clyx -o "$RUNNER_TEMP/agent"

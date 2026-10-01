@@ -37,18 +37,16 @@ const UNITS: &[&str] = &[
 /// Units accepted after `/` in a rate, as in `50/s`.
 const RATE_UNITS: &[&str] = &["s", "min", "h"];
 
-const DECLS: &[&str] = &["model", "tool", "type", "prompt", "graph", "entity", "def"];
+const DECLS: &[&str] = &[
+    "model", "tool", "type", "message", "prompt", "graph", "entity", "def",
+];
 
 /// Declarations planned for later milestones.
-const FUTURE_DECLS: &[(&str, &str)] = &[
-    ("message", "a later milestone"),
-    ("router", "a later milestone"),
-];
+const FUTURE_DECLS: &[(&str, &str)] = &[("router", "a later milestone")];
 
 /// Statements and expressions planned for later milestones.
 const FUTURE_STMTS: &[(&str, &str)] = &[
     ("state", "a later milestone"),
-    ("receive", "a later milestone"),
     ("respond", "a later milestone"),
     ("rounds", "a later milestone"),
     ("race", "a later milestone"),
@@ -366,6 +364,10 @@ impl Parser<'_> {
             "model" => self.model_decl().map(Decl::Model),
             "tool" => self.tool_decl().map(Decl::Tool),
             "type" => self.type_decl().map(Decl::Type),
+            "message" => self.type_decl().map(|mut t| {
+                t.message = true;
+                Decl::Type(t)
+            }),
             "prompt" => self.prompt_decl().map(Decl::Prompt),
             "graph" => self.graph_decl().map(Decl::Graph),
             "entity" => self.entity_decl().map(Decl::Entity),
@@ -522,6 +524,7 @@ impl Parser<'_> {
             ty
         };
         Ok(TypeDecl {
+            message: false,
             name,
             ty,
             span: self.span_from(start),
@@ -1065,6 +1068,9 @@ impl Parser<'_> {
         if (self.is_word("ask") || self.is_word("send")) && self.nth_kind(1) == TokenKind::Ident {
             return self.message_expr();
         }
+        if self.is_word("receive") && self.nth_kind(1) == TokenKind::Ident {
+            return self.receive_expr();
+        }
         if self.is_word("for") {
             return Err(self.error_here(
                 "E0107",
@@ -1460,6 +1466,60 @@ impl Parser<'_> {
         })
     }
 
+    /// `receive Message, timeout N unit:` then an indented `on timeout: value`.
+    fn receive_expr(&mut self) -> PResult<Expr> {
+        let start = self.advance().span; // receive
+        let message = self.ident("the message type")?;
+        let mut timeout = None;
+        let mut on_timeout = None;
+        if self.eat(TokenKind::Comma) {
+            if !self.is_word("timeout") {
+                return Err(self.error_here("E0112", "expected `timeout`", "`, timeout 3 days`"));
+            }
+            self.advance();
+            timeout = Some(Box::new(self.add_expr()?));
+        }
+        if self.kind() == TokenKind::Colon {
+            self.block_start("`on timeout: value`")?;
+            if !(self.is_word("on") && self.nth_kind(1) == TokenKind::Ident) {
+                return Err(self.error_here(
+                    "E0112",
+                    "expected `on timeout:`",
+                    "`on timeout: value`",
+                ));
+            }
+            self.advance();
+            let what = self.ident("`timeout`")?;
+            if what.name != "timeout" {
+                return Err(self.error_here_at(
+                    what.span,
+                    "E0112",
+                    "a `receive` handles only `on timeout`",
+                    "`on timeout: value`",
+                    &what.name,
+                ));
+            }
+            self.expect(TokenKind::Colon, "`:` and the value")?;
+            on_timeout = Some(Box::new(self.expr()?));
+            self.end_of_line()?;
+            if !self.eat(TokenKind::Dedent) {
+                return Err(self.error_here(
+                    "E0112",
+                    "expected the end of the `receive`",
+                    "nothing after `on timeout`",
+                ));
+            }
+        }
+        Ok(Expr {
+            span: self.span_from(start),
+            kind: ExprKind::Receive {
+                message,
+                timeout,
+                on_timeout,
+            },
+        })
+    }
+
     /// `ask Entity(key).Handler(args)` or `send Entity(key).Handler(args)`.
     fn message_expr(&mut self) -> PResult<Expr> {
         let start = self.tok().span;
@@ -1851,7 +1911,7 @@ graph research(topic: Text) -> List[Text]:
 
     #[test]
     fn future_constructs_name_their_milestone() {
-        let (_, diags) = parse("graph g() -> Text:\n    a = receive Approval\n    return a\n");
+        let (_, diags) = parse("graph g() -> Text:\n    respond a\n    return a\n");
         assert_eq!(diags.len(), 1, "{diags:#?}");
         assert_eq!(diags[0].code, "E0101");
         assert!(diags[0].message.contains("later milestone"));

@@ -180,6 +180,12 @@ struct exec {
     /* Identifies this run in entities' records of applied messages: the
      * run's directory name, the same when it is resumed. */
     const char *run_id;
+    /* The run's directory (with the journal): where `receive` keeps its
+     * deadlines (`waits.jsonl`) and finds delivered messages (`inbox.jsonl`). */
+    const char *run_dir;
+    /* `receive`s waiting for a message: the run stops, to be resumed. */
+    int waiting;
+    const char *wait_desc;
     int trace;
     double t0;
     cx_buf err;
@@ -477,10 +483,13 @@ static void wake(exec *x, worker *w, pending *p) {
 }
 
 /* Nothing is ready, running or in flight, yet the graph is not done. */
+/* Nothing can run: the run waits for messages (D21), or it is a bug. */
 static void check_stuck(exec *x) {
     if (x->ready <= 0 && x->running == 0 && x->inflight == 0 && x->jobs.len == 0 &&
         !x->finished && !x->stopping)
-        fail_locked(x, NULL, NULL, "internal error: the run stopped with nothing left to do");
+        fail_locked(x, NULL, NULL,
+                    x->waiting ? x->wait_desc
+                               : "internal error: the run stopped with nothing left to do");
 }
 
 static void graph_done(exec *x, worker *w, gexec *g) {
@@ -1953,6 +1962,130 @@ out:
     return result;
 }
 
+/* ----- receive (D21) -------------------------------------------------------- */
+
+/* The `value` of the line of `file` (in the run's directory) whose `key`
+ * is `key`, or NULL. */
+static cx_value *keyed_line(ctx *c, const char *file, const char *key, const char *field) {
+    char path[2200];
+    snprintf(path, sizeof path, "%s/%s", c->x->run_dir, file);
+    size_t len = 0;
+    char *text = slurp(&c->w->arena, path, &len);
+    cx_value *found = NULL;
+    for (char *line = text; line && *line;) {
+        char *end = strchr(line, '\n');
+        size_t l = end ? (size_t)(end - line) : strlen(line);
+        cx_value *v = cx_parse(&c->w->arena, line, l, NULL);
+        if (v && strcmp(cx_get_str(v, "key", ""), key) == 0) found = cx_get(v, field);
+        line = end ? end + 1 : line + l;
+    }
+    return found;
+}
+
+static int append_line(const char *path, const char *data, size_t len) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) return -1;
+    int ok = write(fd, data, len) == (ssize_t)len && write(fd, "\n", 1) == 1 && fsync(fd) == 0;
+    return close(fd) == 0 && ok ? 0 : -1;
+}
+
+/* Records the value a `receive` got (a message, or its timeout value). */
+static cx_value *received(ctx *c, const char *key, cx_value *v, int timed_out) {
+    exec *x = c->x;
+    const char *keys[2] = {"value", "timed_out"};
+    cx_value *vals[2] = {v, cx_bool(&c->w->arena, timed_out)};
+    job j;
+    memset(&j, 0, sizeof j);
+    j.key = key;
+    cx_sha256_hex(key, strlen(key), j.req_hash);
+    if (!journal_record(x, &j, "read", cx_rec(&c->w->arena, keys, vals, 2)))
+        return fatalf(c, "cannot write the journal");
+    pthread_mutex_lock(&x->mu);
+    new_pending(x, &c->w->arena, fmt(&c->w->arena, "%s", key), P_DONE, v);
+    pthread_mutex_unlock(&x->mu);
+    return v;
+}
+
+/*
+ * `receive M, timeout T:` + `on timeout: v`. A message delivered to this
+ * receive (`calyx deliver`, into `inbox.jsonl`) is its value. Otherwise,
+ * the first time the run gets here the deadline is written down
+ * (`waits.jsonl`: now + T), so it holds across stops and resumes; once it
+ * passes, the value is `v`. Until then the receive waits: when nothing
+ * else can run, the run stops, to be resumed later (`calyx resume`,
+ * `calyx tick`). What it got goes to the journal like any call.
+ */
+static cx_value *call_receive(ctx *c, cx_value *e) {
+    exec *x = c->x;
+    const char *key = call_key(c, e);
+    const char *msg = cx_get_str(e, "message", "?");
+    pthread_mutex_lock(&x->mu);
+    pending *p = ptab_get(x, key);
+    pthread_mutex_unlock(&x->mu);
+    if (p && p->state == P_DONE) return p->value;
+    if (x->journal) {
+        int mismatch = 0;
+        char hash[65];
+        cx_sha256_hex(key, strlen(key), hash);
+        pthread_mutex_lock(&x->jmu);
+        cx_value *hit = cx_journal_lookup(x->journal, key, hash, &mismatch);
+        int replay = cx_journal_get_mode(x->journal) == CX_JOURNAL_REPLAY;
+        pthread_mutex_unlock(&x->jmu);
+        if (hit) {
+            cx_value *v = cx_get(hit, "value");
+            pthread_mutex_lock(&x->mu);
+            x->from_journal++;
+            new_pending(x, &c->w->arena, key, P_DONE, v);
+            pthread_mutex_unlock(&x->mu);
+            trace(x, c->label, "recv  %s  from the journal", msg);
+            return v;
+        }
+        if (replay) return fatalf(c, "replay: `receive %s` is not in the journal", msg);
+    }
+    if (!x->run_dir) return failf(c, "`receive %s` needs a journal (run without --no-journal)", msg);
+
+    cx_value *delivered = keyed_line(c, "inbox.jsonl", key, "value");
+    if (delivered) {
+        trace(x, c->label, "recv  %s  delivered", msg);
+        return received(c, key, delivered, 0);
+    }
+    cx_value *u = keyed_line(c, "waits.jsonl", key, "until");
+    double until = u && u->kind == CX_NUM ? u->u.num : -1;
+    double t = (double)time(NULL);
+    if (until < 0) {
+        until = t + cx_get_num(e, "timeout_s", 0);
+        cx_buf line = {0};
+        cx_buf_puts(&line, "{\"key\":");
+        cx_buf_json_str(&line, key, strlen(key));
+        cx_buf_puts(&line, ",\"message\":");
+        cx_buf_json_str(&line, msg, strlen(msg));
+        cx_buf_printf(&line, ",\"until\":%.0f}", until);
+        char path[2200];
+        snprintf(path, sizeof path, "%s/waits.jsonl", x->run_dir);
+        int bad = append_line(path, line.data, line.len) != 0;
+        cx_buf_free(&line);
+        if (bad) return fatalf(c, "cannot write %.300s", path);
+    }
+    if (t >= until) {
+        cx_value *v = eval(c, cx_get(e, "on_timeout"));
+        if (!v || v == PENDING) return v;
+        trace(x, c->label, "recv  %s  timed out", msg);
+        return received(c, key, v, 1);
+    }
+    time_t ut = (time_t)until;
+    struct tm tmv;
+    gmtime_r(&ut, &tmv);
+    char when[64];
+    strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S UTC", &tmv);
+    pthread_mutex_lock(&x->mu);
+    x->waiting++;
+    if (!x->wait_desc)
+        x->wait_desc = fmt(&x->arena, "waiting: `%s` at `%s`, until %s", msg, key, when);
+    pthread_mutex_unlock(&x->mu);
+    trace(x, c->label, "recv  %s  waiting until %s", msg, when);
+    return PENDING;
+}
+
 /* ----- agents ------------------------------------------------------------- */
 
 /* The tool definitions the model sees (OpenAI "function" format). */
@@ -2312,6 +2445,7 @@ static cx_value *eval(ctx *c, cx_value *e) {
     if (strcmp(k, "agent") == 0) return call_agent(c, e);
     if (strcmp(k, "ask") == 0 || strcmp(k, "send") == 0) return call_message(c, e);
     if (strcmp(k, "bool") == 0) return cx_get(e, "v");
+    if (strcmp(k, "receive") == 0) return call_receive(c, e);
     if (strcmp(k, "let") == 0) {
         cx_value *v = eval(c, cx_get(e, "v"));
         if (!v || v == PENDING) return v;
@@ -2562,6 +2696,7 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
     if (dir) {
         const char *slash = strrchr(dir, '/');
         x->run_id = slash ? slash + 1 : dir;
+        x->run_dir = dir;
     } else {
         x->run_id = fmt(&x->arena, "pid%ld-%ld", (long)getpid(), (long)time(NULL));
     }
@@ -2621,7 +2756,9 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
         fprintf(stderr,
                 "%7.2fs  %s: %lu model call(s) (%llu -> %llu tokens), %lu tool call(s), %lu "
                 "retry(ies), at most %d at once",
-                now() - x->t0, result ? "finished" : "failed", x->model_calls, x->input_tokens,
+                now() - x->t0,
+                result ? "finished" : x->waiting ? "stopped to wait" : "failed", x->model_calls,
+                x->input_tokens,
                 x->output_tokens, x->tool_calls, x->retries, x->max_inflight);
         if (x->journal) fprintf(stderr, ", %lu taken from the journal", x->from_journal);
         if (x->spent > 0) fprintf(stderr, ", %.4f USD", x->spent);

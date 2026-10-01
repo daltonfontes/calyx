@@ -121,6 +121,13 @@ pub enum Expr {
     /// the entity's state.
     State(String),
     Bool(bool),
+    /// `receive` (decision D21): waits for a message; `on_timeout` is the
+    /// value when the deadline passes first.
+    Receive {
+        message: String,
+        timeout_s: u64,
+        on_timeout: Box<Expr>,
+    },
     /// `value` in local `slot` while `body` is computed (a `def`'s `x = ...`).
     Let {
         slot: usize,
@@ -362,6 +369,7 @@ impl Graph {
                 }
                 Expr::Tool { args, .. } => 1.0 + args.iter().map(calls).sum::<f64>(),
                 Expr::State(_) | Expr::Bool(_) => 0.0,
+                Expr::Receive { .. } => 1.0,
                 Expr::Let { value, body, .. } => calls(value) + calls(body),
                 Expr::Comprehension { over, body, .. } => calls(over) + calls(body),
                 Expr::Def { args, .. } | Expr::Builtin { args, .. } => args.iter().map(calls).sum(),
@@ -438,6 +446,9 @@ pub struct Program {
     pub graphs: Vec<Graph>,
     pub entities: Vec<Entity>,
     pub defs: Vec<Def>,
+    /// Types a run can `receive`: name and JSON Schema (to check what is
+    /// delivered).
+    pub messages: Vec<(String, String)>,
 }
 
 /// A pure function (decision D27): parameters in local slots `0..n`, its

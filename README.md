@@ -66,8 +66,9 @@ O **discovery** está concluído (35 decisões fechadas). Na implementação, es
 - **M6b:** sandboxes. O agente trabalha numa cópia do repositório, com empréstimos `reads`/`edits` verificados e snapshots para desfazer e retomar.
 - **M6c:** entidades: estado entre execuções, uma mudança por vez por chave, cada mensagem aplicada uma vez.
 - **M7:** camada pura: `def`, `true`/`false`, listas por compreensão, `in` e funções embutidas.
+- **M8:** `receive`. Uma execução espera dias por uma mensagem (uma aprovação, por exemplo) sem servidor nenhum, e continua de onde parou.
 
-Na medida Q2, o compilador pega 28 de 41 bugs de estado antes de rodar, e 35 de 41 nunca causam dano. A Calyx se instala como um binário só, e `calyx build` gera executáveis autocontidos (D35). Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
+Na medida Q2, o compilador pega 30 de 45 bugs de estado antes de rodar, e 39 de 45 nunca causam dano. A Calyx se instala como um binário só, e `calyx build` gera executáveis autocontidos (D35). Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
 
 ## Como instalar
 
@@ -114,6 +115,11 @@ cargo run -p calyx-cli -- run examples/fix.clyx --fake-models --repo examples/sa
 # Memória entre conversas (uma entidade por usuário, em .calyx/entities/):
 cargo run -p calyx-cli -- run examples/memory.clyx --fake-models --user ana --text "Moro em Recife"
 
+# Aprovação humana: a execução para e espera (estado `waiting`), sem servidor:
+cargo run -p calyx-cli -- run examples/approval.clyx --fake-models --request "reembolso de 300"
+cargo run -p calyx-cli -- deliver <id> Approval Approved
+cargo run -p calyx-cli -- resume <id> --fake-models      # ou `calyx tick`, num cron
+
 # Escritas externas seguras: reembolso com precondições e e-mail que nunca sai duas vezes:
 cargo run -p calyx-cli -- run examples/refund.clyx --fake-models --request R1 --order A100 --message "chegou quebrado"
 
@@ -159,7 +165,7 @@ command = ["python3", "tools/fake_search.py"]   # relativo ao calyx.toml
 | `runtime/rs` | A camada de E/S em Rust que o interpretador chama: modelos por HTTPS, tools por MCP, `calyx.toml`; e o verificador exposto ao C. Tudo sai numa biblioteca estática só |
 | `tests/programs/` | Programas de teste com os diagnósticos esperados (`.expected`) e a representação intermediária esperada (`.ir`) |
 | `tests/state_bugs/` | A medida Q2: workflows com um bug de estado conhecido cada, e quem o pega (compilador, runtime ou ninguém) |
-| `examples/` | Programas de exemplo. `research.clyx`, `agent.clyx`, `refund.clyx`, `fix.clyx` e `memory.clyx` passam na verificação e rodam; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
+| `examples/` | Programas de exemplo. `research.clyx`, `agent.clyx`, `refund.clyx`, `fix.clyx`, `memory.clyx` e `approval.clyx` passam na verificação e rodam; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
 
 ## Plano de implementação
 

@@ -22,6 +22,7 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
         graphs: HashMap::new(),
         entities: HashMap::new(),
         defs: HashMap::new(),
+        messages: HashSet::new(),
         types: HashMap::new(),
         unit_variants: HashMap::new(),
         variant_owners: HashMap::new(),
@@ -129,6 +130,8 @@ struct Cx<'a, 'p> {
     graphs: HashMap<&'p str, (&'p GraphDecl, GraphSig)>,
     entities: HashMap<&'p str, EntitySig>,
     defs: HashMap<&'p str, DefSig>,
+    /// Types declared with `message`: what a run can `receive`.
+    messages: HashSet<&'p str>,
     types: HashMap<&'p str, UserType>,
     /// Variants without fields, usable as values: `Optimist` is a `Role`.
     unit_variants: HashMap<&'p str, &'p str>,
@@ -186,6 +189,9 @@ impl<'p> Cx<'_, 'p> {
                     self.models.insert(&m.name.name, m);
                 }
                 Decl::Type(t) => {
+                    if t.message {
+                        self.messages.insert(&t.name.name);
+                    }
                     // Placeholder so types can refer to each other by name.
                     self.types
                         .insert(&t.name.name, UserType::Variants(Vec::new()));
@@ -702,13 +708,90 @@ impl<'p> Cx<'_, 'p> {
                         found = Some(x.span);
                     }
                 }
-                ExprKind::Agent(_) | ExprKind::Message(_) | ExprKind::Borrow { .. } => {
-                    found = Some(x.span)
-                }
+                ExprKind::Agent(_)
+                | ExprKind::Message(_)
+                | ExprKind::Borrow { .. }
+                | ExprKind::Receive { .. } => found = Some(x.span),
                 _ => {}
             }
         });
         found
+    }
+
+    /// `receive M, timeout T:` + `on timeout: value` (decision D21). The run
+    /// may stop and wait for days: the deadline goes to the journal.
+    fn receive(
+        &mut self,
+        message: &Ident,
+        timeout: Option<&Expr>,
+        on_timeout: Option<&Expr>,
+        span: Span,
+        gc: &GraphCx,
+    ) -> Typed {
+        let ty = if self.messages.contains(message.name.as_str()) {
+            Ty::User(message.name.clone())
+        } else {
+            self.push(
+                err("E0670", "`receive` needs a `message` type", message.span)
+                    .expected("a type declared with `message Name = ...`: what the run may receive from outside")
+                    .observed(format!("`{}`", message.name)),
+            );
+            Ty::Error
+        };
+        match timeout {
+            None => self.push(err("E0671", "`receive` needs a `timeout`", span).expected(
+                "`receive M, timeout 3 days:` and `on timeout: value`; a run never waits forever",
+            )),
+            Some(t) => {
+                let ok = matches!(&t.kind, ExprKind::Int { unit: Some(u), .. } if ["s", "min", "h", "days"].contains(&u.as_str()));
+                if !ok {
+                    self.push(
+                        err(
+                            "E0671",
+                            "the timeout is a duration written in the program",
+                            t.span,
+                        )
+                        .expected("a number of `s`, `min`, `h` or `days`, e.g. `3 days`"),
+                    );
+                }
+            }
+        }
+        match on_timeout {
+            None => self.push(
+                err(
+                    "E0672",
+                    "`receive` must say what happens `on timeout`",
+                    span,
+                )
+                .expected("an indented `on timeout: value` of the message's type"),
+            ),
+            Some(v) => {
+                if let Some(s) = self.impure(v) {
+                    self.push(
+                        err("E0672", "`on timeout` is a value, not a call", s).expected(
+                            "a value of the message's type, e.g. `Denied(reason=\"expirou\")`",
+                        ),
+                    );
+                }
+                let t = self.expr(v, gc);
+                if !assignable(&t.ty, &ty) {
+                    self.push(
+                        err(
+                            "E0672",
+                            "`on timeout` gives a value of the wrong type",
+                            v.span,
+                        )
+                        .expected(format!("`{ty}`"))
+                        .observed(format!("`{}`", t.ty)),
+                    );
+                }
+            }
+        }
+        Typed {
+            ty,
+            kind: NodeKind::Other(format!("receive {}", message.name)),
+            effect: Effect::Read,
+        }
     }
 
     /// `ask Entity(key).Handler(args)` / `send ...` (decisions D15, D21).
@@ -2019,6 +2102,17 @@ impl<'p> Cx<'_, 'p> {
             ExprKind::Guarded { call, requires } => self.guarded(call, requires, gc),
             ExprKind::Message(m) => self.message(m, gc),
             ExprKind::Bool(_) => Typed::pure(Ty::Bool),
+            ExprKind::Receive {
+                message,
+                timeout,
+                on_timeout,
+            } => self.receive(
+                message,
+                timeout.as_deref(),
+                on_timeout.as_deref(),
+                e.span,
+                gc,
+            ),
             ExprKind::Comprehension {
                 body,
                 var,
@@ -3131,6 +3225,10 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
                     walk(c, f);
                 }
             }
+            ExprKind::Receive {
+                on_timeout: Some(v),
+                ..
+            } => walk(v, f),
             _ => {}
         }
     }
@@ -3201,6 +3299,7 @@ fn visit(e: &Expr, f: &mut dyn FnMut(&Expr)) {
             .into_iter()
             .flatten()
             .collect(),
+        ExprKind::Receive { on_timeout, .. } => on_timeout.as_deref().into_iter().collect(),
         _ => Vec::new(),
     };
     for k in kids {
@@ -3369,6 +3468,11 @@ fn collect_refs(e: &Expr, bound: Option<&str>, index: &HashMap<&str, usize>, out
             }
             let hidden = index.get(var.name.as_str()).copied();
             out.extend(inner.into_iter().filter(|i| Some(*i) != hidden));
+        }
+        ExprKind::Receive { on_timeout, .. } => {
+            if let Some(v) = on_timeout {
+                collect_refs(v, bound, index, out);
+            }
         }
         ExprKind::Bool(_) => {}
         // Only graph parameters are lent: no step to depend on.

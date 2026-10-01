@@ -391,7 +391,22 @@ send Memoria(usuario).Remember(novos)          # assíncrono
 
 O compilador recusa ciclos de `ask` (D33).
 
-**Como está implementado (M6c):** `ask` e `send` (o `receive`, mensagens para uma execução em andamento, fica para depois).
+**Como está implementado (M8): `receive`.**
+
+```
+message Approval = Approved | Denied(reason: Text)
+
+approval = receive Approval, timeout 3 days:
+    on timeout: Denied(reason="ninguém respondeu")
+```
+
+- Só tipos declarados com `message` (`E0670`). `timeout` e `on timeout` são obrigatórios: uma execução nunca espera para sempre (`E0671`, `E0672`).
+- **A execução para de verdade:** quando nada mais pode rodar, ela sai com o estado `waiting` (código 4). O prazo absoluto (agora + `timeout`) é gravado uma vez em `waits.jsonl`, no diretório da execução: vale mesmo se a máquina reiniciar.
+- `calyx deliver <id> Approval '<json>'` confere a mensagem contra o tipo e a entrega ao `receive` mais antigo que espera por ela (`inbox.jsonl`). Só para execuções que estão esperando.
+- `calyx resume <id>` continua; `calyx tick` continua toda execução que recebeu mensagem ou cujo prazo venceu, e foi feito para rodar num agendador (cron): **não há servidor**. Vencido o prazo, o valor é o de `on timeout`.
+- O que o `receive` recebeu (ou o valor de `on timeout`) vai para o diário: a retomada e o `replay` não precisam da mensagem de novo. Precisa de diário (não roda com `--no-journal`).
+
+**Como está implementado (M6c):** `ask` e `send`.
 
 - `ask` só para handlers que respondem; `send` só para os que mudam o estado (`E0656`); entidade e mensagem precisam existir (`E0655`). `send` pode ser uma linha sozinha.
 - **Ordem dentro de uma execução:** mensagens à mesma entidade seguem a ordem do texto, como os empréstimos de sandbox: um `send` depois de toda mensagem anterior a ela, um `ask` depois de todo `send` anterior. A execução vê as próprias mudanças.
@@ -556,6 +571,7 @@ graph solve(issue: Text, repo: Sandbox) -> Text:
 - **Durabilidade:** cada entrada chega ao sistema operacional antes da próxima chamada começar, então uma queda do processo não perde nada já concluído. O `fsync` (que protege também de queda de energia) roda no máximo uma vez por segundo, e sempre antes de escritas externas e no fim.
 - **`write once`:** uma entrada `begin` é gravada (com `fsync`) antes da chamada. Se a execução cai entre o `begin` e o fim da chamada, o resultado é desconhecido: a retomada **não repete** a chamada por conta própria, e aplica a política `on_uncertain` da tool (ou a decisão `--uncertain` dada na retomada). Uma chamada tomada como feita entra no diário, então o replay não precisa de decisão.
 - Uma linha cortada no meio por uma queda é descartada na retomada.
+- **Esperas (`receive`):** o diretório da execução guarda `waits.jsonl` (o prazo de cada espera) e `inbox.jsonl` (as mensagens entregues). Uma execução que espera termina com o estado `waiting`.
 - **Sandboxes:** a resposta de uma chamada que edita uma sandbox leva o hash do snapshot depois dela; a retomada põe cada sandbox de volta ao último snapshot do diário (seção 7.3).
 
 ### 9.4 Atores do runtime (D10)
@@ -609,7 +625,9 @@ Mensagens de erro estruturadas, com **esperado**, **observado** e **local**, par
 | `calyx fmt` | Formata o código |
 | `calyx resume` | Continua uma execução interrompida ou que falhou: `calyx resume <id>`. Chamadas já no diário não são feitas (nem pagas) de novo. `--budget` aumenta um orçamento esgotado; `--uncertain done\|retry\|failed` diz o que aconteceu com chamadas `write once` de resultado incerto |
 | `calyx replay` | Reexecuta a partir de um diário, sem chamar modelos nem tools: `calyx replay <id>` |
-| `calyx runs` | Lista as execuções, com estado (`finished`, `failed`, `interrupted`), chamadas e retomadas |
+| `calyx runs` | Lista as execuções, com estado (`finished`, `failed`, `interrupted`, `waiting`), chamadas e retomadas |
+| `calyx deliver` | Entrega uma mensagem a uma execução que espera num `receive`: `calyx deliver <id> Approval Approved` |
+| `calyx tick` | Retoma as execuções que receberam mensagem ou cujo prazo venceu; para rodar num agendador (cron) |
 | `calyx trace` | Mostra o grafo realizado, custos e latências por nó |
 
 ### 11.1 Configuração do projeto (`calyx.toml`)

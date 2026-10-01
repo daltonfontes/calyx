@@ -6,5 +6,4 @@ graph g(q: Text) -> Text:
         one: q
     b = rounds 3, carry t = q:
         next t
-    r = receive Approval
     return q

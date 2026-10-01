@@ -147,6 +147,18 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
     }
     for d in &program.decls {
         match d {
+            Decl::Type(t) if t.message => {
+                let named = TypeExpr {
+                    kind: TypeKind::Named {
+                        name: t.name.clone(),
+                        args: Vec::new(),
+                        max: None,
+                    },
+                    span: t.name.span,
+                };
+                out.messages
+                    .push((t.name.name.clone(), cx.schema(&named, 0)));
+            }
             Decl::Entity(e) => out.entities.push(cx.entity(e)),
             Decl::Def(f) => out.defs.push(cx.def(f)),
             _ => {}
@@ -289,6 +301,32 @@ impl Lower<'_> {
             ExprKind::Call { callee, args } => self.call(callee, args, scope),
             ExprKind::Borrow { target, .. } => self.name(&target.name, scope),
             ExprKind::Bool(b) => ir::Expr::Bool(*b),
+            ExprKind::Receive {
+                message,
+                timeout,
+                on_timeout,
+            } => {
+                let seconds = match timeout.as_deref().map(|t| &t.kind) {
+                    Some(ExprKind::Int { value, unit }) => {
+                        let per = match unit.as_deref() {
+                            Some("min") => 60,
+                            Some("h") => 3600,
+                            Some("days") => 86_400,
+                            _ => 1,
+                        };
+                        value.saturating_mul(per)
+                    }
+                    _ => 0,
+                };
+                ir::Expr::Receive {
+                    message: message.name.clone(),
+                    timeout_s: seconds,
+                    on_timeout: Box::new(match on_timeout {
+                        Some(v) => self.expr(v, scope),
+                        None => ir::Expr::Text(String::new()),
+                    }),
+                }
+            }
             ExprKind::Comprehension {
                 body,
                 var,
