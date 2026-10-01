@@ -1,0 +1,30 @@
+# Bug: E-mail não idempotente sem dizer o que fazer se cair no meio do envio: na retomada, reenviar ou não?
+# Pego por: E0304
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt decide(o: Order) -> Float:
+    """Quanto reembolsar de {o}?"""
+
+tool email(to: Text, text: Text) -> Unit:
+    effect write once
+
+graph g(id: Text) -> Text:
+    o = get_order(id)
+    sent = email(o.email, "oi")
+    return "ok"

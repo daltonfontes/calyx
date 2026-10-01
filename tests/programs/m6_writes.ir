@@ -1,0 +1,7 @@
+graph pay(id: Text, to: Text, amount: Float, limit: Float) -> Text [write once]
+  %0 sent: Unit = tool transfer [write]
+  %1 told: Unit = tool notify [write once] <- %0
+  %2 logged: Unit = tool post [write once] <- %1
+  %3 t: Result[Text] = try [write once] <- %2
+  %4 return: Text = match [pure] <- %3
+  return %4

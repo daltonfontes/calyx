@@ -57,6 +57,10 @@ pub struct RunOptions {
     /// Replaces the program's `budget` (in USD), e.g. to continue a run
     /// that used it up.
     pub budget_usd: Option<f64>,
+    /// When resuming: what happened to `write once` calls of unknown
+    /// outcome: `done`, `retry` or `failed`. `None`: each tool's
+    /// `on_uncertain` decides.
+    pub uncertain: Option<String>,
 }
 
 /// Runs `graph` of a compiled program (the IR in JSON) with `args` (a JSON
@@ -78,6 +82,7 @@ pub fn run(
         "program": opts.program.as_ref().map(|p| p.display().to_string()),
         "deterministic": opts.deterministic,
         "budget_usd": opts.budget_usd,
+        "uncertain": opts.uncertain,
     });
     io::configure(opts.config, opts.fake_models);
     let c = |s: &str| CString::new(s).map_err(|_| "text contains NUL".to_owned());

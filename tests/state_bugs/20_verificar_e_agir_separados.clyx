@@ -1,0 +1,35 @@
+# Bug: O status é conferido com uma leitura e o reembolso vem depois, sem `requires`: entre os dois o pedido pode mudar.
+# Pego por: none
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt decide(o: Order) -> Float:
+    """Quanto reembolsar de {o}?"""
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    checks OrderState
+
+graph g(request: Text, id: Text) -> Text:
+    o = get_order(id)
+    paid = if o.status == Delivered:
+        refund(request, id, 10.0)
+    else:
+        refund(request, id, 0.0)
+    return "ok"

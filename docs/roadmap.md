@@ -26,7 +26,7 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | **M3** | Diário, retomada após queda, `calyx replay` | **Q3:** quanto trabalho é refeito depois de uma falha |
 | **M4** | Workers com roubo de trabalho, limites, prioridade pelo caminho crítico | **Q1:** quanto paralelismo sai sozinho |
 | **M5** | `loop`, `agent`, `match` com variantes, `try` | O ReAct como ciclo funciona |
-| **M6** | `write`, `write once`, `requires`, sandbox, entidades | **Q2:** quantos bugs de estado o compilador pega |
+| **M6** | `write`, `write once`, `requires`, sandbox, entidades. Em duas partes: **M6a**, escritas externas seguras; **M6b**, sandbox e entidades | **Q2:** quantos bugs de estado o compilador pega |
 | **Depois** | Geração de C nativo (como otimização, D35), várias máquinas, roteador, `rounds`, `race` | Desempenho e cobertura da especificação |
 
 ## Estado
@@ -40,7 +40,8 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | M4 | ✅ Concluído: cada passo e cada item de `for each` é uma tarefa; workers com fila de prioridade e roubo de trabalho; chamadas em threads de E/S (nunca bloqueiam um worker), até `limits threads`; prioridade pelo caminho crítico calculado pelo compilador; limites `rate` e `budget` (preços no `calyx.toml`); espera pedida pelo provedor respeitada; `--deterministic` |
 | M5 | ✅ Concluído: `agent` (ciclo ReAct com chamada de tools nativa do provedor, tools em paralelo, `stuck`, `final_answer`), `loop` com `done`/`next`/`on limit`, `match` com cobertura de todas as variantes, `if`, operadores, construção de registros e variantes, `try` com `Result[T]`. Falhas locais (capturáveis) e respostas conferidas contra o tipo do prompt |
 | Distribuição (D35) | ✅ Concluído: binários estáticos (musl) para Linux x86_64 e ARM, e binários para macOS, publicados por tag (`.github/workflows/release.yml`), com teste do binário e de um programa gerado com ele em cada alvo; `install.sh` com conferência de SHA-256; `calyx build` gera um executável autocontido (o próprio `calyx` com o programa e o `calyx.toml` anexados) |
-| M6 | Próximo |
+| M6a | ✅ Concluído: escritas externas seguras. `write` com `idempotency_key` (a chave vai para a tool, e a escrita pode ser repetida em erros temporários); `write once` com `on_uncertain pause`, `accept_loss` e `verify(tool(...))`, aplicadas tanto quando a resposta se perde (timeout, servidor caiu) quanto na retomada; `calyx resume --uncertain done\|retry\|failed` para a decisão de uma pessoa; precondições `requires` conferidas pela tool sobre o estado atual (`checks`), com falha local `PreconditionFailed` que o `try` captura; `after` e aviso de escritas sem ordem; agentes não usam tools `write once`. Exemplo: `examples/refund.clyx` com a loja falsa `examples/tools/fake_store.py` |
+| M6b | Próximo: sandbox (`reads`/`edits`, `fork`/`share`) e entidades (`entity`, `ask`, `send`, `receive`) |
 
 ## Medidas
 
@@ -59,6 +60,21 @@ Programas sintéticos (grafos de 21 nós com fan-out), binário de release, máq
 - **Otimizações possíveis, ainda não necessárias:** cerca de 20% das instruções são alocação (`malloc`/`free`) e 5% são o hash padrão de `HashMap`. Trocar o hash por um mais rápido e reduzir cópias de texto deve reduzir o tempo do arquivo grande.
 
 Para repetir: `cargo run --release -p calyx-check --example phases -- arquivo.clyx`.
+
+### M6a (Q2): quantos bugs de estado o compilador pega
+
+Uma suíte de 22 workflows pequenos, cada um com um bug de estado conhecido envolvendo escritas externas (`tests/state_bugs/`). Cada programa diz na segunda linha quem pega o bug, e um teste (`compiler/calyx-check/tests/state_bugs.rs`) confere. Para os que o compilador não pega, o teste exige que ele não diga nada, então a conta é honesta.
+
+| Quem pega | Bugs | Exemplos |
+|---|---|---|
+| **Compilador, antes de rodar** | **17 (77%)** | e-mail sem política para resultado incerto; agente com tool de e-mail; aviso que pode sair antes do pagamento; precondição numa tool que não sabe verificá-la, com campo errado, com tipos errados ou com uma chamada; `accept_loss` que inventaria um resultado; verificação que escreve; pagamento sem chave de idempotência; `after` com nome errado ou circular; grafo de leitura que paga; falha usada como sucesso; dois ramos que gravam o mesmo valor |
+| Runtime, quando o bug aconteceria | 2 | queda no meio do envio de um e-mail (nunca reenviado sem decisão); pedido que mudou entre a decisão e o reembolso (a tool recusa, `PreconditionFailed`) |
+| Ninguém | 3 | conferir com uma leitura e agir depois, sem `requires`; chave de idempotência mal escolhida (o pedido em vez da solicitação); itens de um `for each` gravando o mesmo arquivo |
+
+- **Resposta à Q2, para escritas externas: 17 de 22 bugs saem antes de rodar, e 19 de 22 nunca causam dano.** Dois dos 17 são avisos (`W0601`, `W0602`), não erros: o programa roda, mas o problema fica dito.
+- **O que escapa é semântico:** a linguagem garante que a precondição é conferida no momento certo, mas não obriga a escrevê-la, nem sabe se a chave escolhida identifica a operação certa. Dá para fechar parte disso depois: avisar quando uma escrita com `checks` não tem `requires`; avisar quando itens de um `for each` escrevem com a mesma chave.
+- **Comparação:** em bibliotecas como LangGraph (Python), nenhum desses bugs é verificado antes de rodar, porque não há análise do programa inteiro. Não medimos isso; é uma consequência de serem bibliotecas.
+- **Com um modelo de verdade:** `examples/refund.clyx` com o Gemini propôs 300 de reembolso para um pedido de 300; a loja pagou e o e-mail saiu depois (`notice after paid`). As falhas incertas (resposta perdida, servidor que cai antes ou só na primeira vez) são simuladas pela loja falsa e cobertas por testes de cada política, com retomada e replay.
 
 ### M5: o ReAct como ciclo funciona
 
@@ -112,7 +128,7 @@ Com modelos falsos de 1 s por chamada (sem variação de rede): sequencial 5,30 
 - **Resposta à Q3: nada do que terminou é refeito.** O que se perde numa queda é só a chamada em andamento naquele instante. Recomeçar do zero teria pago de novo 3 chamadas de modelo (652 tokens de entrada, 316 de saída) e uns 3 s.
 - **O resultado é o mesmo de uma execução sem queda:** os testes comparam a saída de uma execução retomada com a de uma que nunca caiu.
 - **Custo do diário:** cerca de 1 ms por execução (25 ms com diário, 24 ms sem, com modelos falsos). O `fsync` em lote é o que mantém esse custo baixo.
-- **Limite atual:** chamadas que estavam em andamento são refeitas; com paralelismo (M4) podem ser várias ao mesmo tempo. Escritas `write once` interrompidas não são refeitas: a execução para (M6 traz as políticas `on_uncertain`).
+- **Limite atual:** chamadas que estavam em andamento são refeitas; com paralelismo (M4) podem ser várias ao mesmo tempo. Escritas `write once` interrompidas não são refeitas sem critério: a política `on_uncertain` da tool decide (M6a).
 
 ### M2: primeira execução de ponta a ponta
 

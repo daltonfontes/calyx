@@ -772,7 +772,21 @@ impl Parser<'_> {
                     return self.for_each(name);
                 }
             }
-            let value = self.expr()?;
+            let mut value = self.expr()?;
+            if self.kind() == TokenKind::Colon {
+                // `x = tool(...):` or `x = try tool(...):`, then `requires` lines.
+                match value.kind {
+                    ExprKind::Call { .. } => value = self.requires_block(value)?,
+                    ExprKind::Try(inner) if matches!(inner.kind, ExprKind::Call { .. }) => {
+                        let guarded = self.requires_block(*inner)?;
+                        value = Expr {
+                            span: self.span_from(value.span),
+                            kind: ExprKind::Try(Box::new(guarded)),
+                        };
+                    }
+                    kind => value.kind = kind,
+                }
+            }
             return Ok(Stmt::Node {
                 name,
                 fan_out: None,
@@ -786,7 +800,13 @@ impl Parser<'_> {
             && self.nth_kind(1) == TokenKind::Ident
             && self.text_of(self.tokens[self.pos + 1]) == "after"
         {
-            return Err(self.unsupported("after", "M6"));
+            let node = self.ident("a step")?;
+            self.advance(); // after
+            let mut after = vec![self.ident("the step it comes after")?];
+            while self.eat(TokenKind::Comma) {
+                after.push(self.ident("a step")?);
+            }
+            return Ok(Stmt::After { node, after });
         }
         Err(self.error_here(
             "E0104",
@@ -1234,6 +1254,33 @@ impl Parser<'_> {
         })
     }
 
+    /// `call:` followed by indented `requires condition` lines (D29).
+    fn requires_block(&mut self, call: Expr) -> PResult<Expr> {
+        let start = call.span;
+        self.block_start("the call's `requires` lines")?;
+        let mut requires = Vec::new();
+        while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
+            if !self.is_word("requires") {
+                return Err(self.error_here(
+                    "E0109",
+                    "expected a precondition",
+                    "`requires condition`",
+                ));
+            }
+            self.advance();
+            requires.push(self.expr()?);
+            self.end_of_line()?;
+        }
+        self.eat(TokenKind::Dedent);
+        Ok(Expr {
+            span: self.span_from(start),
+            kind: ExprKind::Guarded {
+                call: Box::new(call),
+                requires,
+            },
+        })
+    }
+
     fn agent_expr(&mut self) -> PResult<Expr> {
         let start = self.advance().span;
         let model = self.ident("the model the agent uses")?;
@@ -1540,7 +1587,7 @@ graph research(topic: Text) -> List[Text]:
         match &g.body[0] {
             Stmt::Node { value, .. } => value.clone(),
             Stmt::Return(e) => e.clone(),
-            Stmt::Limits(_) => panic!(),
+            Stmt::Limits(_) | Stmt::After { .. } => panic!(),
         }
     }
 

@@ -1,0 +1,31 @@
+# Bug: Política de incerteza numa tool que escreve mas foi declarada como leitura: nada a protege.
+# Pego por: E0641
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt decide(o: Order) -> Float:
+    """Quanto reembolsar de {o}?"""
+
+tool email(to: Text, text: Text) -> Unit:
+    effect read
+    on_uncertain pause
+
+graph g(id: Text) -> Text:
+    o = get_order(id)
+    sent = email(o.email, "oi")
+    return "ok"

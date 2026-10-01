@@ -1,0 +1,30 @@
+# Bug: `accept_loss` numa tool que devolve um id: a execução seguiria com um id inventado.
+# Pego por: E0634
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt decide(o: Order) -> Float:
+    """Quanto reembolsar de {o}?"""
+
+tool open_ticket(title: Text) -> Text:
+    effect write once
+    on_uncertain accept_loss
+
+graph g(id: Text) -> Text:
+    t = open_ticket("pedido {id}")
+    return t

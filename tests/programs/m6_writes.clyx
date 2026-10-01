@@ -1,0 +1,40 @@
+# External writes (M6): keys, preconditions, uncertain outcomes, order.
+type Status = Open | Closed
+
+type Account:
+    status: Status
+    balance: Float
+
+tool transfer(id: Text, to: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key id
+    checks Account
+
+tool notified(to: Text) -> Bool:
+    effect read
+
+tool notify(to: Text, text: Text) -> Unit:
+    effect write once
+    on_uncertain verify(notified(to))
+
+tool post(text: Text) -> Unit:
+    effect write once
+    on_uncertain accept_loss
+
+tool ticket(title: Text) -> Text:
+    effect write once
+    on_uncertain pause
+
+graph pay(id: Text, to: Text, amount: Float, limit: Float) -> Text:
+    sent = transfer(id, to, amount):
+        requires state.status == Open and not (state.balance < amount)
+        requires state.balance - amount >= limit
+    told = notify(to, "pago")
+    told after sent
+    logged = post("{id} pago")
+    logged after told
+    t = try ticket("pagamento {id}")
+    t after logged
+    return match t:
+        case Ok(n): "ok, chamado {n}"
+        case Failed(_): "ok, sem chamado"

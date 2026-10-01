@@ -4,7 +4,9 @@
 //! are objects with a kind `k`; names are already indices into the
 //! program's `models`, `tools`, `prompts` and `graphs`.
 
-use crate::{Effect, Expr, Graph, Limits, Model, Node, Part, Program, Prompt, PromptPart, Tool};
+use crate::{
+    Effect, Expr, Graph, Limits, Model, Node, Part, Program, Prompt, PromptPart, Tool, Uncertain,
+};
 
 fn opt_string(o: &mut String, v: Option<&str>) {
     match v {
@@ -102,7 +104,26 @@ fn tool(o: &mut String, t: &Tool) {
     o.push_str(&t.schema);
     o.push_str(",\"description\":");
     opt_string(o, t.description.as_deref());
-    o.push_str(&format!(",\"repeatable\":{}}}", t.repeatable));
+    o.push_str(&format!(",\"repeatable\":{}", t.repeatable));
+    o.push_str(",\"idempotency_key\":");
+    opt_u64(o, t.idempotency_key.map(|i| i as u64));
+    o.push_str(",\"on_uncertain\":");
+    match &t.on_uncertain {
+        None => o.push_str("null"),
+        Some(Uncertain::Pause) => o.push_str("{\"policy\":\"pause\"}"),
+        Some(Uncertain::AcceptLoss) => o.push_str("{\"policy\":\"accept_loss\"}"),
+        Some(Uncertain::Verify { tool, args }) => {
+            let args: Vec<String> = args.iter().map(usize::to_string).collect();
+            o.push_str(&format!(
+                "{{\"policy\":\"verify\",\"tool\":{tool},\"args\":[{}]}}",
+                args.join(",")
+            ));
+        }
+    }
+    o.push_str(&format!(",\"returns_unit\":{}", t.returns_unit));
+    o.push_str(",\"checks\":");
+    opt_string(o, t.checks.as_deref());
+    o.push('}');
 }
 
 fn prompt(o: &mut String, p: &Prompt) {
@@ -261,7 +282,25 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
             args,
             ids,
         ),
-        Expr::Tool { tool, args } => call(o, "tool", &[("tool", *tool)], args, ids),
+        Expr::Tool {
+            tool,
+            args,
+            requires,
+        } => {
+            call(o, "tool", &[("tool", *tool)], args, ids);
+            if !requires.is_empty() {
+                // Inside the call's object: drop its `}` and add the list.
+                o.pop();
+                o.push_str(",\"requires\":");
+                list(o, requires, |o, e| expr(o, e, ids));
+                o.push('}');
+            }
+        }
+        Expr::State(field) => {
+            o.push_str("{\"k\":\"state\",\"field\":");
+            string(o, field);
+            o.push('}');
+        }
         Expr::Graph { graph, args } => call(o, "graph", &[("graph", *graph)], args, ids),
         Expr::Local(i) => o.push_str(&format!("{{\"k\":\"local\",\"i\":{i}}}")),
         Expr::Record(fields) => {
@@ -393,6 +432,7 @@ mod tests {
                     Expr::Tool {
                         tool: 0,
                         args: vec![Expr::Item],
+                        requires: Vec::new(),
                     },
                 ],
             },

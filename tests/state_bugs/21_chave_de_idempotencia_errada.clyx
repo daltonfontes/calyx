@@ -1,0 +1,32 @@
+# Bug: A chave é o pedido, não a solicitação: um segundo reembolso legítimo do mesmo pedido é descartado em silêncio.
+# Pego por: none
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt decide(o: Order) -> Float:
+    """Quanto reembolsar de {o}?"""
+
+tool refund(order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key order
+
+graph g(id: Text) -> Text:
+    first = refund(id, 10.0)
+    second = refund(id, 5.0)
+    second after first
+    return "ok"

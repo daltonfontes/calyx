@@ -91,10 +91,13 @@ impl Server {
         Ok(server)
     }
 
+    /// Calls a tool. `meta` goes in the request's `_meta` (the idempotency
+    /// key and the preconditions, decisions D2 and D29), when not empty.
     pub fn call(
         &mut self,
         tool: &str,
         args: Value,
+        meta: serde_json::Map<String, Value>,
         timeout: Duration,
     ) -> Result<ToolAnswer, IoError> {
         if !self.tools.iter().any(|t| t == tool) {
@@ -107,11 +110,11 @@ impl Server {
             ));
         }
         let started = Instant::now();
-        let result = self.request(
-            "tools/call",
-            json!({"name": tool, "arguments": args}),
-            timeout,
-        )?;
+        let mut params = json!({"name": tool, "arguments": args});
+        if !meta.is_empty() {
+            params["_meta"] = Value::Object(meta);
+        }
+        let result = self.request("tools/call", params, timeout)?;
         let text = result["content"]
             .as_array()
             .map(|items| {
@@ -124,6 +127,10 @@ impl Server {
             })
             .unwrap_or_default();
         if result["isError"] == true {
+            // A precondition that does not hold (D29): the tool did nothing.
+            if let Some(rest) = text.strip_prefix("PreconditionFailed:") {
+                return Err(IoError::new("PreconditionFailed", rest.trim().to_owned()));
+            }
             return Err(IoError::new("ToolError", text));
         }
         Ok(ToolAnswer {

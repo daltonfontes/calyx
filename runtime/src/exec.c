@@ -156,6 +156,9 @@ struct job {
     const char *graph, *node, *label;
     double rank;
     unsigned long seq;
+    /* `write once` begun in an earlier run, with no answer in the journal:
+     * it may or may not have happened (D2). */
+    int uncertain;
 };
 
 typedef struct {
@@ -177,6 +180,10 @@ struct exec {
     cx_value *result;
     cx_journal *journal;
     long crash_after, recorded;
+    /* `--uncertain done|retry|failed`: what a person decided, when resuming,
+     * about `write once` calls of unknown outcome. NULL: apply each tool's
+     * `on_uncertain`. */
+    const char *decision;
     /* Pending calls by key: open addressing, capacity a power of two. */
     pending **ptab;
     size_t pcap, pused;
@@ -729,6 +736,159 @@ static cx_value *io_call(cx_arena *a, char *(*fn)(const char *), const char *req
     return v;
 }
 
+/* Errors after which a `write once` call may have happened anyway: the
+ * request may have reached the tool before the answer was lost. */
+static int maybe_happened(const char *kind) {
+    return strcmp(kind, "Timeout") == 0 || strcmp(kind, "Unavailable") == 0 ||
+           strcmp(kind, "Network") == 0;
+}
+
+/* Stops the run from an I/O thread: nothing may catch it. */
+static void stop_run(exec *x, job *j, const char *msg) {
+    pthread_mutex_lock(&x->mu);
+    fail_locked(x, j->graph, j->node, msg);
+    pthread_mutex_unlock(&x->mu);
+}
+
+/*
+ * `on_uncertain verify(f(a, b))`: asks the `read` tool `f`, with the same
+ * arguments, whether the call happened. 1: it did; 0: it did not; -1: the
+ * question failed (`why` says why).
+ */
+static int verify_happened(exec *x, cx_arena *a, job *j, cx_value *policy, char *why,
+                           size_t why_len) {
+    cx_value *vtool = at(x->tools, index_of(policy, "tool"));
+    cx_value *req = cx_parse(a, j->req, strlen(j->req), NULL);
+    cx_value *given = cx_get(req, "args");
+    cx_value *wparams = cx_get(j->spec, "params");
+    cx_value *vparams = cx_get(vtool, "params");
+    cx_value *vargs = cx_get(policy, "args");
+    const char *vname = cx_get_str(vtool, "name", "?");
+    cx_buf b = {0};
+    cx_buf_puts(&b, "{\"tool\":");
+    cx_buf_json_str(&b, vname, strlen(vname));
+    cx_buf_puts(&b, ",\"args\":{");
+    for (size_t i = 0; i < len_of(vargs); i++) {
+        cx_value *pname = at(wparams, (size_t)at(vargs, i)->u.num);
+        const char *from = pname ? pname->u.str.s : "";
+        if (i) cx_buf_putc(&b, ',');
+        cx_write(&b, at(vparams, i));
+        cx_buf_putc(&b, ':');
+        cx_value *v = cx_get(given, from);
+        if (v)
+            cx_write(&b, v);
+        else
+            cx_buf_puts(&b, "null");
+    }
+    cx_buf_printf(&b, "},\"max_output\":null,\"timeout_ms\":%.0f}",
+                  cx_get_num(vtool, "timeout_ms", 30000));
+    int result = -1;
+    for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        cx_value *ans = io_call(a, calyx_io_tool_call, b.data);
+        cx_value *ok = cx_get(ans, "ok");
+        if (ok) {
+            cx_value *v = decode_tool(a, vtool, ok);
+            if (v && v->kind == CX_BOOL) {
+                result = v->u.b != 0;
+                trace(x, j->label, "read  %s  -> %s  (verifying `%s`)", vname,
+                      result ? "true" : "false", cx_get_str(j->spec, "name", "?"));
+            } else {
+                snprintf(why, why_len, "`%s` did not answer true or false", vname);
+            }
+            break;
+        }
+        cx_value *err = cx_get(ans, "error");
+        const char *kind = cx_get_str(err, "kind", "Unavailable");
+        snprintf(why, why_len, "`%s` failed: %s: %s", vname, kind,
+                 cx_get_str(err, "message", "no answer"));
+        if (!is_temporary(kind)) break;
+        if (attempt < MAX_ATTEMPTS) sleep_s(backoff_s(attempt, kind));
+    }
+    cx_buf_free(&b);
+    return result;
+}
+
+enum { R_DONE, R_REDO, R_FAIL, R_STOP };
+
+/*
+ * A `write once` call that may or may not have happened (decision D2):
+ * done (go on without its answer), redo (it did not happen), failed (a
+ * failure `try` can catch) or stop (a person decides when resuming). Uses
+ * the decision given when resuming, else the tool's `on_uncertain`. `how`
+ * gets a description; `why` the message for failing or stopping.
+ */
+static int resolve_uncertain(exec *x, cx_arena *a, job *j, const char *cause, char *how,
+                             size_t how_len, char *why, size_t why_len) {
+    const char *name = cx_get_str(j->spec, "name", "?");
+    cx_value *policy = cx_get(j->spec, "on_uncertain");
+    const char *pname = cx_get_str(policy, "policy", "pause");
+    int unit = cx_get_bool(j->spec, "returns_unit", 0);
+    if (j->uncertain && x->decision) {
+        if (strcmp(x->decision, "retry") == 0) {
+            snprintf(how, how_len, "repeated: decided when resuming");
+            return R_REDO;
+        }
+        if (strcmp(x->decision, "failed") == 0) {
+            snprintf(why, why_len,
+                     "tool `%s` failed: Uncertain: its outcome is unknown and it was marked "
+                     "failed when resuming",
+                     name);
+            return R_FAIL;
+        }
+        if (unit) {
+            snprintf(how, how_len, "taken as done: decided when resuming");
+            return R_DONE;
+        }
+        snprintf(why, why_len,
+                 "`--uncertain done` needs a tool that returns Unit (`%s` has an answer to "
+                 "use); resume with `--uncertain retry` or `--uncertain failed`",
+                 name);
+        return R_STOP;
+    }
+    if (strcmp(pname, "accept_loss") == 0 && unit) {
+        snprintf(how, how_len, "taken as done: on_uncertain accept_loss");
+        return R_DONE;
+    }
+    if (strcmp(pname, "verify") == 0) {
+        char verr[512] = "";
+        int happened = verify_happened(x, a, j, policy, verr, sizeof verr);
+        if (happened == 1 && unit) {
+            snprintf(how, how_len, "done: verify says it happened");
+            return R_DONE;
+        }
+        if (happened == 0) {
+            snprintf(how, how_len, "repeated: verify says it did not happen");
+            return R_REDO;
+        }
+        if (happened == -1) {
+            snprintf(why, why_len,
+                     "`%s` (write once) may or may not have happened (%s), and verifying "
+                     "failed (%s); check it, then resume with `--uncertain done`, `--uncertain "
+                     "retry` or `--uncertain failed`",
+                     name, cause, verr);
+            return R_STOP;
+        }
+    }
+    snprintf(why, why_len,
+             "`%s` (write once) may or may not have happened (%s); on_uncertain %s: check it, "
+             "then resume with `--uncertain done`, `--uncertain retry` or `--uncertain failed`",
+             name, cause, pname);
+    return R_STOP;
+}
+
+/* A `write once` call taken as done: recorded, so it is never made again. */
+static cx_value *taken_as_done(exec *x, cx_arena *a, job *j, const char *how, char *why,
+                               size_t why_len) {
+    static const char done[] = "{\"text\":\"null\",\"json\":null,\"ms\":0}";
+    cx_value *ok = cx_parse(a, done, sizeof done - 1, NULL);
+    trace(x, j->label, "write once %s  %s", cx_get_str(j->spec, "name", "?"), how);
+    if (!journal_record(x, j, "write once", ok)) {
+        snprintf(why, why_len, "cannot write the journal");
+        return NULL;
+    }
+    return cx_null(a);
+}
+
 /*
  * Runs one call, with its retries, in an I/O thread. Returns the decoded
  * value, or NULL with the reason in `why` ("stopped" if the run stopped).
@@ -739,8 +899,27 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
     const char *prompt_name = j->is_model ? cx_get_str(j->prompt, "name", "?") : "";
     int write_once = strcmp(effect, "write once") == 0;
     cx_value *retry_on = j->is_model ? NULL : cx_get(j->spec, "retry_on");
+    /* A `write` with an idempotency key can be repeated safely (D2). */
+    cx_value *key_param = j->is_model ? NULL : cx_get(j->spec, "idempotency_key");
+    int keyed = key_param && key_param->kind == CX_NUM;
+    char how[256] = "";
 
-    if (write_once && x->journal) {
+    if (j->uncertain) {
+        switch (resolve_uncertain(x, a, j, "the run stopped while it was in progress", how,
+                                  sizeof how, why, why_len)) {
+        case R_DONE:
+            return taken_as_done(x, a, j, how, why, why_len);
+        case R_FAIL:
+            return NULL;
+        case R_STOP:
+            stop_run(x, j, why);
+            snprintf(why, why_len, "stopped");
+            return NULL;
+        default:
+            trace(x, j->label, "write once %s  %s", name, how);
+        }
+    }
+    if (write_once && x->journal && !j->uncertain) {
         pthread_mutex_lock(&x->jmu);
         cx_journal_begin(x->journal, j->key, j->req_hash);
         pthread_mutex_unlock(&x->jmu);
@@ -829,9 +1008,31 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
             else
                 snprintf(why, why_len, "tool `%s` failed: %s: %s", name, kind, message);
             trace(x, j->label, "%-5s %s  failed: %s: %s", effect, name, kind, message);
-            /* Models repeat temporary errors; tools only what `retry_on` lists;
-             * `write once` never repeats (D2). */
-            int retry = j->is_model ? is_temporary(kind) : (!write_once && listed(retry_on, kind));
+            if (write_once && maybe_happened(kind)) {
+                char cause[512];
+                snprintf(cause, sizeof cause, "%s: %s", kind, message);
+                switch (resolve_uncertain(x, a, j, cause, how, sizeof how, why, why_len)) {
+                case R_DONE:
+                    return taken_as_done(x, a, j, how, why, why_len);
+                case R_REDO:
+                    trace(x, j->label, "write once %s  %s", name, how);
+                    if (attempt < MAX_ATTEMPTS) continue;
+                    return NULL;
+                case R_STOP:
+                    stop_run(x, j, why);
+                    snprintf(why, why_len, "stopped");
+                    return NULL;
+                default:
+                    return NULL;
+                }
+            }
+            /* Models repeat temporary errors; tools what `retry_on` lists, and
+             * keyed writes temporary errors too; `write once` never repeats on
+             * its own (D2). */
+            int retry = j->is_model ? is_temporary(kind)
+                        : write_once
+                            ? 0
+                            : (listed(retry_on, kind) || (keyed && is_temporary(kind)));
             if (!retry) return NULL;
             /* Wait at least what the provider asked for (up to a minute). */
             hint = cx_get_num(err, "retry_after_ms", 0) / 1000.0;
@@ -920,8 +1121,9 @@ static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_v
         cx_buf_free(req);
         return result;
     }
+    int uncertain = 0;
     if (x->journal) {
-        int mismatch = 0, uncertain = 0;
+        int mismatch = 0;
         pthread_mutex_lock(&x->jmu);
         cx_value *hit = cx_journal_lookup(x->journal, key, hash, &mismatch);
         if (!hit && strcmp(effect, "write once") == 0)
@@ -937,12 +1139,8 @@ static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_v
         else if (!hit && replay)
             snprintf(msg, sizeof msg,
                      "replay: call `%s` is not in the journal (the run stopped before it)", key);
-        else if (uncertain)
-            /* The `on_uncertain` policies (verify, pause, accept_loss) arrive in M6. */
-            snprintf(msg, sizeof msg,
-                     "`%s` (write once) started before the interruption and its outcome is "
-                     "unknown; it is not repeated",
-                     name);
+        /* An uncertain `write once` goes to an I/O thread, which applies the
+         * tool's `on_uncertain` (or the decision given when resuming). */
         if (msg[0]) {
             fail_locked(x, graph, c->node, msg);
             pthread_mutex_unlock(&x->mu);
@@ -988,6 +1186,7 @@ static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_v
     j->label = c->label;
     j->rank = c->t->rank;
     j->seq = x->seq++;
+    j->uncertain = uncertain;
     job_heap_push(&x->jobs, j);
     pthread_cond_signal(&x->io_cv);
     pthread_mutex_unlock(&x->mu);
@@ -1062,6 +1261,44 @@ static cx_value *call_model(ctx *c, cx_value *e) {
     return request(c, call_key(c, e), CALL_MODEL, model, prompt, &req, NULL);
 }
 
+/*
+ * A precondition, as the tool receives it (D29): `{"state": field}` for
+ * the tool's state, `{"op", "l", "r"}` or `{"op", "v"}` for operators, and
+ * `{"value": v}` for any value of the graph, computed now. 0 on failure.
+ */
+static int guard_json(ctx *c, cx_value *e, cx_buf *b) {
+    const char *k = cx_get_str(e, "k", "");
+    if (strcmp(k, "state") == 0) {
+        const char *f = cx_get_str(e, "field", "");
+        cx_buf_puts(b, "{\"state\":");
+        cx_buf_json_str(b, f, strlen(f));
+        cx_buf_putc(b, '}');
+        return 1;
+    }
+    if (strcmp(k, "bin") == 0 || strcmp(k, "un") == 0) {
+        const char *op = cx_get_str(e, "op", "");
+        cx_buf_puts(b, "{\"op\":");
+        cx_buf_json_str(b, op, strlen(op));
+        if (strcmp(k, "bin") == 0) {
+            cx_buf_puts(b, ",\"l\":");
+            if (!guard_json(c, cx_get(e, "l"), b)) return 0;
+            cx_buf_puts(b, ",\"r\":");
+            if (!guard_json(c, cx_get(e, "r"), b)) return 0;
+        } else {
+            cx_buf_puts(b, ",\"v\":");
+            if (!guard_json(c, cx_get(e, "v"), b)) return 0;
+        }
+        cx_buf_putc(b, '}');
+        return 1;
+    }
+    cx_value *v = eval(c, e);
+    if (!v || v == PENDING) return 0; /* `requires` makes no calls */
+    cx_buf_puts(b, "{\"value\":");
+    cx_write(b, v);
+    cx_buf_putc(b, '}');
+    return 1;
+}
+
 static cx_value *call_tool(ctx *c, cx_value *e) {
     cx_value *tool = at(c->x->tools, index_of(e, "tool"));
     if (!tool) return fatalf(c, "invalid IR: unknown tool");
@@ -1083,7 +1320,34 @@ static cx_value *call_tool(ctx *c, cx_value *e) {
     }
     cx_buf_puts(&req, "},\"max_output\":");
     cx_write(&req, cx_get(tool, "max_output"));
-    cx_buf_printf(&req, ",\"timeout_ms\":%.0f}", cx_get_num(tool, "timeout_ms", 30000));
+    cx_buf_printf(&req, ",\"timeout_ms\":%.0f", cx_get_num(tool, "timeout_ms", 30000));
+    /* The idempotency key: the value of the parameter the tool names. */
+    cx_value *kp = cx_get(tool, "idempotency_key");
+    if (kp && kp->kind == CX_NUM && (size_t)kp->u.num < n) {
+        cx_value *kv = args[(size_t)kp->u.num];
+        cx_buf_puts(&req, ",\"idempotency_key\":");
+        if (kv->kind == CX_STR) {
+            cx_buf_json_str(&req, kv->u.str.s, kv->u.str.len);
+        } else {
+            cx_buf text = {0};
+            cx_write(&text, kv);
+            cx_buf_json_str(&req, text.data, text.len);
+            cx_buf_free(&text);
+        }
+    }
+    cx_value *requires = cx_get(e, "requires");
+    if (len_of(requires)) {
+        cx_buf_puts(&req, ",\"requires\":[");
+        for (size_t i = 0; i < len_of(requires); i++) {
+            if (i) cx_buf_putc(&req, ',');
+            if (!guard_json(c, at(requires, i), &req)) {
+                cx_buf_free(&req);
+                return c->failure ? NULL : failf(c, "a precondition of `%s` has no value", name);
+            }
+        }
+        cx_buf_putc(&req, ']');
+    }
+    cx_buf_putc(&req, '}');
     return request(c, call_key(c, e), CALL_TOOL, tool, NULL, &req, NULL);
 }
 
@@ -1820,6 +2084,7 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
     double budget_override = cx_get_num(options, "budget_usd", 0);
     if (budget_override > 0) x->budget = budget_override;
     x->deterministic = cx_get_bool(options, "deterministic", 0);
+    x->decision = cx_get_str(options, "uncertain", NULL);
     x->nworkers = x->deterministic ? 1 : cpu_count();
     x->nio = x->deterministic ? 1 : threads < 1 ? 1 : threads > 256 ? 256 : (int)threads;
 

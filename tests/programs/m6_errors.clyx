@@ -1,0 +1,75 @@
+# Each new check of milestone M6, once.
+model m = "m"
+
+type Account:
+    balance: Float
+
+type Kind = A | B
+
+tool save(path: Text, text: Text) -> Unit:
+    effect write
+
+tool lookup(to: Text) -> Text:
+    effect read
+
+tool deleter(to: Text) -> Bool:
+    effect write
+
+tool send(to: Text, text: Text) -> Unit:
+    effect write once
+    on_uncertain verify(lookup(to))
+
+tool send2(to: Text, text: Text) -> Unit:
+    effect write once
+    on_uncertain verify(deleter(text, to))
+
+tool send3(to: Text) -> Unit:
+    effect write once
+    on_uncertain verify(nothing(to))
+
+tool create(title: Text) -> Text:
+    effect write once
+    on_uncertain accept_loss
+
+tool reader(q: Text) -> Text:
+    effect read
+    on_uncertain pause
+
+tool charge(id: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key id
+    checks Kind
+
+tool charge2(id: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key id
+    checks Account
+
+tool mail(to: Text) -> Text:
+    effect write once
+    on_uncertain pause
+    max_output 10 tokens
+
+prompt ask(q: Text) -> Text:
+    """{q}"""
+
+graph g(to: Text, amount: Float) -> Text:
+    a = save("a.txt", to)
+    b = save("b.txt", to)
+    c = save("c.txt", to):
+        requires state.balance > 0
+    d = charge2(to, amount):
+        requires state.balance >= amount and state.owner == to
+        requires len(to) > 0
+        requires state.balance
+    e = lookup(to):
+        requires state.balance > 0
+    f = agent m:
+        tools [mail]
+        max_turns 3
+        task ask(to)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    a after nowhere
+    b after b
+    return f

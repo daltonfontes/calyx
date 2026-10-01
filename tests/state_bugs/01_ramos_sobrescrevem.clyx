@@ -1,0 +1,33 @@
+# Bug: Dois ramos paralelos gravam o mesmo valor; o último a terminar ganha.
+# Pego por: E0501
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt decide(o: Order) -> Float:
+    """Quanto reembolsar de {o}?"""
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    checks OrderState
+
+graph g(id: Text) -> Text:
+    o = get_order(id)
+    amount = m(decide(o))
+    amount = 10.0
+    return "{amount}"

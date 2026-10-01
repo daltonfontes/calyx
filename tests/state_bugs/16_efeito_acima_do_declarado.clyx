@@ -1,0 +1,32 @@
+# Bug: Um grafo declarado só de leitura (por exemplo, para rodar sem aprovação) chama um pagamento.
+# Pego por: E0701
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt decide(o: Order) -> Float:
+    """Quanto reembolsar de {o}?"""
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    checks OrderState
+
+graph g(request: Text, id: Text) -> Text:
+    effect read
+    paid = refund(request, id, 10.0)
+    return "ok"

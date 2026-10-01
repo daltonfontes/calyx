@@ -1,0 +1,29 @@
+# Bug: Pagamento sem chave de idempotência: uma nova tentativa depois de timeout paga duas vezes.
+# Pego por: W0601
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt decide(o: Order) -> Float:
+    """Quanto reembolsar de {o}?"""
+
+tool charge(card: Text, amount: Float) -> Unit:
+    effect write
+
+graph g(card: Text) -> Text:
+    paid = charge(card, 10.0)
+    return "ok"
