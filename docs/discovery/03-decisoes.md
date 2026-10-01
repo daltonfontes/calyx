@@ -1,6 +1,6 @@
 # Decisões de design
 
-Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, o que a literatura faz e uma recomendação. As marcadas com ✅ foram decididas; as demais seguem como pauta de discussão.
+Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, o que a literatura faz e uma recomendação. Todas as decisões estão fechadas (✅). A especificação consolidada está em [`docs/spec/calyx.md`](../spec/calyx.md).
 
 | # | Decisão | Recomendação preliminar |
 |---|---|---|
@@ -12,19 +12,19 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D6 | Unidade de recuperação | ✅ **Decidido:** diário de eventos com uma entrada por chamada de LLM ou tool; escrito só no fim do arquivo, em lotes; formato próprio em arquivo local (uma máquina); backend PostgreSQL depois, atrás da mesma interface, para várias máquinas |
 | D7 | Junção de ramos paralelos | ✅ **Decidido:** resultados na ordem da entrada; redutor obrigatório quando ramos escrevem no mesmo estado |
 | D8 | Template / realized graph / trace | ✅ **Decidido:** os três são conceitos da linguagem: o código, o grafo desenrolado de cada execução e o diário |
-| D9 | Superfície da linguagem | Linguagem textual, com visualização derivada |
+| D9 | Superfície da linguagem | ✅ **Decidido:** linguagem textual (superfície familiar, estilo Rust/TypeScript, sem a complexidade do Rust), com visualização do grafo gerada a partir do código. Ver [sintaxe](09-sintaxe.md) |
 | D10 | Plataforma | ✅ **Direção decidida:** o compilador emite C (um arquivo por programa, com o runtime); runtime em C com o modelo de atores da BEAM reimplementado; o mesmo binário roda de uma thread a várias máquinas; `calyx check` em até 1 segundo. **Compilador em Rust**, com o verificador compilado também como biblioteca estática ligada ao runtime em C (um verificador só). Ver [arquitetura do runtime](12-arquitetura-runtime.md) |
 | D11 | Falha parcial em fan-out | ✅ **Decidido:** falhas são valores (`Ok` / `Failed`); o compilador obriga a tratar; tools declaram erros não retentáveis |
 | D12 | Corrida e cancelamento | ✅ **Decidido:** `race` explícito; vencedor gravado no diário; cancelamento cooperativo entre nós (`llm`/`read` abandonados, `write` termina antes de valer). Compensação (saga) fica para uma versão futura |
 | D13 | Ambiente da execução (sandbox) | ✅ **Decidido:** efeitos na sandbox recuperáveis por snapshot, restaurado junto com o diário; dois modos explícitos: `fork` (cópias isoladas; na junção fica uma ou se juntam por merge) e `share` (repositório compartilhado; escrita aceita só se o que o ramo leu não mudou, como no STORM) |
 | D14 | Tempo e execuções longas | ✅ **Decidido:** timers no diário; suspender = gravar o estado e liberar a memória; retomar = reconstruir a partir do diário; diário ligado à versão do template |
 | D15 | Concorrência entre execuções | ✅ **Decidido:** `entity ... key`, no máximo uma execução aberta por chave, dona do recurso; outras execuções mandam mensagens; handlers de leitura rodam em paralelo, de escrita são exclusivos (visão inferida pelo compilador) |
-| D16 | Tamanho máximo da saída das tools | Tools declaram o máximo, ou o runtime trunca |
-| D17 | Recursão de subgrafos | Permitida com parâmetro que decresce a cada chamada |
-| D18 | Rodadas (barreira) | Construção explícita para ramos que trocam informação |
-| D19 | Resultado antecipado | O grafo entrega a saída antes de terminar os nós restantes |
+| D16 | Tamanho máximo da saída das tools | ✅ **Decidido:** toda tool declara `max_output`; o runtime trunca o excedente; obrigatório para tools usadas por agentes |
+| D17 | Recursão de subgrafos | ✅ **Decidido:** permitida com `decreases parametro`, verificado só pela sintaxe |
+| D18 | Rodadas (barreira) | ✅ **Decidido:** `rounds a..b carry x: T = inicial { ... next valor }`, com barreira no fim de cada rodada; mesma forma do `loop` |
+| D19 | Resultado antecipado | ✅ **Decidido:** `respond` entrega a resposta e o resto do grafo continua em segundo plano; grafo com `respond` não tem `return` de valor; no máximo um `respond` por caminho |
 | D20 | Tamanho do diário | ✅ **Decidido:** conteúdos grandes (prompts, respostas) fora do diário, referenciados por hash; subgrafos grandes podem ter diário próprio |
-| D21 | Mensagens para uma execução em andamento | Mensagens tipadas e consultas de estado; mensagens recebidas vão para o diário |
+| D21 | Mensagens para uma execução em andamento | ✅ **Decidido:** tipos `message`, `receive ... timeout ... else`, `ask` (síncrono) e `send` (assíncrono); toda mensagem recebida vai para o diário |
 | D22 | Timeouts | ✅ **Decidido:** obrigatórios em nós com efeito externo; padrão por tentativa: `llm` 5 min, `read` 30 s, `write`/`write once` 60 s, `sandbox` 10 min; cada tool pode sobrescrever |
 | D23 | Versionamento de templates | ✅ **Decidido:** cada versão é um binário; execuções terminam na versão em que começaram; migram só se o compilador provar que os grafos são compatíveis |
 | D24 | Escalonamento | ✅ **Decidido:** lista com prioridade pelo caminho crítico (garantia de Graham: até 2× o ótimo); durações estimadas pelo compilador e refinadas pelo histórico; memória como limite opcional |
@@ -33,7 +33,7 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D27 | Camadas da linguagem | ✅ **Decidido:** camada de grafo (`node`, efeitos, diário) + camada pura pequena (`let`, `fn`), recalculável. Ver [sintaxe](09-sintaxe.md) |
 | D28 | Chamada ao modelo | ✅ **Decidido:** forma única `modelo(prompt)`, ou `modelo(prompt, continue: conversa)` devolvendo `.value` e `.conversation`; `continue: new` começa uma conversa |
 | D29 | Precondições no efeito | ✅ **Decidido:** `requires { ... }` na chamada de um efeito, na camada pura; escritas pelo programador ou propostas pelo LLM como saída tipada (só operadores permitidos); a tool valida sobre o estado atual na mesma transação; falha vira valor (ver [SVBE](10-svbe.md)) |
-| D30 | Roteamento de modelo | Construção `router` que escolhe entre modelos por política, usando orçamento e histórico do diário; escolha gravada no diário (ver [mapa da orquestração](11-mapa-orquestracao.md)) |
+| D30 | Roteamento de modelo | ✅ **Decidido:** construção `router` na primeira versão, só com a política `cheapest_that_passes(verificação)`; escolha gravada no diário; `fastest_within` e políticas aprendidas ficam para depois, como extensões (ver [mapa da orquestração](11-mapa-orquestracao.md)) |
 | D31 | Execução paralela | ✅ **Decidido:** N workers com roubo de trabalho (da ponta mais antiga); E/S nunca bloqueia um worker; contadores atômicos de dependência (ver [concorrência](13-concorrencia.md)) |
 | D32 | Avaliação de ramos | ✅ **Decidido:** nós de ramos não escolhidos nunca rodam; resultados que deixaram de ser necessários são cancelados; sem execução especulativa por padrão |
 | D33 | Impasse entre entidades | ✅ **Decidido:** o compilador recusa ciclos de `ask`; `send` pode formar ciclos |

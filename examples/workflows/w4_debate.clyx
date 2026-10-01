@@ -6,6 +6,7 @@ model claude = llm("claude-sonnet-5-5", max_output: 1_500 tokens)
 
 type Role    = | Optimist | Skeptic | Engineer
 type Verdict = { position: Text, confidence: Nat max 100 }
+type Debate  = { talk: Map<Role, Conversation>, answers: Map<Role, Text> }
 
 prompt opening(role: Role, question: Text) -> Text {
   """
@@ -38,21 +39,15 @@ graph debate(question: Text) -> Verdict {
   // "new" começa uma conversa nova.
   node start[r in roles] = claude(opening(r, question), continue: new)
 
-  // "rounds" carrega valores entre rodadas, como um loop (D5), e põe uma barreira no fim
+  // "rounds" carrega um valor entre rodadas, como um loop (D5), e põe uma barreira no fim
   // de cada rodada: só ali as respostas de uma rodada ficam visíveis para a próxima (D18).
-  node final = rounds 1..3
-    carry talk    = start.conversation       // uma Conversation por papel
-    carry answers = start.value
-  {
+  node final = rounds 1..3 carry d: Debate = { talk: start.conversation, answers: start.value } {
     node turn[r in roles] = claude(
-      rebut(r, answers.without(r)),           // vê as respostas dos OUTROS da rodada anterior
-      continue: talk[r]
+      rebut(r, d.answers.without(r)),        // vê as respostas dos OUTROS da rodada anterior
+      continue: d.talk[r]
     )
-    next talk = turn.conversation, answers = turn.value
+    next { talk: turn.conversation, answers: turn.value }
   }
-
-  // ⚠️ "carry" com dois valores e "next" com atribuição ficou verboso.
-  // Talvez um tipo de registro para o estado da rodada seja mais claro.
 
   node verdict = claude(judge(question, final.answers))
   return verdict
