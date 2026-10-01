@@ -1032,7 +1032,8 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
             int retry = j->is_model ? is_temporary(kind)
                         : write_once
                             ? 0
-                            : (listed(retry_on, kind) || (keyed && is_temporary(kind)));
+                            : (listed(retry_on, kind) ||
+                               ((keyed || strcmp(effect, "sandbox") == 0) && is_temporary(kind)));
             if (!retry) return NULL;
             /* Wait at least what the provider asked for (up to a minute). */
             hint = cx_get_num(err, "retry_after_ms", 0) / 1000.0;
@@ -1262,6 +1263,31 @@ static cx_value *call_model(ctx *c, cx_value *e) {
 }
 
 /*
+ * The sandboxes lent to a call (D26), as `"borrows":[{"param", "mode",
+ * "path"}]`: the I/O layer holds their locks during the call and keeps
+ * their snapshots. `vals[i]` is the value of parameter `i`.
+ */
+static void put_borrows(cx_buf *req, cx_value *tool, cx_value **vals, size_t n) {
+    cx_value *borrows = cx_get(tool, "borrows");
+    cx_value *params = cx_get(tool, "params");
+    int first = 1;
+    for (size_t i = 0; i < len_of(borrows) && i < n; i++) {
+        cx_value *mode = at(borrows, i);
+        if (!mode || mode->kind != CX_STR || !vals[i] || vals[i]->kind != CX_STR) continue;
+        cx_buf_puts(req, first ? ",\"borrows\":[" : ",");
+        first = 0;
+        cx_buf_puts(req, "{\"param\":");
+        cx_write(req, at(params, i));
+        cx_buf_puts(req, ",\"mode\":");
+        cx_write(req, mode);
+        cx_buf_puts(req, ",\"path\":");
+        cx_write(req, vals[i]);
+        cx_buf_putc(req, '}');
+    }
+    if (!first) cx_buf_putc(req, ']');
+}
+
+/*
  * A precondition, as the tool receives it (D29): `{"state": field}` for
  * the tool's state, `{"op", "l", "r"}` or `{"op", "v"}` for operators, and
  * `{"value": v}` for any value of the graph, computed now. 0 on failure.
@@ -1335,6 +1361,7 @@ static cx_value *call_tool(ctx *c, cx_value *e) {
             cx_buf_free(&text);
         }
     }
+    put_borrows(&req, tool, args, n);
     cx_value *requires = cx_get(e, "requires");
     if (len_of(requires)) {
         cx_buf_puts(&req, ",\"requires\":[");
@@ -1648,6 +1675,24 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
     cx_value **args = cx_alloc(a, (n ? n : 1) * sizeof *args);
     EVAL_ALL(c, args_e, args);
     cx_value *tools = cx_get(e, "tools");
+    /* Sandboxes lent to the tools: computed once, added to every call. */
+    cx_value *bound_e = cx_get(e, "bound");
+    size_t nt = len_of(tools);
+    cx_value ***bound = cx_alloc(a, (nt ? nt : 1) * sizeof *bound);
+    for (size_t k = 0; k < nt; k++) {
+        cx_value *t = at(x->tools, (size_t)at(tools, k)->u.num);
+        size_t np = len_of(cx_get(t, "params"));
+        bound[k] = cx_alloc(a, (np ? np : 1) * sizeof **bound);
+        for (size_t p = 0; p < np; p++) bound[k][p] = NULL;
+        cx_value *list = at(bound_e, k);
+        for (size_t b = 0; b < len_of(list); b++) {
+            cx_value *entry = at(list, b);
+            size_t p = index_of(entry, "param");
+            cx_value *v = eval(c, cx_get(entry, "v"));
+            if (!v || v == PENDING) return v;
+            if (p < np) bound[k][p] = v;
+        }
+    }
     cx_buf defs = {0};
     tool_defs(x, tools, &defs);
     const char *defs_s = fmt(a, "%s", defs.data);
@@ -1715,9 +1760,13 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
             cx_value *call = at(calls, i);
             const char *name = cx_get_str(call, "name", "?");
             cx_value *tool = NULL;
+            size_t tk = 0;
             for (size_t k = 0; k < len_of(tools); k++) {
                 cx_value *t = at(x->tools, (size_t)at(tools, k)->u.num);
-                if (strcmp(cx_get_str(t, "name", ""), name) == 0) tool = t;
+                if (strcmp(cx_get_str(t, "name", ""), name) == 0) {
+                    tool = t;
+                    tk = k;
+                }
             }
             cx_buf obs = {0};
             if (!tool) {
@@ -1726,15 +1775,40 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
                 cx_buf req = {0};
                 cx_buf_puts(&req, "{\"tool\":");
                 cx_buf_json_str(&req, name, strlen(name));
-                cx_buf_puts(&req, ",\"args\":");
+                cx_buf_puts(&req, ",\"args\":{");
+                /* The model's arguments, then the lent sandboxes (the model
+                 * never chooses those). */
                 cx_value *arguments = cx_get(call, "arguments");
-                if (arguments && arguments->kind == CX_REC)
-                    cx_write(&req, arguments);
-                else
-                    cx_buf_puts(&req, "{}");
-                cx_buf_puts(&req, ",\"max_output\":");
+                cx_value *tparams = cx_get(tool, "params");
+                size_t np = len_of(tparams);
+                int any = 0;
+                if (arguments && arguments->kind == CX_REC) {
+                    for (size_t f = 0; f < arguments->u.rec.len; f++) {
+                        const char *fname = arguments->u.rec.keys[f];
+                        int lent = 0;
+                        for (size_t p = 0; p < np; p++)
+                            if (bound[tk][p] && strcmp(at(tparams, p)->u.str.s, fname) == 0) lent = 1;
+                        if (lent) continue;
+                        if (any) cx_buf_putc(&req, ',');
+                        any = 1;
+                        cx_buf_json_str(&req, fname, strlen(fname));
+                        cx_buf_putc(&req, ':');
+                        cx_write(&req, arguments->u.rec.vals[f]);
+                    }
+                }
+                for (size_t p = 0; p < np; p++) {
+                    if (!bound[tk][p]) continue;
+                    if (any) cx_buf_putc(&req, ',');
+                    any = 1;
+                    cx_write(&req, at(tparams, p));
+                    cx_buf_putc(&req, ':');
+                    cx_write(&req, bound[tk][p]);
+                }
+                cx_buf_puts(&req, "},\"max_output\":");
                 cx_write(&req, cx_get(tool, "max_output"));
-                cx_buf_printf(&req, ",\"timeout_ms\":%.0f}", cx_get_num(tool, "timeout_ms", 30000));
+                cx_buf_printf(&req, ",\"timeout_ms\":%.0f", cx_get_num(tool, "timeout_ms", 30000));
+                put_borrows(&req, tool, bound[tk], np);
+                cx_buf_putc(&req, '}');
                 const char *outer = c->failure;
                 c->failure = NULL;
                 cx_value *r = request(c, fmt(a, "%s.t%ld.c%zu", base, turn, i), CALL_TOOL, tool,

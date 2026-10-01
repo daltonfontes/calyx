@@ -694,12 +694,13 @@ impl Parser<'_> {
             }
             let name = self.ident("a parameter name")?;
             self.expect(TokenKind::Colon, "`:` and the parameter type")?;
-            if self.is_word("reads") || self.is_word("edits") {
-                let w = self.word().to_owned();
-                return Err(self.unsupported(&w, "M6"));
-            }
+            let borrow = if self.is_word("reads") || self.is_word("edits") {
+                Some(self.ident("`reads` or `edits`")?)
+            } else {
+                None
+            };
             let ty = self.type_expr()?;
-            params.push(Param { name, ty });
+            params.push(Param { name, ty, borrow });
             if !self.eat(TokenKind::Comma) {
                 self.expect(TokenKind::RParen, "`,` or `)`")?;
                 break;
@@ -875,8 +876,13 @@ impl Parser<'_> {
         }
         if (self.is_word("reads") || self.is_word("edits")) && self.nth_kind(1) == TokenKind::Ident
         {
-            let w = self.word().to_owned();
-            return Err(self.unsupported(&w, "M6"));
+            let start = self.tok().span;
+            let mode = self.ident("`reads` or `edits`")?;
+            let target = self.ident("the resource to lend")?;
+            return Ok(Expr {
+                span: self.span_from(start),
+                kind: ExprKind::Borrow { mode, target },
+            });
         }
         self.or_expr()
     }
@@ -1303,11 +1309,21 @@ impl Parser<'_> {
                         if self.eat(TokenKind::RBracket) {
                             break;
                         }
-                        let tool = self.ident("a tool")?;
-                        if self.kind() == TokenKind::LParen {
-                            return Err(self.unsupported("lending resources to tools", "M6"));
+                        let name = self.ident("a tool")?;
+                        let mut lends = Vec::new();
+                        if self.eat(TokenKind::LParen) {
+                            loop {
+                                if self.eat(TokenKind::RParen) {
+                                    break;
+                                }
+                                lends.push(self.expr()?);
+                                if !self.eat(TokenKind::Comma) {
+                                    self.expect(TokenKind::RParen, "`,` or `)`")?;
+                                    break;
+                                }
+                            }
                         }
-                        agent.tools.push(tool);
+                        agent.tools.push(AgentTool { name, lends });
                         if !self.eat(TokenKind::Comma) {
                             self.expect(TokenKind::RBracket, "`,` or `]`")?;
                             break;
@@ -1660,7 +1676,7 @@ graph research(topic: Text) -> List[Text]:
         let ExprKind::Agent(a) = &value.kind else {
             panic!("{value:?}")
         };
-        assert_eq!(a.tools[0].name, "web_search");
+        assert_eq!(a.tools[0].name.name, "web_search");
         assert_eq!(a.max_turns.map(|m| m.0), Some(10));
         assert_eq!(a.on_turn_limit, OnLimit::FinalAnswer);
         assert!(matches!(a.on_stuck, OnLimit::Fail(_)));

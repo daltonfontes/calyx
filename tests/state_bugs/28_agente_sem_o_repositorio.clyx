@@ -1,0 +1,27 @@
+# Bug: O agente recebe uma tool de edição sem a sandbox: o modelo escolheria em que diretório escrever.
+# Pego por: E0649
+model m = "m"
+
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 1000 tokens
+
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Text:
+    effect sandbox
+    max_output 100 tokens
+
+tool run_tests(box: reads Sandbox) -> Text:
+    effect read
+    max_output 1000 tokens
+
+prompt task(issue: Text) -> Text:
+    """Corrija: {issue}"""
+
+graph g(repo: Sandbox, issue: Text) -> Text:
+    work = agent m:
+        tools [read_file(reads repo), edit_file]
+        max_turns 5
+        task task(issue)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return work

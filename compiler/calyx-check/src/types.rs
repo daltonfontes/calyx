@@ -22,6 +22,12 @@ pub enum Ty {
     User(String),
     /// What `try` gives: `Ok(value: T)` or `Failed(error: Text)` (D11).
     Result(Box<Ty>),
+    /// An isolated working directory for tools (D13): a resource with one
+    /// owner at a time (D26).
+    Sandbox,
+    /// A sandbox lent to a tool for one call: `edits repo` (`true`) or
+    /// `reads repo` (`false`).
+    Lent(bool),
     /// Poison: produced after an error, compatible with everything, so one
     /// mistake does not cascade into many diagnostics.
     Error,
@@ -39,6 +45,7 @@ impl Ty {
             "Duration" => Ty::Duration,
             "Date" => Ty::Date,
             "Unit" => Ty::Unit,
+            "Sandbox" => Ty::Sandbox,
             _ => return None,
         })
     }
@@ -72,6 +79,9 @@ impl fmt::Display for Ty {
             Ty::Map(k, v) => write!(f, "Map[{k}, {v}]"),
             Ty::User(n) => f.write_str(n),
             Ty::Result(t) => write!(f, "Result[{t}]"),
+            Ty::Sandbox => f.write_str("Sandbox"),
+            Ty::Lent(true) => f.write_str("edits Sandbox"),
+            Ty::Lent(false) => f.write_str("reads Sandbox"),
             Ty::Error => f.write_str("?"),
         }
     }

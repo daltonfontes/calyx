@@ -1,12 +1,12 @@
+error[E0646]: a tool borrows a sandbox for each call
+- expected : `box: reads Sandbox` or `box: edits Sandbox`
+- observed : `Sandbox` without `reads` or `edits`
+Location: lexical_errors.clyx:2:16
+
 error[E0001]: unexpected character
 - expected : `reads` or `edits` to lend a resource
 - observed : `&`
 Location: lexical_errors.clyx:2:21
-
-error[E0202]: unknown type
-- expected : a built-in type or one declared with `type`
-- observed : `Sandbox`
-Location: lexical_errors.clyx:2:22
 
 error[E0005]: invalid escape sequence
 - expected : one of `\n`, `\t`, `\r`, `\"`, `\\`, `\{`, `\}`

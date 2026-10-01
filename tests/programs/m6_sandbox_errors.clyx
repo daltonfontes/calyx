@@ -1,0 +1,40 @@
+# Each sandbox check of milestone M6, once.
+model m = "m"
+
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 100 tokens
+
+tool edit_file(box: edits Sandbox, path: Text) -> Text:
+    effect sandbox
+    max_output 100 tokens
+
+tool sneaky(box: edits Sandbox) -> Text:
+    effect read
+
+tool loose(box: Sandbox) -> Text:
+    effect read
+
+tool odd(n: reads Text) -> Text:
+    effect read
+
+prompt show(box: Sandbox) -> Text:
+    """{box}"""
+
+graph keep(box: Sandbox) -> Sandbox:
+    return box
+
+graph g(repo: Sandbox, paths: List[Text], name: Text) -> Text:
+    a = read_file(repo, "a.txt")
+    b = edit_file(reads repo, "a.txt")
+    c = for each p in paths: edit_file(edits repo, p)
+    d = [edit_file(edits repo, "x"), read_file(reads repo, "y")]
+    e = reads repo
+    f = read_file(reads name, "z")
+    h = agent m:
+        tools [edit_file, read_file(edits repo)]
+        max_turns 2
+        task show(repo)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return "{a}{b}{c}{d}{f}{h}"

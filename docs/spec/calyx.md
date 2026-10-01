@@ -297,7 +297,8 @@ resultado = agent modelo:
 - **`stuck`:** as mesmas chamadas (tool e argumentos) em três voltas seguidas; tools marcadas `repeatable` não contam.
 - **`final_answer`:** uma última chamada, sem tools, pedindo a resposta com o que o agente já sabe.
 - **Tipo da resposta:** se o `task` não devolve `Text`, uma chamada a mais converte a resposta final para o tipo do prompt.
-- **Exigências do compilador:** toda tool usada por um agente declara `max_output` (D16); `max_turns`, `task`, `on turn_limit` e `on stuck` são obrigatórios; `compact` e o empréstimo de recursos ficam para depois.
+- **Exigências do compilador:** toda tool usada por um agente declara `max_output` (D16); `max_turns`, `task`, `on turn_limit` e `on stuck` são obrigatórios; tools `write once` não são aceitas (`E0640`); `compact` fica para depois.
+- **Empréstimo de recursos:** `tools [read_file(reads repo), edit_file(edits repo)]`. Cada sandbox que a tool pede é emprestada a todas as chamadas do agente (`E0649` se faltar); o modelo não vê nem escolhe esse parâmetro.
 - **Diário:** cada volta e cada chamada de tool têm a sua chave (`passo#agente.t2`, `passo#agente.t2.c0`), então um agente interrompido retoma na volta em que estava, e o `replay` reproduz a conversa inteira sem chamar nada.
 
 ### 5.8 Corrida (D12)
@@ -433,10 +434,29 @@ O efeito de um nó é **inferido**: o maior efeito de tudo o que ele chama. Orde
 `Sandbox`, `Budget` e capacidades `write once` têm **um dono por vez**.
 
 - Emprestar: `reads recurso` (leitura; vários ao mesmo tempo) ou `edits recurso` (escrita; um por vez).
-- Dividir explicitamente entre ramos:
+- Dividir explicitamente entre ramos *(ainda não implementado)*:
   - `repo.fork(n)`: cópias isoladas (D13);
   - `repo.share(n)`: o mesmo repositório, com validação pelo conjunto de leitura a cada escrita (D13);
   - `orcamento.split(6 USD, 4 USD)` *(sintaxe provisória)*.
+
+**Como está implementado (M6, sandbox):**
+
+```
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Text:
+    effect sandbox
+
+graph solve(issue: Text, repo: Sandbox) -> Text:
+    fixed = edit_file(edits repo, "calc.py", "a", "b")
+    tests = run_tests(reads repo)          # depois de `fixed`, sem `after`
+```
+
+- **Uma sandbox é um diretório.** Na linha de comando, `--repo caminho`. A execução trabalha numa **cópia**, em `.calyx/runs/<id>/sandboxes/repo/`; o original não muda. No fim, o `calyx` diz onde a cópia está.
+- **Tools pedem a sandbox emprestada** num parâmetro `reads Sandbox` ou `edits Sandbox` (`E0646` sem isso), e recebem o caminho da cópia. Quem chama empresta do mesmo jeito: `reads repo` ou `edits repo` (`E0642` sem empréstimo, `E0643` com o modo errado). Uma tool que edita tem `effect sandbox` (`E0648`).
+- **A ordem sai dos empréstimos.** Um passo que edita uma sandbox vem depois de todo passo anterior (na ordem do texto) que a usa; um passo que lê vem depois de todo passo anterior que a edita. Leituras entre si rodam em paralelo. Um subgrafo que recebe a sandbox conta como edição.
+- **O compilador recusa** itens de um `for each` editando a mesma sandbox (`E0644`); duas partes de um passo que rodariam ao mesmo tempo, uma editando (`E0645`); e a sandbox como valor: guardada num passo, devolvida, mostrada a um prompt (`E0647`).
+- **No runtime:** edições de uma sandbox rodam uma por vez, leituras ao mesmo tempo (também as tools de uma volta de um agente). Antes de cada chamada que edita, um snapshot; se a chamada falha, a sandbox volta a ele, e chamadas `effect sandbox` são repetidas em erros temporários a partir do mesmo estado.
+- **Snapshots por conteúdo**, em `<sandbox>.snapshots/`: cada arquivo é guardado uma vez pelo SHA-256; um snapshot é um manifesto (caminho → hash). O hash do snapshot depois de cada edição vai para o diário com a resposta da tool. **Na retomada, a sandbox volta ao último snapshot do diário**: o que uma chamada interrompida fez é desfeito, e ela roda de novo.
+- **Limites:** a sandbox não é isolamento do sistema operacional; uma tool que escreve fora do caminho que recebe não é impedida. Links simbólicos não são copiados. `fork`/`share` ainda não existem.
 
 ---
 
@@ -500,6 +520,7 @@ O efeito de um nó é **inferido**: o maior efeito de tudo o que ele chama. Orde
 - **Durabilidade:** cada entrada chega ao sistema operacional antes da próxima chamada começar, então uma queda do processo não perde nada já concluído. O `fsync` (que protege também de queda de energia) roda no máximo uma vez por segundo, e sempre antes de escritas externas e no fim.
 - **`write once`:** uma entrada `begin` é gravada (com `fsync`) antes da chamada. Se a execução cai entre o `begin` e o fim da chamada, o resultado é desconhecido: a retomada **não repete** a chamada por conta própria, e aplica a política `on_uncertain` da tool (ou a decisão `--uncertain` dada na retomada). Uma chamada tomada como feita entra no diário, então o replay não precisa de decisão.
 - Uma linha cortada no meio por uma queda é descartada na retomada.
+- **Sandboxes:** a resposta de uma chamada que edita uma sandbox leva o hash do snapshot depois dela; a retomada põe cada sandbox de volta ao último snapshot do diário (seção 7.3).
 
 ### 9.4 Atores do runtime (D10)
 
@@ -527,6 +548,7 @@ Todas lineares ou composicionais (meta: `calyx check` em até 1 segundo):
 | Inferência e restrição de efeitos; política de `write once` presente e coerente (`verify` com tool de leitura, `Unit` quando segue sem resposta) | D2 |
 | Escrita sem chave de idempotência (aviso); agente sem tools `write once` | D2 |
 | Precondições: tool com `checks`, campos e tipos do estado, só operadores | D29 |
+| Empréstimo de sandboxes: modo certo, sem edições em paralelo, sandbox nunca como valor | D13, D26 |
 | Uso de recursos afins e suas visões | D26 |
 | Escritas externas sem ordem definida (aviso) | D2 |
 | Terminação: limite em laços e rodadas, `decreases` em recursão | D5, D17 |
@@ -586,6 +608,7 @@ Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*`
 - **A resposta é conferida contra o tipo** (tipos, campos obrigatórios, valores permitidos, `max` de listas, variantes). Modelos nem sempre respeitam o esquema que recebem; uma resposta fora do tipo conta como erro temporário e o modelo é chamado de novo.
 - **Variantes:** um tipo só com variantes sem campos (`Optimist | Skeptic`) vira um texto com um dos nomes; um tipo com campos vira um objeto com `kind` e os campos daquela variante, com uma alternativa por variante no esquema (`anyOf`).
 - **Novas tentativas:** erros temporários (`Timeout`, `RateLimit`, `Unavailable`, `Network`) de modelos são repetidos até 4 tentativas, esperando 1 s, 2 s e 4 s (o dobro para `RateLimit`), ou mais, se o provedor pedir (cabeçalho `Retry-After` ou "retry in N s" na mensagem, até 60 s). Tools repetem os erros listados em `retry_on`; tools `write` com `idempotency_key` repetem também os temporários; `write once` nunca repete sozinha: depois de `Timeout`, `Unavailable` ou `Network` aplica `on_uncertain` (D2).
+- **Sandboxes:** o parâmetro emprestado recebe o caminho da cópia. O pedido ao I/O leva `"borrows": [{"param", "mode", "path"}]`; o I/O segura a trava da sandbox e tira os snapshots.
 - **Contrato com a tool (MCP):** a chave de idempotência e as precondições vão no `_meta` da chamada `tools/call`, como `calyx/idempotency_key` (texto) e `calyx/requires` (lista de árvores: `{"state": campo}`, `{"value": v}`, `{"op", "l", "r"}` ou `{"op", "v"}`). Uma tool cujas precondições não valem responde com erro (`isError`) e texto começando com `PreconditionFailed:`, sem ter feito nada. `examples/tools/fake_store.py` implementa o contrato.
 - **Saída de tools:** cortada em `max_output` (D16).
 - **Falha:** se um passo falha depois das tentativas, a execução para com o grafo, o passo e o motivo, a menos que um `try` a capture (D11).

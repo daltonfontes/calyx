@@ -31,7 +31,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::config::Config;
-use crate::{llm, mcp};
+use crate::{llm, mcp, sandbox};
 
 #[derive(Debug)]
 pub struct IoError {
@@ -150,6 +150,32 @@ fn model_call(req: &Value) -> Result<Value, IoError> {
 }
 
 fn tool_call(req: &Value) -> Result<Value, IoError> {
+    // Sandboxes lent to the call (D26): their locks and snapshots wrap it.
+    let borrows: Vec<sandbox::Borrow> = req["borrows"]
+        .as_array()
+        .map(|bs| {
+            bs.iter()
+                .filter_map(|b| {
+                    Some(sandbox::Borrow {
+                        path: b["path"].as_str()?.to_owned(),
+                        edits: b["mode"] == "edits",
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if borrows.is_empty() {
+        return tool_call_unlocked(req);
+    }
+    let wrap = |m: String| IoError::new("Sandbox", m);
+    let (mut ok, snaps) = sandbox::with_borrows(&borrows, wrap, || tool_call_unlocked(req))?;
+    if !snaps.is_empty() {
+        ok["ok"]["sandbox"] = Value::Array(snaps);
+    }
+    Ok(ok)
+}
+
+fn tool_call_unlocked(req: &Value) -> Result<Value, IoError> {
     let tool = req["tool"].as_str().unwrap_or_default().to_owned();
     let args = req.get("args").cloned().unwrap_or(json!({}));
     let timeout = Duration::from_millis(req["timeout_ms"].as_u64().unwrap_or(30_000));

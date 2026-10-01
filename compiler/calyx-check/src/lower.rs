@@ -58,9 +58,11 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
         if let Decl::Tool(t) = d {
             cx.tools.insert(&t.name.name, (out.tools.len(), t));
             let mut ir_tool = tool(t);
+            // A model never provides a sandbox: it is lent by the program.
             let props: Vec<String> = t
                 .params
                 .iter()
+                .filter(|p| p.borrow.is_none())
                 .map(|p| {
                     let mut name = String::new();
                     ir_string(&mut name, &p.name.name);
@@ -70,6 +72,7 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
             let required: Vec<String> = t
                 .params
                 .iter()
+                .filter(|p| p.borrow.is_none())
                 .map(|p| {
                     let mut name = String::new();
                     ir_string(&mut name, &p.name.name);
@@ -246,6 +249,7 @@ impl Lower<'_> {
                 ir::Expr::Field(Box::new(self.expr(base, scope)), name.name.clone())
             }
             ExprKind::Call { callee, args } => self.call(callee, args, scope),
+            ExprKind::Borrow { target, .. } => self.name(&target.name, scope),
             ExprKind::Guarded { call, requires } => {
                 let mut e = self.expr(call, scope);
                 if let ir::Expr::Tool { requires: r, .. } = &mut e {
@@ -352,7 +356,26 @@ impl Lower<'_> {
                     tools: a
                         .tools
                         .iter()
-                        .filter_map(|t| self.tools.get(t.name.as_str()).map(|(i, _)| *i))
+                        .filter_map(|t| self.tools.get(t.name.name.as_str()).map(|(i, _)| *i))
+                        .collect(),
+                    // Lent sandboxes fill the tool's borrowing parameters, in order.
+                    bound: a
+                        .tools
+                        .iter()
+                        .filter_map(|t| {
+                            let (_, decl) = self.tools.get(t.name.name.as_str())?;
+                            let slots = decl
+                                .params
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, p)| p.borrow.is_some())
+                                .map(|(i, _)| i);
+                            Some(
+                                slots
+                                    .zip(t.lends.iter().map(|l| self.expr(l, scope)))
+                                    .collect(),
+                            )
+                        })
                         .collect(),
                     max_turns: a.max_turns.map_or(1, |m| m.0),
                     on_turn_limit: action(&a.on_turn_limit, "reached its turn limit"),
@@ -889,6 +912,11 @@ fn tool(t: &ToolDecl) -> ir::Tool {
         on_uncertain: None,
         returns_unit: matches!(&t.ret.kind, TypeKind::Named { name, args, .. } if name.name == "Unit" && args.is_empty()),
         checks: single_name("checks"),
+        borrows: t
+            .params
+            .iter()
+            .map(|p| p.borrow.as_ref().map(|m| m.name == "edits"))
+            .collect(),
         schema: String::new(),
         description,
         repeatable,

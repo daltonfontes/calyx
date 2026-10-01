@@ -26,7 +26,7 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | **M3** | Diário, retomada após queda, `calyx replay` | **Q3:** quanto trabalho é refeito depois de uma falha |
 | **M4** | Workers com roubo de trabalho, limites, prioridade pelo caminho crítico | **Q1:** quanto paralelismo sai sozinho |
 | **M5** | `loop`, `agent`, `match` com variantes, `try` | O ReAct como ciclo funciona |
-| **M6** | `write`, `write once`, `requires`, sandbox, entidades. Em duas partes: **M6a**, escritas externas seguras; **M6b**, sandbox e entidades | **Q2:** quantos bugs de estado o compilador pega |
+| **M6** | `write`, `write once`, `requires`, sandbox, entidades. Em três partes: **M6a**, escritas externas seguras; **M6b**, sandbox; **M6c**, entidades | **Q2:** quantos bugs de estado o compilador pega |
 | **Depois** | Geração de C nativo (como otimização, D35), várias máquinas, roteador, `rounds`, `race` | Desempenho e cobertura da especificação |
 
 ## Estado
@@ -41,7 +41,8 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | M5 | ✅ Concluído: `agent` (ciclo ReAct com chamada de tools nativa do provedor, tools em paralelo, `stuck`, `final_answer`), `loop` com `done`/`next`/`on limit`, `match` com cobertura de todas as variantes, `if`, operadores, construção de registros e variantes, `try` com `Result[T]`. Falhas locais (capturáveis) e respostas conferidas contra o tipo do prompt |
 | Distribuição (D35) | ✅ Concluído: binários estáticos (musl) para Linux x86_64 e ARM, e binários para macOS, publicados por tag (`.github/workflows/release.yml`), com teste do binário e de um programa gerado com ele em cada alvo; `install.sh` com conferência de SHA-256; `calyx build` gera um executável autocontido (o próprio `calyx` com o programa e o `calyx.toml` anexados) |
 | M6a | ✅ Concluído: escritas externas seguras. `write` com `idempotency_key` (a chave vai para a tool, e a escrita pode ser repetida em erros temporários); `write once` com `on_uncertain pause`, `accept_loss` e `verify(tool(...))`, aplicadas tanto quando a resposta se perde (timeout, servidor caiu) quanto na retomada; `calyx resume --uncertain done\|retry\|failed` para a decisão de uma pessoa; precondições `requires` conferidas pela tool sobre o estado atual (`checks`), com falha local `PreconditionFailed` que o `try` captura; `after` e aviso de escritas sem ordem; agentes não usam tools `write once`. Exemplo: `examples/refund.clyx` com a loja falsa `examples/tools/fake_store.py` |
-| M6b | Próximo: sandbox (`reads`/`edits`, `fork`/`share`) e entidades (`entity`, `ask`, `send`, `receive`) |
+| M6b | ✅ Concluído: sandboxes. Parâmetros `Sandbox` (a execução trabalha numa cópia do diretório), tools com `reads Sandbox` / `edits Sandbox`, empréstimos `reads repo` / `edits repo` nas chamadas e nas tools de agentes; a ordem entre passos sai dos empréstimos; erros para edições em paralelo e para a sandbox usada como valor. No runtime, travas (edições uma por vez), snapshots por conteúdo, chamada que falha desfeita antes de repetir, sandbox restaurada do diário na retomada. Exemplo: `examples/fix.clyx`, um agente de código que corrigiu um bug com o Gemini. `fork`/`share` ficam para depois |
+| M6c | Próximo: entidades (`entity`, `ask`, `send`, `receive`) |
 
 ## Medidas
 
@@ -61,7 +62,21 @@ Programas sintéticos (grafos de 21 nós com fan-out), binário de release, máq
 
 Para repetir: `cargo run --release -p calyx-check --example phases -- arquivo.clyx`.
 
-### M6a (Q2): quantos bugs de estado o compilador pega
+### M6 (Q2): quantos bugs de estado o compilador pega
+
+**Com as sandboxes (M6b), a suíte tem 32 bugs:** o compilador pega 23 (72%), o runtime 4, ninguém 5. Os 10 novos:
+
+| Quem pega | Bugs de sandbox |
+|---|---|
+| Compilador (6) | itens de um `for each` editando o mesmo repositório; tool que edita recebendo empréstimo de leitura; testes e edição ao mesmo tempo; repositório guardado num passo; tool que edita declarada como leitura; agente com tool de edição sem a sandbox |
+| Runtime (2) | tool que cai depois de escrever parte da edição (desfeita antes de repetir); queda entre edições (sandbox restaurada do diário) |
+| Ninguém (2) | tool que escreve fora da sandbox; tool de leitura que escreve na sandbox |
+
+Os dois que escapam pedem isolamento do sistema operacional (a tool só enxergar a cópia) ou conferir, depois de cada leitura, que nada mudou. As duas coisas ficam para depois.
+
+**O agente de código com o Gemini** (`examples/fix.clyx`, `average([2, 4, 6])` devolvia 6): em 6 voltas (4,9 s) listou os arquivos, leu o código e o teste, corrigiu a divisão, rodou os testes (passaram) e respondeu; o `diff` depois do agente mostra só a linha corrigida, e o diretório original não mudou.
+
+#### M6a: escritas externas
 
 Uma suíte de 22 workflows pequenos, cada um com um bug de estado conhecido envolvendo escritas externas (`tests/state_bugs/`). Cada programa diz na segunda linha quem pega o bug, e um teste (`compiler/calyx-check/tests/state_bugs.rs`) confere. Para os que o compilador não pega, o teste exige que ele não diga nada, então a conta é honesta.
 

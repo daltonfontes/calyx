@@ -1,0 +1,60 @@
+# Agente de código numa sandbox (marco M6).
+#
+# - `repo: Sandbox`: o runtime trabalha numa cópia do diretório, dentro da
+#   pasta da execução; o original não muda.
+# - As tools recebem a sandbox emprestada: `reads` para ler, `edits` para
+#   mudar. O compilador ordena sozinho os passos que usam a mesma sandbox
+#   (sem `after`) e recusa duas edições ao mesmo tempo.
+# - Tools `effect sandbox`: se uma chamada falha, as mudanças dela são
+#   desfeitas; numa retomada, a sandbox volta ao estado do diário.
+#
+# calyx run examples/fix.clyx --fake-models --repo examples/sample_repo \
+#     --issue "average([2, 4, 6]) devolve 6 em vez de 4"
+
+model gemini = "gemini-3.5-flash-lite"
+
+tool list_files(box: reads Sandbox) -> Text:
+    effect read
+    max_output 1000 tokens
+    description "Lista os arquivos do repositório."
+
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 4000 tokens
+    description "Lê um arquivo do repositório."
+
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Text:
+    effect sandbox
+    max_output 200 tokens
+    description "Troca o trecho `old` por `new` num arquivo. `old` precisa aparecer exatamente uma vez."
+
+tool run_tests(box: reads Sandbox) -> Text:
+    effect read
+    max_output 3000 tokens
+    timeout 60 s
+    description "Roda os testes do repositório e devolve o resultado."
+
+tool diff(box: reads Sandbox) -> Text:
+    effect read
+    max_output 4000 tokens
+
+prompt fix(issue: Text) -> Text:
+    """
+    Você trabalha num repositório Python. Corrija o problema abaixo:
+    liste os arquivos, leia o código, edite o que for preciso e rode os
+    testes antes de terminar. Responda com um resumo do que mudou.
+
+    Problema: {issue}
+    """
+
+graph solve(issue: Text, repo: Sandbox) -> Text:
+    work = agent gemini:
+        tools [list_files(reads repo), read_file(reads repo), edit_file(edits repo), run_tests(reads repo)]
+        max_turns 12
+        task fix(issue)
+        on turn_limit: final_answer
+        on stuck: final_answer
+
+    # Depois do agente, sem `after`: os dois usam `repo`, e o agente edita.
+    changes = diff(reads repo)
+    return "{work}\n\n{changes}"

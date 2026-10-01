@@ -10,6 +10,7 @@ pub mod config;
 pub mod io;
 mod llm;
 mod mcp;
+pub mod sandbox;
 pub mod verify;
 
 use std::ffi::{CStr, CString, c_char};
@@ -71,6 +72,8 @@ pub fn run(
     args: &serde_json::Value,
     opts: RunOptions,
 ) -> Result<serde_json::Value, String> {
+    let (args, sandboxes) = prepare_sandboxes(ir_json, graph, args, &opts)?;
+    let args = &args;
     let options = serde_json::json!({
         "trace": opts.trace,
         "journal": opts.journal.as_ref().map(|p| p.display().to_string()),
@@ -95,6 +98,9 @@ pub fn run(
     // SAFETY: valid NUL-terminated strings; the result is released below.
     let out = unsafe { calyx_run(ir.as_ptr(), g.as_ptr(), a.as_ptr(), o.as_ptr()) };
     io::shutdown();
+    for (name, path) in &sandboxes {
+        eprintln!("calyx: sandbox `{name}` is at {}", path.display());
+    }
     if out.is_null() {
         return Err("the runtime returned nothing (out of memory?)".into());
     }
@@ -110,4 +116,58 @@ pub fn run(
         Some(value) => Ok(value.clone()),
         None => Err(v["error"].as_str().unwrap_or("unknown error").to_owned()),
     }
+}
+
+/// The graph's `Sandbox` parameters (decision D13). A new run works on a
+/// copy of each directory, inside the run's directory (the original never
+/// changes); the copy's path replaces the argument, so the journal records
+/// it. Resuming puts each copy back to where the journal left it.
+fn prepare_sandboxes(
+    ir_json: &str,
+    graph: &str,
+    args: &serde_json::Value,
+    opts: &RunOptions,
+) -> Result<(serde_json::Value, Vec<(String, PathBuf)>), String> {
+    let mut args = args.clone();
+    let mut out = Vec::new();
+    let ir: serde_json::Value = serde_json::from_str(ir_json).unwrap_or_default();
+    let Some(g) = ir["graphs"]
+        .as_array()
+        .and_then(|gs| gs.iter().find(|g| g["name"] == graph))
+    else {
+        return Ok((args, out));
+    };
+    let names = g["params"].as_array().cloned().unwrap_or_default();
+    let types = g["param_types"].as_array().cloned().unwrap_or_default();
+    let mut journaled = None;
+    for (name, ty) in names.iter().zip(&types) {
+        let (Some(name), Some("Sandbox")) = (name.as_str(), ty.as_str()) else {
+            continue;
+        };
+        let Some(given) = args[name].as_str().map(PathBuf::from) else {
+            continue; // reported as a missing argument
+        };
+        match opts.mode {
+            Mode::New => {
+                let dest = match &opts.journal {
+                    Some(dir) => dir.join("sandboxes").join(name),
+                    None => std::env::temp_dir()
+                        .join(format!("calyx-sandbox-{}", std::process::id()))
+                        .join(name),
+                };
+                sandbox::create(&given, &dest).map_err(|e| format!("sandbox `{name}`: {e}"))?;
+                let dest = dest.canonicalize().unwrap_or(dest);
+                args[name] = serde_json::Value::String(dest.display().to_string());
+                out.push((name.to_owned(), dest));
+            }
+            Mode::Resume => {
+                let Some(dir) = &opts.journal else { continue };
+                let j = journaled.get_or_insert_with(|| sandbox::journaled(dir));
+                sandbox::recover(&given, j).map_err(|e| format!("sandbox `{name}`: {e}"))?;
+                out.push((name.to_owned(), given));
+            }
+            Mode::Replay => {}
+        }
+    }
+    Ok((args, out))
 }

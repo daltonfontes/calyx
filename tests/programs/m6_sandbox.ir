@@ -1,0 +1,11 @@
+graph inner(box: Sandbox) -> Text [sandbox]
+  %0 return: Text = tool edit_file [sandbox]
+  return %0
+
+graph outer(goal: Text, repo: Sandbox, paths: List[Text]) -> Text [sandbox]
+  %0 before: Text = tool read_file [read]
+  %1 work: Text = agent m [sandbox] <- %0
+  %2 more: Text = graph inner [sandbox] <- %0 %1
+  %3 seen[p]: List[Text] = tool read_file [read] <- %1 %2
+  %4 return: Text = pure [pure] <- %0 %1 %2 %3
+  return %4

@@ -123,6 +123,14 @@ fn tool(o: &mut String, t: &Tool) {
     o.push_str(&format!(",\"returns_unit\":{}", t.returns_unit));
     o.push_str(",\"checks\":");
     opt_string(o, t.checks.as_deref());
+    o.push_str(",\"borrows\":");
+    list(o, &t.borrows, |o, b| {
+        o.push_str(match b {
+            None => "null",
+            Some(true) => "\"edits\"",
+            Some(false) => "\"reads\"",
+        })
+    });
     o.push('}');
 }
 
@@ -396,6 +404,16 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
                 a.model, a.prompt
             ));
             list(o, &a.tools, |o, t| o.push_str(&t.to_string()));
+            if a.bound.iter().any(|b| !b.is_empty()) {
+                o.push_str(",\"bound\":");
+                list(o, &a.bound, |o, b| {
+                    list(o, b, |o, (p, v)| {
+                        o.push_str(&format!("{{\"param\":{p},\"v\":"));
+                        expr(o, v, ids);
+                        o.push('}');
+                    })
+                });
+            }
             o.push_str(&format!(
                 ",\"max_turns\":{},\"on_turn_limit\":",
                 a.max_turns

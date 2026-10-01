@@ -194,6 +194,16 @@ impl<'p> Cx<'_, 'p> {
                 }
                 Decl::Prompt(p) => {
                     let params = self.params(&p.params);
+                    self.no_borrows(&p.params);
+                    for ((_, ty), decl) in params.iter().zip(&p.params) {
+                        if *ty == Ty::Sandbox {
+                            self.push(
+                                err("E0647", "a sandbox is not a value a prompt can show", decl.name.span)
+                                    .expected("the sandbox lent to tools; the text the tools return goes to the model")
+                                    .observed("a `Sandbox` parameter"),
+                            );
+                        }
+                    }
                     let ret = self.ty(&p.ret);
                     let names: HashMap<String, Ty> = params.iter().cloned().collect();
                     self.check_interpolations(&p.template, &|n| names.get(n).cloned());
@@ -201,7 +211,15 @@ impl<'p> Cx<'_, 'p> {
                 }
                 Decl::Graph(g) => {
                     let params = self.params(&g.params);
+                    self.no_borrows(&g.params);
                     let ret = self.ty(&g.ret);
+                    if ret == Ty::Sandbox {
+                        self.push(
+                            err("E0647", "a graph cannot return a sandbox", g.ret.span)
+                                .expected("a value computed from it, e.g. the result of a tool that reads it")
+                                .observed("`-> Sandbox`"),
+                        );
+                    }
                     self.graphs
                         .insert(&g.name.name, (g, GraphSig { params, ret }));
                 }
@@ -311,7 +329,32 @@ impl<'p> Cx<'_, 'p> {
     // ----- tools ----------------------------------------------------------
 
     fn tool(&mut self, t: &ToolDecl) -> ToolSig {
-        let params = self.params(&t.params);
+        let mut params = self.params(&t.params);
+        // `box: reads Sandbox` / `box: edits Sandbox` (decision D26).
+        for (p, decl) in params.iter_mut().zip(&t.params) {
+            match (&decl.borrow, &p.1) {
+                (Some(m), Ty::Sandbox) => p.1 = Ty::Lent(m.name == "edits"),
+                (Some(_), Ty::Error) => {}
+                (Some(m), other) => self.push(
+                    err("E0646", "only a `Sandbox` can be borrowed", m.span)
+                        .expected(format!("`{} Sandbox`", m.name))
+                        .observed(format!("`{} {other}`", m.name)),
+                ),
+                (None, Ty::Sandbox) => self.push(
+                    err(
+                        "E0646",
+                        "a tool borrows a sandbox for each call",
+                        decl.name.span,
+                    )
+                    .expected(format!(
+                        "`{}: reads Sandbox` or `{}: edits Sandbox`",
+                        decl.name.name, decl.name.name
+                    ))
+                    .observed("`Sandbox` without `reads` or `edits`"),
+                ),
+                _ => {}
+            }
+        }
         let ret = self.ty(&t.ret);
         let mut effect = None;
         let mut on_uncertain = false;
@@ -420,6 +463,13 @@ impl<'p> Cx<'_, 'p> {
                 Effect::WriteOnce // most conservative
             }
         };
+        if params.iter().any(|(_, t)| *t == Ty::Lent(true)) && effect < Effect::Sandbox {
+            self.push(
+                err("E0648", "a tool that edits a sandbox needs `effect sandbox`", t.name.span)
+                    .expected("`effect sandbox`: its changes are undone if the call fails, and restored on recovery")
+                    .observed(format!("`effect {effect}`")),
+            );
+        }
         if parsed == Some(Effect::WriteOnce) && !on_uncertain {
             self.push(
                 err("E0304", "`write once` tool needs a policy for uncertain outcomes", t.name.span)
@@ -434,6 +484,22 @@ impl<'p> Cx<'_, 'p> {
             policy,
             checks,
             keyed,
+        }
+    }
+
+    /// `reads` / `edits` belong to tool parameters only.
+    fn no_borrows(&mut self, params: &[Param]) {
+        for p in params {
+            if let Some(m) = &p.borrow {
+                self.push(
+                    err("E0646", "only tools borrow resources", m.span)
+                        .expected(format!(
+                            "`{}: Sandbox` here; tools say `reads` or `edits`",
+                            p.name.name
+                        ))
+                        .observed(format!("`{}`", m.name)),
+                );
+            }
         }
     }
 
@@ -827,6 +893,52 @@ impl<'p> Cx<'_, 'p> {
             deps[i].sort_unstable();
             deps[i].dedup();
         }
+        // Sandboxes have one owner at a time (D26): a step that edits one
+        // comes after every earlier step that borrows it; a step that reads
+        // one, after every earlier step that edits it. No `after` needed.
+        let sandboxes: HashSet<&str> = sig_params
+            .iter()
+            .filter(|(_, t)| *t == Ty::Sandbox)
+            .map(|(n, _)| n.as_str())
+            .collect();
+        let mut lent: Vec<Vec<(String, bool)>> = Vec::with_capacity(locals.len());
+        for l in &locals {
+            let mut out = Vec::new();
+            if !sandboxes.is_empty() {
+                if let Some((_, over)) = l.fan_out {
+                    self.borrows(over, &sandboxes, &mut out);
+                }
+                self.borrows(l.value, &sandboxes, &mut out);
+                if let Some((var, _)) = l.fan_out
+                    && let Some((s, _)) = out.iter().find(|(_, e)| *e)
+                {
+                    self.push(
+                        err(
+                            "E0644",
+                            "items of a `for each` cannot edit the same sandbox",
+                            var.span,
+                        )
+                        .expected(format!(
+                            "`reads {s}` in the items, or the edits in a step of their own"
+                        ))
+                        .observed(format!("`edits {s}` in every item, all at the same time")),
+                    );
+                }
+            }
+            lent.push(out);
+        }
+        for i in 0..locals.len() {
+            for j in 0..i {
+                let conflict = lent[i]
+                    .iter()
+                    .any(|(s, ei)| lent[j].iter().any(|(t, ej)| s == t && (*ei || *ej)));
+                if conflict {
+                    deps[i].push(j);
+                }
+            }
+            deps[i].sort_unstable();
+            deps[i].dedup();
+        }
         let (order, cyclic) = self.topo(&locals, &deps);
         // Nodes in a cycle were already reported: type them as errors up
         // front so they do not also show up as unknown names.
@@ -868,6 +980,13 @@ impl<'p> Cx<'_, 'p> {
                     (t.ty, t.kind, t.effect)
                 }
             };
+            if matches!(ty, Ty::Sandbox | Ty::Lent(_)) {
+                self.push(
+                    err("E0647", "a sandbox is not a value a step can keep", l.name.span)
+                        .expected("lend it to tools where it is used: `tool(reads repo)` or `tool(edits repo)`")
+                        .observed(format!("`{}` would be a `{ty}`", l.name.name)),
+                );
+            }
             gc.scope.insert(l.name.name.clone(), ty.clone());
             let id = NodeId(nodes.len() as u32);
             ids.insert(i, id);
@@ -903,6 +1022,16 @@ impl<'p> Cx<'_, 'p> {
                     );
                 }
                 let t = self.expr(r, &gc);
+                if matches!(t.ty, Ty::Lent(_)) {
+                    self.push(
+                        err(
+                            "E0647",
+                            "a lent sandbox only goes to a tool that borrows it",
+                            r.span,
+                        )
+                        .observed(format!("`return` of `{}`", t.ty)),
+                    );
+                }
                 if !assignable(&t.ty, &ret) {
                     self.push(
                         err("E0610", "returned value has the wrong type", r.span)
@@ -918,6 +1047,15 @@ impl<'p> Cx<'_, 'p> {
                     _ => None,
                 };
                 if output.is_none() {
+                    let mut ret_lent = Vec::new();
+                    self.borrows(r, &sandboxes, &mut ret_lent);
+                    for (i, l) in lent.iter().enumerate() {
+                        if l.iter()
+                            .any(|(s, e)| ret_lent.iter().any(|(t, f)| s == t && (*e || *f)))
+                        {
+                            refs.push(i);
+                        }
+                    }
                     let id = NodeId(nodes.len() as u32);
                     nodes.push(ir::Node {
                         id,
@@ -1005,6 +1143,135 @@ impl<'p> Cx<'_, 'p> {
             output,
             limits: ir::Limits::default(),
         }
+    }
+
+    /// The sandboxes `e` borrows, and whether it edits each: `reads x` /
+    /// `edits x` (also lent to an agent's tools), and a sandbox passed to a
+    /// subgraph, which owns it for the call. Reports two edits of one
+    /// sandbox that could run at the same time (E0645).
+    fn borrows(&mut self, e: &Expr, sandboxes: &HashSet<&str>, out: &mut Vec<(String, bool)>) {
+        let found = self.borrows_in(e, sandboxes);
+        for b in found {
+            if !out.contains(&b) {
+                out.push(b);
+            }
+        }
+    }
+
+    fn borrows_in(&mut self, e: &Expr, sandboxes: &HashSet<&str>) -> Vec<(String, bool)> {
+        let one = |s: &str, edits: bool| vec![(s.to_owned(), edits)];
+        let children: Vec<&Expr> = match &e.kind {
+            ExprKind::Borrow { mode, target } if sandboxes.contains(target.name.as_str()) => {
+                return one(&target.name, mode.name == "edits");
+            }
+            ExprKind::Call { callee, args } => {
+                let to_graph = matches!(&callee.kind, ExprKind::Ident(n) if self.graphs.contains_key(n.as_str()));
+                let mut kids = Vec::new();
+                let mut passed = Vec::new();
+                for a in args {
+                    match &a.value.kind {
+                        ExprKind::Ident(n) if to_graph && sandboxes.contains(n.as_str()) => {
+                            passed.push((n.clone(), true));
+                        }
+                        _ => kids.push(&a.value),
+                    }
+                }
+                let mut groups: Vec<Vec<(String, bool)>> =
+                    kids.iter().map(|k| self.borrows_in(k, sandboxes)).collect();
+                groups.extend(passed.into_iter().map(|p| vec![p]));
+                return self.parallel(groups, e.span);
+            }
+            ExprKind::List(items) => items.iter().collect(),
+            ExprKind::Field { base, .. } => vec![base],
+            ExprKind::Binary { left, right, .. } => vec![left, right],
+            ExprKind::Unary { value, .. }
+            | ExprKind::Done(value)
+            | ExprKind::Next(value)
+            | ExprKind::Try(value) => vec![value],
+            ExprKind::Guarded { call, .. } => vec![call],
+            // Branches exclude each other; loop turns follow each other.
+            ExprKind::If { cond, then, els } => {
+                let mut v = self.borrows_in(cond, sandboxes);
+                for b in [then, els] {
+                    for x in self.borrows_in(b, sandboxes) {
+                        if !v.contains(&x) {
+                            v.push(x);
+                        }
+                    }
+                }
+                return v;
+            }
+            ExprKind::Match { value, cases } => {
+                let mut v = self.borrows_in(value, sandboxes);
+                for c in cases {
+                    for x in self.borrows_in(&c.body, sandboxes) {
+                        if !v.contains(&x) {
+                            v.push(x);
+                        }
+                    }
+                }
+                return v;
+            }
+            ExprKind::Loop { init, body, .. } => {
+                let mut v = self.borrows_in(init, sandboxes);
+                v.extend(self.borrows_in(body, sandboxes));
+                return v;
+            }
+            // The runtime runs an agent's calls on one sandbox one at a time.
+            ExprKind::Agent(a) => {
+                let mut v = Vec::new();
+                for t in &a.tools {
+                    for l in &t.lends {
+                        v.extend(self.borrows_in(l, sandboxes));
+                    }
+                }
+                if let Some(t) = &a.task {
+                    v.extend(self.borrows_in(t, sandboxes));
+                }
+                return v;
+            }
+            _ => Vec::new(),
+        };
+        let groups = children
+            .into_iter()
+            .map(|c| self.borrows_in(c, sandboxes))
+            .collect();
+        self.parallel(groups, e.span)
+    }
+
+    /// Borrows of parts that run at the same time: two of them editing the
+    /// same sandbox is an error, since their order would be left to chance.
+    fn parallel(&mut self, groups: Vec<Vec<(String, bool)>>, span: Span) -> Vec<(String, bool)> {
+        let mut all: Vec<(String, bool)> = Vec::new();
+        let mut reported = HashSet::new();
+        for (k, g) in groups.iter().enumerate() {
+            for (s, edits) in g {
+                let clash = groups[..k]
+                    .iter()
+                    .any(|h| h.iter().any(|(t, e2)| t == s && (*edits || *e2)));
+                if clash && reported.insert(s.clone()) {
+                    self.push(
+                        err(
+                            "E0645",
+                            "two uses of a sandbox that could run at the same time, one editing it",
+                            span,
+                        )
+                        .expected(format!(
+                            "the edit of `{s}` in a step of its own, so the order is defined"
+                        ))
+                        .observed(format!(
+                            "`{s}` borrowed twice in one expression, at least once with `edits`"
+                        )),
+                    );
+                }
+            }
+            for b in g {
+                if !all.contains(b) {
+                    all.push(b.clone());
+                }
+            }
+        }
+        all
     }
 
     /// Two steps that write outside the run with no order between them may
@@ -1156,6 +1423,26 @@ impl<'p> Cx<'_, 'p> {
     fn expr(&mut self, e: &Expr, gc: &GraphCx) -> Typed {
         match &e.kind {
             ExprKind::Guarded { call, requires } => self.guarded(call, requires, gc),
+            ExprKind::Borrow { mode, target } => match gc.scope.get(&target.name) {
+                Some(Ty::Sandbox) => Typed::pure(Ty::Lent(mode.name == "edits")),
+                Some(Ty::Error) => Typed::pure(Ty::Error),
+                Some(other) => {
+                    self.push(
+                        err("E0646", "only a `Sandbox` can be lent", target.span)
+                            .expected("a `Sandbox` parameter of the graph")
+                            .observed(format!("`{}` is `{other}`", target.name)),
+                    );
+                    Typed::pure(Ty::Error)
+                }
+                None => {
+                    self.push(
+                        err("E0602", "unknown name", target.span)
+                            .expected("a `Sandbox` parameter of the graph")
+                            .observed(format!("`{}`", target.name)),
+                    );
+                    Typed::pure(Ty::Error)
+                }
+            },
             ExprKind::Ident(n) => {
                 if let Some(t) = gc.scope.get(n) {
                     return Typed::pure(t.clone());
@@ -1672,7 +1959,43 @@ impl<'p> Cx<'_, 'p> {
                     .observed(format!("`{model}`")),
             );
         }
-        for t in &a.tools {
+        for at in &a.tools {
+            let t = &at.name;
+            let lent: Vec<Ty> = at.lends.iter().map(|l| self.expr(l, gc).ty).collect();
+            if let Some(sig) = self.tools.get(t.name.as_str()) {
+                let borrowed: Vec<(String, Ty)> = sig
+                    .params
+                    .iter()
+                    .filter(|(_, ty)| matches!(ty, Ty::Lent(_)))
+                    .cloned()
+                    .collect();
+                if borrowed.len() != lent.len() {
+                    let names: Vec<String> = borrowed
+                        .iter()
+                        .map(|(n, ty)| format!("`{n}: {ty}`"))
+                        .collect();
+                    self.push(
+                        err(
+                            "E0649",
+                            "lend the agent's tool each sandbox it borrows",
+                            t.span,
+                        )
+                        .expected(if names.is_empty() {
+                            format!("`{}`, without parentheses: it borrows nothing", t.name)
+                        } else {
+                            format!("`{}(...)` lending {}", t.name, names.join(", "))
+                        })
+                        .observed(format!("{} lent", lent.len())),
+                    );
+                } else {
+                    let spans: Vec<Span> = at.lends.iter().map(|l| l.span).collect();
+                    for ((ty, (pname, pty)), span) in lent.iter().zip(&borrowed).zip(spans) {
+                        if let Some(d) = lent_mismatch(ty, pty, pname, span) {
+                            self.push(d);
+                        }
+                    }
+                }
+            }
             match self.tools.get(t.name.as_str()) {
                 None => self.push(
                     err("E0626", "not a tool", t.span)
@@ -2035,6 +2358,10 @@ impl<'p> Cx<'_, 'p> {
             }
             filled[slot] = true;
             let (pname, pty) = &params[slot];
+            if let Some(d) = lent_mismatch(&t.ty, pty, pname, a.value.span) {
+                self.push(d);
+                continue;
+            }
             if !assignable(&t.ty, pty) {
                 self.push(
                     err("E0608", "argument has the wrong type", a.value.span)
@@ -2150,6 +2477,39 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
     }
 }
 
+/// A sandbox lent the wrong way (decision D26), or `None`.
+fn lent_mismatch(arg: &Ty, param: &Ty, pname: &str, span: Span) -> Option<Diagnostic> {
+    let mode = |e: bool| if e { "edits" } else { "reads" };
+    match (arg, param) {
+        (Ty::Error, _) | (_, Ty::Error) => None,
+        (Ty::Lent(a), Ty::Lent(p)) if a == p => None,
+        (Ty::Lent(a), Ty::Lent(p)) => Some(
+            err(
+                "E0643",
+                format!("the tool needs `{}`, not `{}`", mode(*p), mode(*a)),
+                span,
+            )
+            .expected(format!("`{} ...` for `{pname}`", mode(*p)))
+            .observed(format!("`{} ...`", mode(*a))),
+        ),
+        (_, Ty::Lent(p)) => Some(
+            err("E0642", "a sandbox must be lent to the tool", span)
+                .expected(format!("`{} sandbox` for `{pname}`", mode(*p)))
+                .observed(format!("a `{arg}`")),
+        ),
+        (Ty::Lent(_), _) => Some(
+            err(
+                "E0647",
+                "a lent sandbox only goes to a tool that borrows it",
+                span,
+            )
+            .expected(format!("a `{param}` for `{pname}`"))
+            .observed(format!("`{arg}`")),
+        ),
+        _ => None,
+    }
+}
+
 /// `verify(f(a, b))` as a policy, if it has that shape.
 fn verify_policy(args: &[Arg]) -> Option<Policy> {
     let [Arg { name: None, value }] = args else {
@@ -2257,7 +2617,11 @@ fn collect_refs(e: &Expr, bound: Option<&str>, index: &HashMap<&str, usize>, out
                 collect_refs(r, bound, index, out);
             }
         }
-        ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Error => {}
+        // Only graph parameters are lent: no step to depend on.
+        ExprKind::Int { .. }
+        | ExprKind::Float { .. }
+        | ExprKind::Error
+        | ExprKind::Borrow { .. } => {}
     }
 }
 

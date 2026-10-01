@@ -1,0 +1,28 @@
+# Sandboxes (M6): borrows order the steps; agents get them lent.
+model m = "m"
+
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 100 tokens
+
+tool edit_file(box: edits Sandbox, path: Text, text: Text) -> Text:
+    effect sandbox
+    max_output 100 tokens
+
+prompt task(goal: Text) -> Text:
+    """{goal}"""
+
+graph inner(box: Sandbox) -> Text:
+    return edit_file(edits box, "b.txt", "x")
+
+graph outer(goal: Text, repo: Sandbox, paths: List[Text]) -> Text:
+    before = read_file(reads repo, "a.txt")
+    work = agent m:
+        tools [read_file(reads repo), edit_file(edits repo)]
+        max_turns 3
+        task task(goal)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    more = inner(repo)
+    seen = for each p in paths: read_file(reads repo, p)
+    return "{before} {work} {more} {seen}"

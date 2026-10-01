@@ -1,0 +1,22 @@
+# Bug: Cada item de um `for each` edita o mesmo repositório ao mesmo tempo: edições se sobrescrevem.
+# Pego por: E0644
+model m = "m"
+
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 1000 tokens
+
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Text:
+    effect sandbox
+    max_output 100 tokens
+
+tool run_tests(box: reads Sandbox) -> Text:
+    effect read
+    max_output 1000 tokens
+
+prompt task(issue: Text) -> Text:
+    """Corrija: {issue}"""
+
+graph g(repo: Sandbox, files: List[Text]) -> Text:
+    done = for each f in files: edit_file(edits repo, f, "TODO", "FEITO")
+    return "ok"
