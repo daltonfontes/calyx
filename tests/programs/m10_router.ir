@@ -1,0 +1,5 @@
+graph g(q: Text) -> Text [llm]
+  %0 a: Answer = model smart(ask) [llm]
+  %1 b: Result[Answer] = try [llm]
+  %2 return: Text = match [pure] <- %1 %0 %0
+  return %2

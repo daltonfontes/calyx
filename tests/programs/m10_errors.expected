@@ -1,0 +1,37 @@
+error[E0691]: a router needs at least two models
+- expected : `route [cheaper, stronger]`, cheapest first
+Location: m10_errors.clyx:18:8
+
+error[E0690]: unknown model in a router
+- expected : a model declared with `model`
+- observed : `nowhere`
+Location: m10_errors.clyx:21:32
+
+error[E0692]: a router needs a policy
+- expected : `policy cheapest_that_passes(check)`, with `check` a `def` that takes the answer and gives `Bool`
+Location: m10_errors.clyx:24:8
+
+error[E0102]: unknown router property
+- expected : `policy`
+- observed : `max_output`
+Location: m10_errors.clyx:25:5
+
+error[E0692]: unknown router policy
+- expected : `cheapest_that_passes` (the only policy for now)
+- observed : `fastest`
+Location: m10_errors.clyx:28:12
+
+error[E0693]: a router's check is a `def`
+- expected : `def check(answer: T) -> Bool`: pure, so the choice is the same on every run
+- observed : `cheap`
+Location: m10_errors.clyx:31:33
+
+error[E0693]: a router's check takes the answer and gives `Bool`
+- expected : `def check(answer: T) -> Bool`
+- observed : `score` takes 1 value(s) and gives `Int`
+Location: m10_errors.clyx:34:33
+
+error[E0694]: the router's check takes another type
+- expected : a prompt that answers `Text`, what `long` checks
+- observed : an answer of type `Answer`
+Location: m10_errors.clyx:43:9

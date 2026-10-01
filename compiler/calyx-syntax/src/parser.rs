@@ -38,11 +38,11 @@ const UNITS: &[&str] = &[
 const RATE_UNITS: &[&str] = &["s", "min", "h"];
 
 const DECLS: &[&str] = &[
-    "model", "tool", "type", "message", "prompt", "graph", "entity", "def",
+    "model", "tool", "type", "message", "prompt", "graph", "entity", "def", "router",
 ];
 
 /// Declarations planned for later milestones.
-const FUTURE_DECLS: &[(&str, &str)] = &[("router", "a later milestone")];
+const FUTURE_DECLS: &[(&str, &str)] = &[];
 
 /// Statements and expressions planned for later milestones.
 const FUTURE_STMTS: &[(&str, &str)] = &[
@@ -370,6 +370,7 @@ impl Parser<'_> {
             "graph" => self.graph_decl().map(Decl::Graph),
             "entity" => self.entity_decl().map(Decl::Entity),
             "def" => self.def_decl().map(Decl::Def),
+            "router" => self.router_decl().map(Decl::Router),
             w => {
                 if let Some((_, m)) = FUTURE_DECLS.iter().find(|(k, _)| *k == w) {
                     Err(self.unsupported(w, m))
@@ -377,7 +378,7 @@ impl Parser<'_> {
                     Err(self.error_here(
                         "E0100",
                         "syntax error",
-                        "a declaration (`model`, `tool`, `type`, `prompt`, `graph`, `entity` or `def`)",
+                        "a declaration (`model`, `router`, `tool`, `type`, `prompt`, `graph`, `entity` or `def`)",
                     ))
                 }
             }
@@ -427,6 +428,72 @@ impl Parser<'_> {
             name,
             model_id,
             max_output,
+            span: self.span_from(start),
+        })
+    }
+
+    /// `router name = route [m1, m2, ...]:` then `policy policy_name(check)`.
+    fn router_decl(&mut self) -> PResult<RouterDecl> {
+        let start = self.advance().span; // router
+        let name = self.ident("a router name")?;
+        self.expect(TokenKind::Eq, "`= route [models]`")?;
+        self.expect_word("route")?;
+        self.expect(TokenKind::LBracket, "`[` and the models, cheapest first")?;
+        let mut models = Vec::new();
+        loop {
+            models.push(self.ident("a model")?);
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::RBracket, "`]`")?;
+        let mut policy = None;
+        for p in self.props("the router's policy")? {
+            match (p.key.name.as_str(), p.value.as_slice()) {
+                (
+                    "policy",
+                    [
+                        Expr {
+                            kind: ExprKind::Call { callee, args },
+                            ..
+                        },
+                    ],
+                ) if matches!(&callee.kind, ExprKind::Ident(_))
+                    && args.len() == 1
+                    && args[0].name.is_none()
+                    && matches!(&args[0].value.kind, ExprKind::Ident(_)) =>
+                {
+                    let (ExprKind::Ident(policy_name), ExprKind::Ident(check)) =
+                        (&callee.kind, &args[0].value.kind)
+                    else {
+                        unreachable!("matched above")
+                    };
+                    policy = Some((
+                        Ident {
+                            name: policy_name.clone(),
+                            span: callee.span,
+                        },
+                        Ident {
+                            name: check.clone(),
+                            span: args[0].value.span,
+                        },
+                    ));
+                }
+                ("policy", _) => self.diags.push(
+                    Diagnostic::error("E0306", "invalid router policy", p.span)
+                        .expected("`policy cheapest_that_passes(check)`, with `check` a `def`"),
+                ),
+                (k, _) => self.diags.push(
+                    Diagnostic::error("E0102", "unknown router property", p.key.span)
+                        .expected("`policy`")
+                        .observed(format!("`{k}`")),
+                ),
+            }
+        }
+        Ok(RouterDecl {
+            name,
+            models,
+            policy,
             span: self.span_from(start),
         })
     }

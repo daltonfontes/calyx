@@ -108,6 +108,13 @@ pub enum Expr {
         prompt: usize,
         args: Vec<Expr>,
     },
+    /// `router(prompt(args))`: the router's models in turn, until an answer
+    /// passes its check (decision D30).
+    Route {
+        router: usize,
+        prompt: usize,
+        args: Vec<Expr>,
+    },
     /// Arguments follow the tool's parameters. `requires` are the call's
     /// preconditions (decision D29), sent to the tool, which checks them
     /// against the current state when it acts.
@@ -383,7 +390,7 @@ impl Graph {
     fn weight(n: &Node) -> f64 {
         fn calls(e: &Expr) -> f64 {
             match e {
-                Expr::Model { args, .. } | Expr::Graph { args, .. } => {
+                Expr::Model { args, .. } | Expr::Route { args, .. } | Expr::Graph { args, .. } => {
                     3.0 + args.iter().map(calls).sum::<f64>()
                 }
                 Expr::Tool { args, .. } => 1.0 + args.iter().map(calls).sum::<f64>(),
@@ -480,6 +487,16 @@ pub struct Program {
     /// Types a run can `receive`: name and JSON Schema (to check what is
     /// delivered).
     pub messages: Vec<(String, String)>,
+    pub routers: Vec<Router>,
+}
+
+/// A router (decision D30): its models, cheapest first, and the `def` that
+/// checks an answer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Router {
+    pub name: String,
+    pub models: Vec<usize>,
+    pub check: usize,
 }
 
 /// A pure function (decision D27): parameters in local slots `0..n`, its

@@ -24,6 +24,7 @@ pub enum Decl {
     Graph(GraphDecl),
     Entity(EntityDecl),
     Def(DefDecl),
+    Router(RouterDecl),
 }
 
 impl Decl {
@@ -36,8 +37,21 @@ impl Decl {
             Decl::Graph(d) => &d.name,
             Decl::Entity(d) => &d.name,
             Decl::Def(d) => &d.name,
+            Decl::Router(d) => &d.name,
         }
     }
+}
+
+/// `router name = route [m1, m2]:` then `policy cheapest_that_passes(check)`
+/// (decision D30): the models are tried in order until an answer passes
+/// `check`, a `def`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RouterDecl {
+    pub name: Ident,
+    pub models: Vec<Ident>,
+    /// `policy name(check)`: the policy and the `def` that checks answers.
+    pub policy: Option<(Ident, Ident)>,
+    pub span: Span,
 }
 
 /// `model claude = "id"`, optionally followed by a block with `max_output`.

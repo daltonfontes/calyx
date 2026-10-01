@@ -17,6 +17,7 @@ use calyx_syntax::ast::{
 pub fn lower(program: &Program, out: &mut ir::Program) {
     let mut cx = Lower {
         models: HashMap::new(),
+        routers: HashMap::new(),
         tools: HashMap::new(),
         prompts: HashMap::new(),
         types: HashMap::new(),
@@ -57,6 +58,14 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
             }
             Decl::Def(d) => {
                 cx.defs.insert(&d.name.name, (cx.defs.len(), d));
+            }
+            Decl::Router(r) => {
+                cx.routers.insert(&r.name.name, out.routers.len());
+                out.routers.push(ir::Router {
+                    name: r.name.name.clone(),
+                    models: Vec::new(),
+                    check: 0,
+                });
             }
             Decl::Tool(_) | Decl::Prompt(_) | Decl::Graph(_) => {}
         }
@@ -161,6 +170,20 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
             }
             Decl::Entity(e) => out.entities.push(cx.entity(e)),
             Decl::Def(f) => out.defs.push(cx.def(f)),
+            // Models and defs are all known by now.
+            Decl::Router(r) => {
+                let i = cx.routers[r.name.name.as_str()];
+                out.routers[i].models = r
+                    .models
+                    .iter()
+                    .filter_map(|m| cx.models.get(m.name.as_str()).copied())
+                    .collect();
+                out.routers[i].check = r
+                    .policy
+                    .as_ref()
+                    .and_then(|(_, c)| cx.defs.get(c.name.as_str()))
+                    .map_or(0, |(d, _)| *d);
+            }
             _ => {}
         }
     }
@@ -168,6 +191,7 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
 
 struct Lower<'p> {
     models: HashMap<&'p str, usize>,
+    routers: HashMap<&'p str, usize>,
     tools: HashMap<&'p str, (usize, &'p ToolDecl)>,
     prompts: HashMap<&'p str, (usize, Vec<String>)>,
     types: HashMap<&'p str, &'p TypeDecl>,
@@ -836,7 +860,9 @@ impl Lower<'_> {
         let ExprKind::Ident(name) = &callee.kind else {
             return ir::Expr::Text(String::new());
         };
-        if let Some(&model) = self.models.get(name.as_str()) {
+        let model = self.models.get(name.as_str()).map(|&m| (m, false));
+        let route = self.routers.get(name.as_str()).map(|&r| (r, true));
+        if let Some((target, is_route)) = model.or(route) {
             // The checker guarantees one positional argument: a prompt call.
             let pc = args.iter().find(|a| a.name.is_none()).map(|a| &a.value);
             if let Some(Expr {
@@ -850,10 +876,19 @@ impl Lower<'_> {
                 && let ExprKind::Ident(pname) = &pcallee.kind
                 && let Some((prompt, params)) = self.prompts.get(pname.as_str())
             {
-                return ir::Expr::Model {
-                    model,
-                    prompt: *prompt,
-                    args: self.ordered(params.iter().map(String::as_str), pargs, scope),
+                let args = self.ordered(params.iter().map(String::as_str), pargs, scope);
+                return if is_route {
+                    ir::Expr::Route {
+                        router: target,
+                        prompt: *prompt,
+                        args,
+                    }
+                } else {
+                    ir::Expr::Model {
+                        model: target,
+                        prompt: *prompt,
+                        args,
+                    }
                 };
             }
             return ir::Expr::Text(String::new());

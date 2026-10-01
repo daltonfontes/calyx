@@ -34,6 +34,7 @@ jobs:
           ./target/release/calyx run examples/memory.clyx --fake-models --user ana --text "Onde eu moro?"
           ./target/release/calyx run examples/debate.clyx --fake-models --question "IA vai substituir programadores?"
           ./target/release/calyx run examples/race.clyx --fake-models --question "Qual a capital da Austrália?"
+          ./target/release/calyx run examples/router.clyx --fake-models --ticket "Fui cobrado duas vezes"
 
       - name: Wait for a message, deliver it, continue (receive)
         run: |

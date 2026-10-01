@@ -68,6 +68,7 @@ O **discovery** está concluído (35 decisões fechadas). Na implementação, es
 - **M7:** camada pura: `def`, `true`/`false`, listas por compreensão, `in` e funções embutidas.
 - **M8:** `receive`. Uma execução espera dias por uma mensagem (uma aprovação, por exemplo) sem servidor nenhum, e continua de onde parou.
 - **M9:** `rounds` e `race`. Agentes debatem em rodadas, com os de cada rodada em paralelo e uma barreira no fim; estratégias correm entre si, a primeira que passa na condição vence e as outras param.
+- **M10:** roteador de modelos. O modelo mais barato responde primeiro; só quando a resposta não passa numa verificação o pedido sobe para um modelo mais caro.
 
 Na medida Q2, o compilador pega 30 de 45 bugs de estado antes de rodar, e 39 de 45 nunca causam dano. A Calyx se instala como um binário só, e `calyx build` gera executáveis autocontidos (D35). Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
 
@@ -166,7 +167,7 @@ command = ["python3", "tools/fake_search.py"]   # relativo ao calyx.toml
 | `runtime/rs` | A camada de E/S em Rust que o interpretador chama: modelos por HTTPS, tools por MCP, `calyx.toml`; e o verificador exposto ao C. Tudo sai numa biblioteca estática só |
 | `tests/programs/` | Programas de teste com os diagnósticos esperados (`.expected`) e a representação intermediária esperada (`.ir`) |
 | `tests/state_bugs/` | A medida Q2: workflows com um bug de estado conhecido cada, e quem o pega (compilador, runtime ou ninguém) |
-| `examples/` | Programas de exemplo. `research.clyx`, `agent.clyx`, `refund.clyx`, `fix.clyx`, `memory.clyx`, `approval.clyx`, `debate.clyx` e `race.clyx` passam na verificação e rodam; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
+| `examples/` | Programas de exemplo. `research.clyx`, `agent.clyx`, `refund.clyx`, `fix.clyx`, `memory.clyx`, `approval.clyx`, `debate.clyx`, `race.clyx` e `router.clyx` passam na verificação e rodam; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
 
 ## Plano de implementação
 

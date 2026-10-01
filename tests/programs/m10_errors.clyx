@@ -1,0 +1,44 @@
+# Each check of routers (M10), once.
+model cheap = "c"
+model strong = "s"
+
+type Answer:
+    text: Text
+    confident: Bool
+
+def sure(a: Answer) -> Bool:
+    return a.confident
+
+def long(t: Text) -> Bool:
+    return len(t) > 10
+
+def score(a: Answer) -> Int:
+    return 1
+
+router one = route [cheap]:
+    policy cheapest_that_passes(sure)
+
+router unknown = route [cheap, nowhere]:
+    policy cheapest_that_passes(sure)
+
+router no_policy = route [cheap, strong]:
+    max_output 3
+
+router other_policy = route [cheap, strong]:
+    policy fastest(sure)
+
+router not_a_def = route [cheap, strong]:
+    policy cheapest_that_passes(cheap)
+
+router not_bool = route [cheap, strong]:
+    policy cheapest_that_passes(score)
+
+router texts = route [cheap, strong]:
+    policy cheapest_that_passes(long)
+
+prompt ask(q: Text) -> Answer:
+    """{q}"""
+
+graph g(q: Text) -> Text:
+    a = texts(ask(q))
+    return q

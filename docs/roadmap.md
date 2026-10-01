@@ -27,7 +27,7 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | **M4** | Workers com roubo de trabalho, limites, prioridade pelo caminho crítico | **Q1:** quanto paralelismo sai sozinho |
 | **M5** | `loop`, `agent`, `match` com variantes, `try` | O ReAct como ciclo funciona |
 | **M6** | `write`, `write once`, `requires`, sandbox, entidades. Em três partes: **M6a**, escritas externas seguras; **M6b**, sandbox; **M6c**, entidades | **Q2:** quantos bugs de estado o compilador pega |
-| **Depois** | Geração de C nativo (como otimização, D35), várias máquinas, roteador | Desempenho e cobertura da especificação |
+| **Depois** | Geração de C nativo (como otimização, D35), várias máquinas | Desempenho e cobertura da especificação |
 
 ## Estado
 
@@ -46,7 +46,8 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | M7 | ✅ Concluído: camada pura (D27). `def` com valores novos, `if`/`elif`/`else` e `return`, sem efeitos e sem recursão; `true`/`false`; listas por compreensão (`[x.a for x in xs if ...]`); `in`; funções embutidas (`len`, `take`, `sum`, `join`, `lower`, `upper`, `trim`). Usáveis em grafos, handlers e outros `def`s |
 | M8 | ✅ Concluído: `receive` com espera durável (D21). Tipos `message`; a execução para no estado `waiting` (código 4) e grava o prazo uma vez; `calyx deliver` confere a mensagem contra o tipo e a entrega; `calyx resume` e `calyx tick` (para cron, sem servidor) continuam; `on timeout` quando o prazo vence. Exemplo: `examples/approval.clyx` |
 | M9 | ✅ Concluído: `rounds` e `race` (D18, D12). `rounds N, carry x = ...` com passos no corpo (`turn = for each r in roles: ...`) e barreira no fim de cada rodada; corpos de `loop` também aceitam passos. `race first where cond:` com ramos que rodam ao mesmo tempo; o primeiro que passa vence, vai para o diário (a retomada e o `replay` não disputam de novo) e os outros são cancelados entre passos (subgrafos param, chamadas que ainda não começaram não são feitas); `on none` obrigatório; aviso para escritas nos ramos. Exemplos: `examples/debate.clyx` e `examples/race.clyx`, rodados com o Gemini |
-| M10 | Próximo: roteador de modelos (D30) |
+| M10 | ✅ Concluído: roteador de modelos (D30). `router r = route [barato, caro]:` com `policy cheapest_that_passes(check)`; chamado como um modelo; um modelo por vez até uma resposta passar na verificação (um `def`); a escolha vai para o diário; sem resposta que passe, a chamada falha e `try` captura. Erros de configuração (chave de API ausente) agora param a execução em vez de virar uma falha capturável. Exemplo: `examples/router.clyx`, triagem de chamados com o Gemini |
+| M11 | Próximo (a definir) |
 
 ## Medidas
 

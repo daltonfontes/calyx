@@ -1,0 +1,42 @@
+# Roteador de modelos (marco M10, decisão D30).
+#
+# Cada chamado é triado primeiro pelo modelo mais barato. Só quando a
+# resposta não passa na verificação (aqui: confiança abaixo de 95) o mesmo
+# pedido vai para o modelo seguinte, mais caro. Se nenhum passa, o chamado
+# vai para uma pessoa. A verificação é um `def`:
+# pura, então a escolha é a mesma em toda execução, e o modelo escolhido vai
+# para o diário (a retomada e o `replay` não refazem a escolha).
+#
+#   calyx run examples/router.clyx --fake-models --ticket "Fui cobrado duas vezes"
+#   GEMINI_API_KEY=... calyx run examples/router.clyx --ticket "..."
+
+model lite = "gemini-3.5-flash-lite"
+model flash = "gemini-3.5-flash"
+
+type Category = Billing | Bug | Account | Other
+
+type Triage:
+    category: Category
+    confidence: Nat
+    summary: Text
+
+def confident(t: Triage) -> Bool:
+    return t.confidence >= 95 and len(t.summary) > 0
+
+router triager = route [lite, flash]:
+    policy cheapest_that_passes(confident)
+
+prompt triage(ticket: Text) -> Triage:
+    """
+    Classifique o chamado de suporte abaixo e resuma-o em uma frase.
+    Dê a sua confiança na classificação, de 0 a 100; seja honesto: um
+    chamado ambíguo merece confiança baixa.
+
+    Chamado: {ticket}
+    """
+
+graph main(ticket: Text) -> Text:
+    result = try triager(triage(ticket))
+    return match result:
+        case Ok(t): "{t.category} ({t.confidence}%): {t.summary}"
+        case Failed(error): "para uma pessoa: nenhum modelo teve confiança suficiente"
