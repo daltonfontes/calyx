@@ -1,0 +1,87 @@
+// teste.clyx
+// Exemplo ilustrativo da Calyx. É uma PROPOSTA de sintaxe para discussão, não a definitiva.
+//
+// O que o programa faz:
+//   1. divide um tema em perguntas;
+//   2. pesquisa cada pergunta com um agente (todas em paralelo);
+//   3. escreve um relatório e o revisa até 3 vezes;
+//   4. salva o relatório e avisa o responsável por e-mail.
+//
+// Como rodar (modo de desenvolvimento local):
+//   calyx run teste.clyx --topic "energia solar no Brasil" --owner "ana@exemplo.com"
+
+
+// ─── Modelo ───────────────────────────────────────────────────────────────────
+
+model claude = llm("claude-sonnet-5-5", max_output: 2_000 tokens)
+
+
+// ─── Tools ────────────────────────────────────────────────────────────────────
+// Cada tool declara o próprio efeito (D2) e o tamanho máximo da saída (D16).
+// O efeito dos nós é inferido pelo compilador a partir das tools que eles usam.
+
+tool web_search(query: Text) -> Text
+  effect read
+  max_output 4_000 tokens
+  retry_on [Timeout, RateLimit]           // erros temporários: o runtime repete sozinho
+
+tool save_file(path: Text, content: Text) -> Unit
+  effect write                            // idempotente: pode repetir com segurança
+  idempotency_key path
+
+tool send_email(to: Email, subject: Text, body: Text) -> Unit
+  effect write once                       // não idempotente: nunca repete sozinho
+  on_uncertain verify(email_was_sent(to, subject))   // política obrigatória se cair no meio
+
+
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+
+type Plan   = { questions: List<Text> max 5 }
+
+type Review = Approved
+            | Rejected { feedback: Text }   // o compilador obriga a tratar as duas variantes
+
+
+// ─── Grafo ────────────────────────────────────────────────────────────────────
+
+graph research(topic: Text, owner: Email) -> Text
+
+  // Limites: o programador não cria threads, só limita (D3).
+  limits {
+    threads: 8
+    budget:  2 USD
+  }
+
+  // Nó LLM com saída tipada.
+  node plan = claude "Divida o tema '{topic}' em até 5 perguntas de pesquisa." -> Plan
+
+  // Fan-out: um agente por pergunta. Não há "parallel": o runtime deriva
+  // que os agentes são independentes e roda até 8 ao mesmo tempo.
+  // "agent" é atalho para o ciclo modelo → tools → observação (ReAct).
+  node findings[q in plan.questions] =
+    agent claude
+      tools     [web_search]
+      max_turns 10
+      "Pesquise e responda com fontes: {q}"
+    on turn_limit => final_answer        // limite de voltas: uma última volta pedindo a resposta
+    on stuck      => final_answer        // mesma tool, mesmos argumentos, várias vezes
+
+  // findings chega aqui como lista, na ordem das perguntas (não na ordem de término).
+  node draft = claude "Escreva um relatório sobre '{topic}' usando estas descobertas: {findings}"
+
+  // Ciclo com valor carregado (text) e limite obrigatório (D5).
+  node final = loop text = draft, max 3
+    review = claude "Revise criticamente o relatório abaixo.\n{text}" -> Review
+    match review
+      Approved              => done text
+      Rejected { feedback } => next claude "Reescreva corrigindo: {feedback}\n\n{text}"
+  else last                              // limite atingido: fica com a última versão
+
+  // Efeitos externos.
+  node save   = save_file("relatorios/{topic}.md", final)
+  node notify = send_email(owner, "Relatório pronto: {topic}", final)
+
+  // Aresta de ordem: não troca dados, só garante a sequência (D2).
+  notify after save
+
+  return final
