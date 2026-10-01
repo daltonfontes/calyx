@@ -41,7 +41,7 @@ Para cada propriedade: o que a linguagem exige, o que o runtime ganha e onde a a
 ### 1. Concorrência
 
 - **Exige:** cada nó declara o que **lê** e o que **escreve**.
-- **O runtime deriva:** dois nós sem caminho de dependência entre eles rodam em paralelo. O programador não escreve `parallel` nem `thread`.
+- **O runtime deriva:** dois nós sem caminho de dependência entre eles rodam em paralelo. O programador não escreve `parallel` nem `thread`: **escreve o grafo, e o runtime extrai as threads**. O programador controla apenas limites (threads simultâneas, requisições por segundo, custo) e a ordem entre nós com efeito de escrita.
 - **Quebra quando:** há estado mutável compartilhado (o `context` global do AgentSPEX, um histórico de conversa único).
 - **Resposta:** estado imutável ou versionado, com **regra de junção declarada** quando dois ramos escrevem no mesmo lugar.
 
@@ -50,7 +50,7 @@ Para cada propriedade: o que a linguagem exige, o que o runtime ganha e onde a a
 - **Exige:** nenhum efeito escondido. Um nó não lê globais nem depende de "o que aconteceu antes" sem declarar isso.
 - **O runtime deriva:** invalidação, cache e recálculo seletivo.
 - **Quebra quando:** o histórico de conversa é tratado como ambiente global.
-- **Resposta:** a conversa (o "thread de conversa") é um **valor explícito que flui pelas arestas**.
+- **Resposta:** a conversa é um valor do tipo `conversation` que **flui pelas arestas** (ver D3 em [03-decisoes.md](03-decisoes.md)).
 
 ### 3. Recuperação de falhas
 
@@ -58,9 +58,10 @@ Nós de agentes não são funções puras. O runtime precisa saber o **tipo de e
 
 | Tipo de efeito | Exemplo | Recuperação derivável |
 |---|---|---|
-| Puro | Transformar texto, parsear JSON | Reexecutar livremente |
-| Não-determinístico | Chamada ao LLM | Não reexecutar: gravar o resultado e reaproveitar do trace |
-| Efeito externo | Enviar e-mail, gravar em banco, pagar | Nunca reexecutar sem idempotência ou compensação |
+| Puro (`pure`) | Transformar texto, parsear JSON | Reexecutar livremente |
+| Não-determinístico (`llm`, `read`) | Chamada ao LLM, busca na web | Não reexecutar: gravar o resultado e reaproveitar do trace |
+| Efeito externo idempotente (`write`) | Pagamento com chave, sobrescrever arquivo | Reexecutar com segurança |
+| Efeito externo não idempotente (`write once`) | Enviar e-mail, postar mensagem | Nunca reexecutar; política declarada para falha durante a chamada |
 
 - **Exige:** o tipo de efeito faz parte da declaração do nó e é **verificado pelo compilador** (um nó `pure` não pode chamar uma tool com efeito externo).
 - **O runtime deriva:** ao falhar, retoma do último estado consistente e refaz **só o subgrafo afetado**, inclusive com ramos paralelos.

@@ -1,12 +1,12 @@
-# Decisões de design em aberto
+# Decisões de design
 
-Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, o que a literatura faz e uma recomendação. **Nenhuma está fechada**: servem de pauta para discussão.
+Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, o que a literatura faz e uma recomendação. As marcadas com ✅ foram decididas; as demais seguem como pauta de discussão.
 
 | # | Decisão | Recomendação preliminar |
 |---|---|---|
 | D1 | Modelo de estado | ✅ **Decidido:** dataflow + estado nomeado com junção obrigatória; visibilidade por snapshot |
-| D2 | Tipos de efeito | 4 níveis verificados pelo compilador |
-| D3 | O que "thread" significa | Thread = conversa (valor explícito); concorrência é derivada, nunca escrita |
+| D2 | Tipos de efeito | ✅ **Decidido:** `pure`, `llm`, `read`, `write`, `write once` (com política obrigatória); arestas de ordem entre escritas |
+| D3 | Threads e conversa | ✅ **Decidido:** threads = execução paralela derivada pelo runtime; `conversation` = valor; compactação explícita com verificação de orçamento |
 | D4 | Quanto dinamismo permitir | Dinamismo limitado e verificável |
 | D5 | Ciclos no grafo | Permitidos, com limite obrigatório |
 | D6 | Unidade de recuperação | Diário de nós concluídos (event sourcing) |
@@ -44,30 +44,77 @@ Escopos de estado:
 
 Base da recuperação de falhas.
 
-| Nível | Significado | Pode reexecutar? | Na recuperação |
-|---|---|---|---|
-| `pure` | Função determinística | Sim | Recalcula |
-| `llm` | Não-determinístico, sem efeito externo | Tecnicamente sim, mas o resultado muda e custa dinheiro | Reaproveita o resultado gravado |
-| `read` | Lê do mundo externo (busca, arquivo, API GET) | Sim, mas o resultado pode mudar | Reaproveita o resultado gravado |
-| `write` | Altera o mundo (e-mail, banco, pagamento) | Só com idempotência ou compensação | Exige chave de idempotência ou ação de compensação declarada |
+**Decidido.**
 
-**Recomendação:** os 4 níveis, verificados pelo compilador (um nó não pode chamar algo de nível mais alto que o seu). Tools declaram o próprio nível. Inspiração: sistemas de efeitos em linguagens como Koka, e as garantias de atividades do Temporal.
+| Efeito | Significado | Na recuperação |
+|---|---|---|
+| `pure` | Função determinística | Recalcula livremente |
+| `llm` | Não-determinístico, sem efeito externo | Reaproveita o resultado gravado no diário |
+| `read` | Lê do mundo externo (busca, arquivo, API GET, input humano) | Reaproveita o resultado gravado no diário |
+| `write` | Altera o mundo de forma **idempotente** (pagamento com chave, sobrescrever arquivo) | Repete automaticamente |
+| `write once` | Altera o mundo de forma **não idempotente** (enviar e-mail, postar mensagem) | Nunca repete; se a falha cair *durante* a chamada, aplica a política declarada |
 
-**Em aberto:** um nó `write` sem idempotência deve ser **proibido** ou apenas **marcado como não recuperável automaticamente**?
+Regras:
 
-## D3. O que "thread" significa
+- **Tools declaram o próprio efeito**, na fronteira com o mundo externo. O **compilador infere o efeito dos nós**: o efeito de um nó é o maior efeito de tudo o que ele chama. O programador pode **restringir** ("este nó é no máximo `read`"), e o compilador verifica.
+- **O diário registra cada chamada de LLM e de tool**, não só cada nó. Na retomada, um nó com laço interno (ex.: ReAct) é reencenado: as chamadas já feitas vêm do diário, e só a que falhou roda de novo. Sem isso, um nó que enviou um e-mail e caiu depois enviaria o e-mail de novo.
+- **Todo nó `write once` declara uma política obrigatória** para o caso de falha *durante* a chamada (quando não dá para saber se o efeito aconteceu):
+  - **verificar:** chama uma função que checa se o efeito aconteceu (ex.: buscar na pasta de enviados);
+  - **pausar:** para a execução e pede decisão humana;
+  - **aceitar perda:** segue sem repetir.
 
-A literatura usa "thread" em três sentidos: execução paralela, conversa (histórico) e caminho no grafo.
+  O compilador recusa um nó `write once` sem política.
 
-| Opção | Consequência |
-|---|---|
-| (a) Thread = execução paralela escrita pelo programador | Contradiz a hipótese: a concorrência deixaria de ser derivada |
-| (b) Thread = conversa, como valor explícito | O histórico flui pelas arestas; pode ser bifurcado (`fork`) e juntado; a concorrência continua derivada |
-| (c) Unificar os dois | Mais simples de explicar, mas mistura dois conceitos com semânticas diferentes |
+**Por que não proibir efeitos não idempotentes:** muitas integrações reais (e-mail, chat, APIs legadas, shell) não têm idempotência. Proibir afastaria a linguagem do mundo real e empurraria o controle de duplicidade para o programador, que o faria de forma ad hoc. Com o diário, o runtime já garante "no máximo uma vez" para qualquer escrita; a política obrigatória cobre a única janela restante.
 
-**Recomendação: (b).** Um thread de conversa é um valor explícito que flui pelo grafo. Dois ramos que recebem o mesmo thread trabalham sobre cópias imutáveis (bifurcação), e juntá-los exige regra (D7). A concorrência de execução nunca é escrita. Isso corrige diretamente o problema do `conversation_history` global do AgentSPEX.
+Inspiração: sistemas de efeitos (Koka) e as garantias de atividades do Temporal.
 
-**Em aberto:** o nome. "Thread" em programação sugere concorrência; se a linguagem usar "thread" para conversa, isso precisa ficar muito claro.
+### Ordem entre efeitos
+
+**Decidido.** A concorrência é derivada das arestas de dados, mas dois nós com efeito externo podem precisar de ordem sem trocar dados (ex.: "salvar o relatório" antes de "enviar e-mail avisando que está salvo").
+
+- Nós `pure`, `llm` e `read` sem dependência entre si rodam em paralelo livremente.
+- Para nós `write` e `write once`, o programador declara **arestas de ordem** ("B depois de A"), que não carregam dados.
+- O compilador **avisa** quando dois nós com efeito de escrita não têm ordem definida entre si.
+
+## D3. Threads e conversa
+
+**Decidido.**
+
+### Threads = execução paralela, derivada pelo runtime
+
+"Thread" na Calyx significa **execução paralela**. As threads **não são criadas pelo programador**: o runtime as deriva da estrutura do grafo.
+
+| | Grafo | Threads |
+|---|---|---|
+| Quem escreve | O programador | Ninguém: o runtime deriva do grafo |
+| O que o programador controla | Nós, arestas de dados, arestas de ordem, fan-out | **Limites**: máximo de threads simultâneas, requisições por segundo, orçamento de custo |
+| Onde aparecem | No código | No trace e na visualização: cada caminho paralelo é uma thread visível |
+
+Princípio: **"você escreve o grafo, o runtime extrai as threads."** Os limites são obrigatórios na prática, porque APIs de LLM têm limite de requisições e custam dinheiro. O programador limita o paralelismo, mas não o cria.
+
+Um comando para criar threads foi descartado: ele contradiz a hipótese e repete o problema do AgentSPEX (paralelismo escrito à mão, que o runtime não consegue analisar).
+
+### `conversation` = valor que percorre o grafo
+
+O histórico de conversa com o LLM é um valor do tipo **`conversation`**, que flui pelas arestas como qualquer outro valor (D1).
+
+- Um nó LLM que recebe uma `conversation` continua a conversa; um que não recebe começa com contexto limpo. Isso substitui a distinção `step` × `task` do AgentSPEX.
+- Como o valor é imutável, ramos paralelos que recebem a mesma `conversation` trabalham sobre cópias (bifurcação). Juntá-las exige regra (D7).
+- **Otimização derivada:** conversas bifurcadas compartilham o mesmo prefixo. O runtime sabe disso pelo grafo e pode usar o cache de prompt por prefixo das APIs de LLM sem anotação do programador (a versão "API fechada" do que o GraphFlow faz com KV cache).
+
+Nomes descartados: `context` (conflita com "janela de contexto" e "contexto de execução"), `transcript` (sugere registro só de leitura).
+
+Vocabulário da linguagem: *o programa é um **graph**, o runtime extrai as **threads**, e a **conversation** é um valor que percorre o grafo.*
+
+### Compactação da conversa: explícita
+
+Uma `conversation` cresce até estourar a janela de contexto do modelo.
+
+- A compactação é feita por um **nó explícito** no grafo.
+- **Verificação de orçamento:** cada nó LLM tem máximo de tokens de saída, e cada laço tem limite de iterações (D5). Com isso, o compilador calcula o **pior caso** do tamanho da `conversation` em cada ponto e dá **erro de compilação** se algum caminho puder estourar a janela do modelo, apontando onde falta compactação.
+- **Opção:** o programador pode ligar a **inserção automática pelo compilador**, que adiciona o nó de compactação no grafo compilado, num ponto fixo e visível.
+- Compactação automática **pelo runtime** foi descartada: seria uma chamada de LLM escondida (custo, não-determinismo, fora do grafo), impediria a verificação estática e quebraria o compartilhamento de cache por prefixo.
 
 ## D4. Quanto dinamismo permitir
 
@@ -109,7 +156,7 @@ A tensão expressividade × verificabilidade do survey de ACG.
 |---|---|
 | Fan-out sobre uma lista | Resultados em lista, **na ordem da entrada** (não na ordem de término), para a execução ser reproduzível |
 | Dois ramos escrevem no mesmo estado nomeado | Obrigatório declarar o redutor: `concat`, `last`, `max`, `vote` ou função `pure` definida pelo usuário |
-| Dois ramos estendem o mesmo thread de conversa | Obrigatório declarar: concatenar, resumir via LLM, ou manter separados |
+| Dois ramos estendem a mesma `conversation` | Obrigatório declarar: concatenar, resumir via LLM, ou manter separados |
 
 **Em aberto:** redutores via LLM ("junte essas duas respostas") são nós `llm`, não `pure`. Permitir?
 
@@ -151,26 +198,33 @@ Adiada por decisão do projeto. Critérios a considerar:
 **Não é proposta de sintaxe.** Mostra só *que informação* cada nó precisaria declarar para a hipótese funcionar.
 
 ```
+limites: no máximo 8 threads simultâneas, orçamento de 2 USD
+
 nó planejar      efeito: llm    lê: pergunta           produz: subperguntas: lista<texto>
 nó pesquisar[q]  efeito: read   para cada q em subperguntas   produz: achado: texto
-nó escrever      efeito: llm    lê: pergunta, achados (junção: lista ordenada)   produz: rascunho
+nó escrever      efeito: llm    lê: pergunta, achados (junção: lista ordenada)
+                                continua: conversa: conversation    produz: rascunho
 nó revisar       efeito: llm    lê: rascunho           produz: aprovado: bool
 laço escrever → revisar  até aprovado, no máximo 3 vezes
-nó publicar      efeito: write  idempotência: hash(rascunho)   lê: rascunho
+nó salvar        efeito: write       idempotência: hash(rascunho)   lê: rascunho
+nó avisar        efeito: write once  política: verificar(pasta de enviados)
+ordem: avisar depois de salvar
 ```
 
-A partir só disso, o runtime saberia:
+A partir só disso, o runtime e o compilador saberiam:
 
-- **Concorrência:** os `pesquisar[q]` rodam em paralelo; `escrever` espera todos.
+- **Concorrência:** os `pesquisar[q]` rodam em paralelo, até 8 threads por vez; `escrever` espera todos.
 - **Dependências:** mudar `pergunta` invalida tudo; mudar um achado invalida só `escrever` em diante.
-- **Recuperação:** se cair durante `revisar`, reaproveita `planejar`, os `pesquisar` e `escrever` do diário; `publicar` nunca roda duas vezes.
+- **Recuperação:** se cair durante `revisar`, reaproveita `planejar`, os `pesquisar` e `escrever` do diário; `salvar` pode repetir com segurança; `avisar` nunca repete e, se cair no meio, verifica a pasta de enviados.
+- **Ordem:** `avisar` não troca dados com `salvar`, mas a aresta de ordem impede que rodem em paralelo.
+- **Orçamento de contexto:** com o máximo de tokens de `escrever` e o limite de 3 iterações, o compilador calcula o pior caso da `conversation` e recusa o programa se ela puder estourar a janela do modelo.
 - **Observabilidade:** custo e latência por nó, por iteração do laço e por ramo do fan-out.
 
 ---
 
 ## Próximos passos sugeridos
 
-1. **Discutir e fechar D1, D2 e D3.** São as três de que a hipótese depende diretamente.
+1. ~~Discutir e fechar D1, D2 e D3.~~ ✅ Feito.
 2. **Ler mais referências** que cobrem as lacunas desta rodada:
    - LangGraph e o modelo Pregel (o concorrente mais próximo em concorrência e estado).
    - LLMCompiler (Kim et al., ICML 2024): paralelismo derivado de DAG de chamadas de função.
