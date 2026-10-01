@@ -1,6 +1,6 @@
 # Sintaxe: primeiro teste com programas reais
 
-**Status:** proposta para discussão. Nada aqui é definitivo.
+**Status:** direção aprovada (superfície familiar, estilo Rust/TypeScript/Swift, sem a complexidade do Rust: sem `&`, *lifetimes*, `;`, `impl`, `async`). Detalhes em evolução.
 
 ## Escolhas de base
 
@@ -48,9 +48,9 @@ No W2, o nó `diff(&repo)` precisava rodar depois do agente, mas não usa a saí
 | Onde | Problema | Direção possível |
 |---|---|---|
 | W1 | Fan-out dentro de fan-out gera lista de listas; precisou de `flatten` e de um `for` dentro de um nó | Uma forma única de fan-out que aceite aninhamento e achate o resultado |
-| W2, W8 | `&` e `&mut` (empréstimos estilo Rust) funcionam, mas são pesados para o público-alvo | Palavras como `reads repo` / `edits repo`, mantendo a mesma semântica |
+| W2, W8 | ~~`&` e `&mut` (empréstimos estilo Rust) são pesados para o público-alvo~~ | ✅ Resolvido: `reads repo` / `edits repo` (D26) |
 | W4 | `rounds` com dois `carry` e `next` com atribuição ficou verboso | Um tipo de registro para o estado da rodada |
-| W4, W6 | Chamar o modelo tem três formas: `claude(p)`, `claude.start(p)`, `claude.continue(c, p)` | Uma forma só, com conversa opcional: `claude(p, continue: c)`, devolvendo resposta e conversa |
+| W4, W6 | ~~Chamar o modelo tinha três formas~~ | ✅ Resolvido: `claude(p)` ou `claude(p, continue: c)` (D28) |
 | W6 | `respond` (entrega antecipada) e `return` convivem sem regra clara | Grafo com `respond` não tem `return` de valor; o resto do grafo roda em segundo plano |
 | W3 | Nós dentro de ramos de `match`, com `return` no meio | Definir: ramos de um `match` são subgrafos exclusivos; `return` num ramo encerra o grafo |
 | W8 | Não fica claro que `race` consome as três sandboxes e devolve só a do vencedor | Tornar explícito na assinatura de `race` (consome os recursos dos ramos) |

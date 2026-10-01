@@ -41,11 +41,11 @@ graph chat(user: UserId, history: Conversation, text: Text) -> Text {
   limits { budget: 0.20 USD }
 
   node memories = ask UserMemory(user).Recall(text)
-  node reply    = claude.continue(history, answer(history, memories, text))
+  node reply    = claude(answer(history, memories, text), continue: history)
 
   // Resultado antecipado (D19): o usuário recebe a resposta já aqui.
   // O resto do grafo continua em segundo plano.
-  respond reply.text
+  respond reply.value
 
   node learned = claude(facts_from(reply.conversation))
   send UserMemory(user).Remember(learned)

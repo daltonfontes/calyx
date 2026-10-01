@@ -4,11 +4,11 @@
 
 model claude = llm("claude-sonnet-5-5", max_output: 4_000 tokens)
 
-tool edit_file(box: &mut Sandbox, path: Text, old: Text, new: Text) -> Unit {
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Unit {
   effect sandbox
 }
 
-tool run_tests(box: &mut Sandbox, filter: Text) -> TestReport {
+tool run_tests(box: edits Sandbox, filter: Text) -> TestReport {
   effect     sandbox
   max_output 6_000 tokens
   timeout    10 min
@@ -53,12 +53,12 @@ graph fix_race(issue: Text, repo: Sandbox) -> Sandbox {
 
 graph attempt(issue: Text, how: Prompt<Text>, box: Sandbox) -> { report: TestReport, box: Sandbox } {
   node work = agent claude {
-    tools      [edit_file(&mut box), run_tests(&mut box)]
+    tools      [edit_file(edits box), run_tests(edits box)]
     max_turns  20
     task       how(issue)
     on turn_limit => final_answer
     on stuck      => final_answer
   }
-  node report = run_tests(&mut box, "")
+  node report = run_tests(edits box, "")
   return { report: report, box: box }
 }

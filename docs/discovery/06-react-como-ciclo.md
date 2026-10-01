@@ -185,9 +185,12 @@ Um submódulo pode ser exposto como tool (ideia do AgentSPEX). Se essa tool for 
 | Orçamento de contexto verificado por **invariante** quando há compactação no ciclo | Laços longos seguros independentemente do número de voltas |
 | `agente` é açúcar sintático que o compilador expande num ciclo explícito | Curto para escrever, visível para analisar |
 
-## Perguntas em aberto
+## Decisões
 
-1. **Opção C** (construção `agente` que vira ciclo explícito): de acordo?
-2. **Limite atingido sem resposta final:** falha, ou uma última volta forçando a resposta?
-3. **Laços repetitivos:** o runtime deve detectar sozinho, ou isso fica como política declarada pelo programador?
-4. **Compactação dentro do ciclo:** a cada N voltas, ou quando a conversa passar de um tamanho?
+**Decidido** (aprovado com o bloco A, ver D5 em [03-decisoes.md](03-decisoes.md)):
+
+1. **Opção C:** `agent` é atalho que o compilador expande num ciclo explícito.
+2. **Limite de voltas atingido** e **repetição detectada** viram variantes do resultado do agente (`turn_limit`, `stuck`), e o compilador obriga a tratá-las. A linguagem oferece o tratamento comum em uma linha (`=> final_answer`: uma última volta pedindo a resposta). Nem falha automática, nem resposta forçada escondida.
+3. **Repetição:** o runtime detecta chamadas idênticas (mesma tool, mesmos argumentos). Tools em que repetir é legítimo (ex.: consultar status) declaram isso.
+4. **Compactação:** por tamanho, não a cada N voltas. O limite é calculado pelo compilador (janela do modelo menos o pior caso de uma volta). Compactar menos vezes preserva o cache por prefixo.
+5. **Desempenho do `check`:** o pior caso de um laço é calculado multiplicando pelo limite, sem desenrolar.

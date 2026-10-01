@@ -6,22 +6,22 @@ model claude = llm("claude-sonnet-5-5", max_output: 4_000 tokens)
 
 // "effect sandbox": a tool pode fazer qualquer coisa DENTRO da sandbox que recebe.
 // Esses efeitos são recuperáveis restaurando o snapshot da sandbox junto com o diário.
-tool read_file(box: &Sandbox, path: Text) -> Text {
+tool read_file(box: reads Sandbox, path: Text) -> Text {
   effect     read
   max_output 8_000 tokens
 }
 
-tool edit_file(box: &mut Sandbox, path: Text, old: Text, new: Text) -> Unit {
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Unit {
   effect sandbox
 }
 
-tool run_tests(box: &mut Sandbox, filter: Text) -> TestReport {
+tool run_tests(box: edits Sandbox, filter: Text) -> TestReport {
   effect     sandbox
   max_output 6_000 tokens               // o runtime trunca o que passar disso
   timeout    10 min                     // timeout por tentativa (D22)
 }
 
-tool diff(box: &Sandbox) -> Text {
+tool diff(box: reads Sandbox) -> Text {
   effect     read
   max_output 20_000 tokens
 }
@@ -52,15 +52,15 @@ prompt summarize(c: Conversation) -> Conversation {
   """
 }
 
-// Sandbox é um recurso afim (D26): tem um dono por vez. "&" empresta para leitura,
-// "&mut" empresta para escrita; o compilador garante que dois ramos não a recebam ao mesmo tempo.
+// Sandbox é um recurso afim (D26): tem um dono por vez. "reads" empresta para leitura,
+// "edits" empresta para escrita; o compilador garante que dois ramos não a recebam ao mesmo tempo.
 graph solve(issue: Text, repo: Sandbox) -> Text {
   limits { budget: 5 USD }
 
   node analysis = claude(understand(issue))
 
   node work = agent claude {
-    tools      [read_file(&repo), edit_file(&mut repo), run_tests(&mut repo)]
+    tools      [read_file(reads repo), edit_file(edits repo), run_tests(edits repo)]
     max_turns  30
     task       fix(analysis)
     // Compactação por tamanho: o compilador calcula o limite (janela − pior caso de uma volta).
@@ -70,8 +70,8 @@ graph solve(issue: Text, repo: Sandbox) -> Text {
   }
 
   // ⚠️ "work" não é usado pelo nó abaixo, mas "diff" precisa rodar depois do agente.
-  // Como os dois tocam a sandbox, a ordem sai do empréstimo &mut (D26), sem "after".
-  node patch = diff(&repo)
+  // Como os dois tocam a sandbox, a ordem sai do empréstimo "edits" (D26), sem "after".
+  node patch = diff(reads repo)
 
   return patch
 }

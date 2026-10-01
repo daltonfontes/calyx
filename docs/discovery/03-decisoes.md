@@ -7,14 +7,14 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D1 | Modelo de estado | ✅ **Decidido:** dataflow + estado nomeado com junção obrigatória; visibilidade por snapshot |
 | D2 | Tipos de efeito | ✅ **Decidido:** `pure`, `llm`, `read`, `write`, `write once` (com política obrigatória); arestas de ordem entre escritas |
 | D3 | Threads e conversa | ✅ **Decidido:** threads = execução paralela derivada pelo runtime; `conversation` = valor; compactação explícita com verificação de orçamento |
-| D4 | Quanto dinamismo permitir | Dinamismo limitado e verificável |
-| D5 | Ciclos no grafo | Laço com valores carregados e limite obrigatório; ciclo só no template, execução desenrolada (DAG); ver [ReAct como ciclo](06-react-como-ciclo.md) |
+| D4 | Quanto dinamismo permitir | ✅ **Decidido:** até grafo gerado por LLM, desde que verificado antes de rodar (níveis 0 a 3); edição arbitrária durante a execução fica de fora |
+| D5 | Ciclos no grafo | ✅ **Decidido:** laço com valores carregados e limite obrigatório; ciclo só no código, execução desenrolada; pior caso calculado multiplicando pelo limite; agente com variantes obrigatórias `turn_limit` e `stuck`; repetição detectada pelo runtime; compactação por tamanho com limite calculado pelo compilador. Ver [ReAct como ciclo](06-react-como-ciclo.md) |
 | D6 | Unidade de recuperação | Diário de nós concluídos (event sourcing) |
-| D7 | Junção de ramos paralelos | Lista ordenada por padrão; redutores declarados |
+| D7 | Junção de ramos paralelos | ✅ **Decidido:** resultados na ordem da entrada; redutor obrigatório quando ramos escrevem no mesmo estado |
 | D8 | Template / realized graph / trace | Os três são conceitos de primeira classe |
 | D9 | Superfície da linguagem | Linguagem textual, com visualização derivada |
 | D10 | Plataforma | ✅ **Direção decidida:** filosofia do Bend. O compilador emite C (um arquivo por programa, com o runtime); runtime em C com o modelo de atores da BEAM reimplementado; o mesmo binário roda de uma thread a várias máquinas; `calyx check` em até 1 segundo. **Compilador em Rust**, com o verificador compilado também como biblioteca estática ligada ao runtime em C (um verificador só). Ver [arquitetura do runtime](12-arquitetura-runtime.md) |
-| D11 | Falha parcial em fan-out | Falhas são valores (`ok` / `falha`); o compilador obriga a tratar; tools declaram erros não retentáveis |
+| D11 | Falha parcial em fan-out | ✅ **Decidido:** falhas são valores (`Ok` / `Failed`); o compilador obriga a tratar; tools declaram erros não retentáveis |
 | D12 | Corrida e cancelamento | Construção `corrida` explícita; vencedor no diário; cancelamento cooperativo entre nós; `llm`/`read` abandonáveis, `write` protegidos; nós de compensação |
 | D13 | Ambiente da execução (sandbox) | Efeitos na sandbox recuperáveis por snapshot, restaurado junto com o diário; isolamento entre ramos por validação do conjunto de leitura a cada escrita (STORM), preferida a cópia + merge |
 | D14 | Tempo e execuções longas | Timers no diário; runtime durável e orientado a eventos; diário ligado à versão do template |
@@ -29,9 +29,9 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D23 | Versionamento de templates | Execuções fixadas na versão; migração quando o compilador provar compatibilidade |
 | D24 | Escalonamento | Lista com prioridade pelo caminho crítico; durações estimadas pelo compilador e refinadas pelo histórico de traces |
 | D25 | Invariantes entre ramos | Recursos: resolvido por afinidade (D26); valores: validação declarada na junção, violação produz valor `conflito` |
-| D26 | Recursos afins | Sandbox, orçamento e capacidades `write once` têm um dono por vez; dividir entre ramos é explícito e verificado (ver [Bend](08-bend.md)) |
-| D27 | Camadas da linguagem | Camada de grafo (`node`, efeitos, diário) + camada pura pequena (`let`, `fn`), recalculável; ver [sintaxe](09-sintaxe.md) |
-| D28 | Chamada ao modelo | Forma única `modelo(prompt, continue: conversa?)`, saída tipada pelo prompt |
+| D26 | Recursos afins | ✅ **Decidido:** sandbox, orçamento e capacidades `write once` têm um dono por vez; dividir entre ramos é explícito e verificado; sintaxe `reads` / `edits` (sem `&` / `&mut`). Ver [Bend](08-bend.md) |
+| D27 | Camadas da linguagem | ✅ **Decidido:** camada de grafo (`node`, efeitos, diário) + camada pura pequena (`let`, `fn`), recalculável. Ver [sintaxe](09-sintaxe.md) |
+| D28 | Chamada ao modelo | ✅ **Decidido:** forma única `modelo(prompt)`, ou `modelo(prompt, continue: conversa)` devolvendo `.value` e `.conversation`; `continue: new` começa uma conversa |
 | D29 | Precondições no efeito | `requires { ... }` na chamada de um efeito, na camada pura; a tool valida sobre o estado atual na mesma transação; falha vira valor (ver [SVBE](10-svbe.md)) |
 | D30 | Roteamento de modelo | Construção `router` que escolhe entre modelos por política, usando orçamento e histórico do diário; escolha gravada no diário (ver [mapa da orquestração](11-mapa-orquestracao.md)) |
 
