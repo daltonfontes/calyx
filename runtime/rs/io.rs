@@ -25,7 +25,7 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -64,8 +64,9 @@ struct State {
     /// Every model answers with fake, schema-shaped values.
     fake_models: bool,
     agent: ureq::Agent,
-    /// Running MCP servers, by command.
-    servers: HashMap<Vec<String>, mcp::Server>,
+    /// Running MCP servers, by command. Each has its own lock: a call
+    /// holds its server, not the state, so other calls run meanwhile.
+    servers: HashMap<Vec<String>, Arc<Mutex<mcp::Server>>>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -187,7 +188,7 @@ fn tool_call_unlocked(req: &Value) -> Result<Value, IoError> {
     if let Some(r) = req.get("requires") {
         meta.insert("calyx/requires".into(), r.clone());
     }
-    let answer = with_state(|st| {
+    let (key, server, remote) = with_state(|st| {
         let server_cfg = st.config.tools.get(&tool).cloned().ok_or_else(|| {
             let place = st
                 .config
@@ -204,19 +205,35 @@ fn tool_call_unlocked(req: &Value) -> Result<Value, IoError> {
         let key = server_cfg.command.clone();
         if !st.servers.contains_key(&key) {
             let server = mcp::Server::start(&server_cfg)?;
-            st.servers.insert(key.clone(), server);
+            st.servers.insert(key.clone(), Arc::new(Mutex::new(server)));
         }
-        let server = st.servers.get_mut(&key).expect("just inserted");
-        let remote = server_cfg.remote_name.as_deref().unwrap_or(&tool);
-        let result = server.call(remote, args, meta, timeout);
-        if let Err(e) = &result
-            && matches!(e.kind, "Timeout" | "Unavailable")
-        {
-            // Unknown state: start a fresh server on the next call.
-            st.servers.remove(&key);
-        }
-        result
+        let server = Arc::clone(&st.servers[&key]);
+        let remote = server_cfg
+            .remote_name
+            .clone()
+            .unwrap_or_else(|| tool.clone());
+        Ok::<_, IoError>((key, server, remote))
     })?;
+    // Calls to one server take turns (one stdio pipe); others go on.
+    let result = server
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .call(&remote, args, meta, timeout);
+    if let Err(e) = &result
+        && matches!(e.kind, "Timeout" | "Unavailable")
+    {
+        // Unknown state: start a fresh server on the next call.
+        with_state(|st| {
+            if st
+                .servers
+                .get(&key)
+                .is_some_and(|s| Arc::ptr_eq(s, &server))
+            {
+                st.servers.remove(&key);
+            }
+        });
+    }
+    let answer = result?;
     let (text, truncated) = truncate(&answer.text, max_output);
     Ok(json!({"ok": {
         "text": text,
