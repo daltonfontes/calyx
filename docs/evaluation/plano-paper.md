@@ -82,9 +82,13 @@ casos que pedem decisão humana. No LangGraph e no Temporal, os mesmos pontos.
 **E4, corpus de bugs (A1).** Os 52 bugs de `tests/state_bugs/` portados para
 Python + LangGraph **por outra pessoa**, com tipos e com pyright e mypy no
 modo estrito. Para cada bug, classificar onde ele aparece: antes de rodar,
-ao rodar (com ou sem dano) ou em lugar nenhum. Também crescer o corpus com
-bugs reais tirados de issues públicas do LangGraph, AutoGen e CrewAI, para
-não depender de bugs escritos pelo autor da linguagem.
+ao rodar (com ou sem dano) ou em lugar nenhum. ✅ Bugs reais de issues
+públicas do LangGraph, AutoGen e CrewAI ([`bugs-reais.md`](bugs-reais.md)):
+de 44, 29 são bugs dos frameworks; dos 15 de workflow, a Calyx evita 7
+(runtime e construção) e deixa passar 8; **o compilador não pega nenhum**.
+Issues relatam o framework errando, não o programador, então não medem bem
+a A1. O estudo achou uma lacuna: `write once` num `loop` repete o efeito a
+cada volta, sem aviso.
 
 **E5, custo de escrever (secundário).** Linhas de código efetivas e linhas
 de código "de cuidado" (idempotência, conferências, retomada), por workload.
@@ -114,7 +118,10 @@ segundo aparecem atribuídos a um passo no diário.
    manual. A tese passa a ser "o compilador exige o contrato do efeito".
    Falta medir o tempo de retomada contra o Temporal com *heartbeats*.
 2. **E4 com um portador externo** dos 52 bugs: com a recuperação empatada no
-   teto, os bugs que o compilador recusa viram o resultado central.
+   teto, os bugs que o compilador recusa viram o resultado central. As
+   issues públicas não servem para isso (o compilador não pegou nenhuma);
+   uma alternativa é um estudo com programadores escrevendo os workflows.
+   Antes, decidir o aviso para `write once` dentro de laço.
 3. W3 e W7, que exercitam o que nenhum baseline faz por padrão.
 4. E2 até 10⁵ itens, e a otimização da reavaliação se ela aparecer.
 5. W4 a W6 e o E1 com modelo real.

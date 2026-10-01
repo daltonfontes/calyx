@@ -1,0 +1,27 @@
+{
+ "crewai-5802 pagamento com chave num laço de novas tentativas": {
+  "ok": true,
+  "refund_calls": 3,
+  "payments": 1
+ },
+ "crewai-5802 pagamento `write once` num laço (lacuna)": {
+  "ok": true,
+  "diagnostics": "",
+  "payments": 3,
+  "exit": 0
+ },
+ "langgraph-6208 duas esperas no mesmo passo": {
+  "ok": true,
+  "after_first_answer": "waiting",
+  "output": "aprovado até 300: [resposta falsa para: r]"
+ },
+ "crewai-737 / langgraph-5099 agente repetindo a mesma chamada": {
+  "ok": true,
+  "turns": 3,
+  "max_turns": 20
+ },
+ "crewai-960 / autogen-6819 próximo passo antes da aprovação": {
+  "ok": true,
+  "model_calls_before_approval": 1
+ }
+}
