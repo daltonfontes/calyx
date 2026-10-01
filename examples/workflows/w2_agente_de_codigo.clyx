@@ -1,77 +1,71 @@
-// W2. Agente de código (estilo SWE-bench)
-// Força: efeitos dentro de um laço ReAct, comandos de shell, sandbox (D13),
-//        recurso afim (D26), compactação da conversa (D3).
+# W2. Agente de código (estilo SWE-bench)
+# Força: efeitos dentro de um laço ReAct, comandos de shell, sandbox (D13),
+#        recurso afim (D26), compactação da conversa (D3).
 
-model claude = llm("claude-sonnet-5-5", max_output: 4_000 tokens)
+model claude = "claude-sonnet-5-5":
+    max_output 4000 tokens
 
-// "effect sandbox": a tool pode fazer qualquer coisa DENTRO da sandbox que recebe.
-// Esses efeitos são recuperáveis restaurando o snapshot da sandbox junto com o diário.
-tool read_file(box: reads Sandbox, path: Text) -> Text {
-  effect     read
-  max_output 8_000 tokens
-}
+# "effect sandbox": a tool pode fazer qualquer coisa DENTRO da sandbox que recebe.
+# Esses efeitos são recuperáveis restaurando o snapshot da sandbox junto com o diário.
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 8000 tokens
 
-tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Unit {
-  effect sandbox
-}
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Unit:
+    effect sandbox
 
-tool run_tests(box: edits Sandbox, filter: Text) -> TestReport {
-  effect     sandbox
-  max_output 6_000 tokens               // o runtime trunca o que passar disso
-  timeout    10 min                     // timeout por tentativa (D22)
-}
+tool run_tests(box: edits Sandbox, filter: Text) -> TestReport:
+    effect sandbox
+    max_output 6000 tokens               # o runtime trunca o que passar disso
+    timeout 10 min                       # timeout por tentativa (D22)
 
-tool diff(box: reads Sandbox) -> Text {
-  effect     read
-  max_output 20_000 tokens
-}
+tool diff(box: reads Sandbox) -> Text:
+    effect read
+    max_output 20000 tokens
 
-type TestReport = { passed: Nat, failed: Nat, log: Text }
+type TestReport:
+    passed: Nat
+    failed: Nat
+    log: Text
 
-prompt understand(issue: Text) -> Text {
-  """
-  Leia a issue abaixo e descreva o problema e onde ele provavelmente está no código.
+prompt understand(issue: Text) -> Text:
+    """
+    Leia a issue abaixo e descreva o problema e onde ele provavelmente está no código.
 
-  {issue}
-  """
-}
+    {issue}
+    """
 
-prompt fix(analysis: Text) -> Text {
-  """
-  Corrija o problema descrito. Rode os testes antes de terminar.
+prompt fix(analysis: Text) -> Text:
+    """
+    Corrija o problema descrito. Rode os testes antes de terminar.
 
-  {analysis}
-  """
-}
+    {analysis}
+    """
 
-prompt summarize(c: Conversation) -> Conversation {
-  """
-  Resuma a conversa abaixo mantendo arquivos lidos, mudanças feitas e resultados de teste.
+prompt summarize(c: Conversation) -> Conversation:
+    """
+    Resuma a conversa abaixo mantendo arquivos lidos, mudanças feitas e resultados de teste.
 
-  {c}
-  """
-}
+    {c}
+    """
 
-// Sandbox é um recurso afim (D26): tem um dono por vez. "reads" empresta para leitura,
-// "edits" empresta para escrita; o compilador garante que dois ramos não a recebam ao mesmo tempo.
-graph solve(issue: Text, repo: Sandbox) -> Text {
-  limits { budget: 5 USD }
+# Sandbox é um recurso afim (D26): tem um dono por vez. "reads" empresta para leitura,
+# "edits" para escrita; o compilador garante que dois ramos não a recebam ao mesmo tempo.
+graph solve(issue: Text, repo: Sandbox) -> Text:
+    limits budget 5 USD
 
-  node analysis = claude(understand(issue))
+    analysis = claude(understand(issue))
 
-  node work = agent claude {
-    tools      [read_file(reads repo), edit_file(edits repo), run_tests(edits repo)]
-    max_turns  30
-    task       fix(analysis)
-    // Compactação por tamanho: o compilador calcula o limite (janela − pior caso de uma volta).
-    compact    with summarize
-    on turn_limit => final_answer
-    on stuck      => final_answer
-  }
+    work = agent claude:
+        tools [read_file(reads repo), edit_file(edits repo), run_tests(edits repo)]
+        max_turns 30
+        task fix(analysis)
+        # Compactação por tamanho: o compilador calcula o limite
+        # (janela − pior caso de uma volta).
+        compact with summarize
+        on turn_limit: final_answer
+        on stuck: final_answer
 
-  // ⚠️ "work" não é usado pelo nó abaixo, mas "diff" precisa rodar depois do agente.
-  // Como os dois tocam a sandbox, a ordem sai do empréstimo "edits" (D26), sem "after".
-  node patch = diff(reads repo)
-
-  return patch
-}
+    # "work" não é usado abaixo, mas "diff" precisa rodar depois do agente. Como os
+    # dois tocam a sandbox, a ordem sai do empréstimo "edits" (D26), sem "after".
+    return diff(reads repo)

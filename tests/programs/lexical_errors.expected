@@ -11,9 +11,9 @@ Location: lexical_errors.clyx:2:22
 error[E0005]: invalid escape sequence
 - expected : one of `\n`, `\t`, `\r`, `\"`, `\\`, `\{`, `\}`
 - observed : `\q`
-Location: lexical_errors.clyx:7:20
+Location: lexical_errors.clyx:6:17
 
 error[E0002]: unterminated string
 - expected : closing `"` on the same line (use `"""` for multi-line text)
 - observed : end of line
-Location: lexical_errors.clyx:8:12
+Location: lexical_errors.clyx:7:9

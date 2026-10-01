@@ -1,24 +1,23 @@
-// Type errors.
-model claude = llm("m", max_output: 1_000 tokens)
+# Type errors.
+model claude = "m"
 
-type Plan = { questions: List<Text> max 5, owner: Pessoa }
+type Plan:
+    questions: List[Text] max 5
+    owner: Pessoa
 
-tool search(q: Text, limit: Nat) -> Text {
-  effect read
-}
+tool search(q: Text, limit: Nat) -> Text:
+    effect read
 
-prompt split(topic: Text) -> Plan {
-  """{topic}"""
-}
+prompt split(topic: Text) -> Plan:
+    """{topic}"""
 
-graph g(topic: Text, n: Nat) -> Nat {
-  node plan  = claude(split(topic))
-  node a     = search(n, 3)
-  node b     = search(topic)
-  node c     = search(topic, 3, 4)
-  node d     = plan.missing
-  node e[x in topic] = search(x, 1)
-  let  f     = [topic, n]
-  node out   = search(topic, limit: 2)
-  return out
-}
+graph g(topic: Text, n: Nat) -> Nat:
+    plan = claude(split(topic))
+    a = search(n, 3)
+    b = search(topic)
+    c = search(topic, 3, 4)
+    d = plan.missing
+    e = for each x in topic: search(x, 1)
+    f = [topic, n]
+    out = search(topic, limit=2)
+    return out

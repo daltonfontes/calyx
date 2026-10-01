@@ -1,97 +1,88 @@
-// W3. Reembolso com aprovação humana
-// Força: espera longa, tempo como efeito (D14), mensagens para a execução (D21),
-//        efeitos externos em ordem, write once com política, precondições no efeito (D29).
+# W3. Reembolso com aprovação humana
+# Força: espera longa, tempo como efeito (D14), mensagens para a execução (D21),
+#        efeitos externos em ordem, write once com política, precondições no efeito (D29).
 
-model claude = llm("claude-sonnet-5-5", max_output: 1_000 tokens)
+model claude = "claude-sonnet-5-5":
+    max_output 1000 tokens
 
-tool get_order(id: OrderId) -> Order {
-  effect   read
-  retry_on [Timeout]
-}
+tool get_order(id: OrderId) -> Order:
+    effect read
+    retry_on [Timeout]
 
-tool get_customer(id: CustomerId) -> Customer {
-  effect   read
-  retry_on [Timeout]
-}
+tool get_customer(id: CustomerId) -> Customer:
+    effect read
+    retry_on [Timeout]
 
-tool refund(order: OrderId, amount: Money) -> Unit {
-  effect          write
-  idempotency_key order                 // o gateway de pagamento aceita chave
-  checks          OrderState            // estado que a tool valida no momento do efeito (D29)
-}
+tool refund(order: OrderId, amount: Money) -> Unit:
+    effect write
+    idempotency_key order                # o gateway de pagamento aceita chave
+    checks OrderState                    # estado que a tool valida no momento do efeito (D29)
 
-tool email(to: Email, body: Text) -> Unit {
-  effect       write once
-  on_uncertain pause                    // se cair no meio do envio: pausa e pede decisão humana
-}
+tool email(to: Email, body: Text) -> Unit:
+    effect write once
+    on_uncertain pause                   # se cair no meio do envio: pausa e pede decisão humana
 
-type Intent   = | Refund { order: OrderId } | Other
-type Proposal = { amount: Money, reason: Text }
+type Intent = Refund(order: OrderId) | Other
 
-// Mensagem que a execução pode receber de fora (D21). Fica no diário quando chega.
-message Approval =
-  | Approved
-  | Denied { reason: Text }
+type Proposal:
+    amount: Money
+    reason: Text
 
-prompt classify(text: Text) -> Intent {
-  """
-  Classifique a mensagem do cliente.
+# Mensagem que a execução pode receber de fora (D21). Fica no diário quando chega.
+message Approval = Approved | Denied(reason: Text)
 
-  {text}
-  """
-}
+prompt classify(text: Text) -> Intent:
+    """
+    Classifique a mensagem do cliente.
 
-prompt decide(order: Order, customer: Customer, policy: Text) -> Proposal {
-  """
-  Proponha um valor de reembolso segundo a política.
+    {text}
+    """
 
-  Política: {policy}
-  Pedido: {order}
-  Cliente: {customer}
-  """
-}
+prompt decide(order: Order, customer: Customer, policy: Text) -> Proposal:
+    """
+    Proponha um valor de reembolso segundo a política.
 
-prompt reply(customer: Customer, amount: Money) -> Text {
-  """
-  Escreva um e-mail curto confirmando o reembolso de {amount} para {customer.name}.
-  """
-}
+    Política: {policy}
+    Pedido: {order}
+    Cliente: {customer}
+    """
 
-graph handle_refund(text: Text, customer_id: CustomerId, policy: Text) -> Text {
+prompt reply(customer: Customer, amount: Money) -> Text:
+    """
+    Escreva um e-mail curto confirmando o reembolso de {amount} para {customer.name}.
+    """
 
-  match claude(classify(text)) {
-    Other => return "encaminhado para atendimento"
+graph handle_refund(text: Text, customer_id: CustomerId, policy: Text) -> Text:
+    match claude(classify(text)):
+        case Other:
+            return "encaminhado para atendimento"
 
-    Refund { order } => {
-      // Sem dependência entre si: o runtime roda os dois em paralelo.
-      node o = get_order(order)
-      node c = get_customer(customer_id)
+        case Refund(order):
+            # Sem dependência entre si: o runtime roda os dois em paralelo.
+            o = get_order(order)
+            c = get_customer(customer_id)
 
-      node p = claude(decide(o, c, policy))
+            p = claude(decide(o, c, policy))
 
-      // Espera durável: a execução sai da memória e volta quando a mensagem chegar
-      // ou o prazo vencer. O timer fica no diário.
-      node approval = if p.amount > 100 BRL {
-        receive Approval timeout 3 days else Denied { reason: "prazo de aprovação expirou" }
-      } else {
-        Approved
-      }
+            # Espera durável: a execução sai da memória e volta quando a mensagem
+            # chegar ou o prazo vencer. O timer fica no diário.
+            approval = if p.amount > 100 BRL:
+                receive Approval, timeout 3 days:
+                    on timeout: Denied(reason="prazo de aprovação expirou")
+            else:
+                Approved
 
-      match approval {
-        Denied { reason } => return "recusado: {reason}"
-        Approved => {
-          // Precondições semânticas (SVBE, D29): verificadas pela tool sobre o estado ATUAL,
-          // na mesma transação do reembolso. A aprovação pode ter levado dias; se o pedido
-          // mudou mas as condições continuam válidas, o reembolso segue.
-          node paid = refund(order, p.amount) requires {
-            state.status == Delivered
-            state.refunded + p.amount <= state.total
-          }
-          node notice = email(c.email, claude(reply(c, p.amount)))
-          notice after paid
-          return "reembolsado"
-        }
-      }
-    }
-  }
-}
+            match approval:
+                case Denied(reason):
+                    return "recusado: {reason}"
+                case Approved:
+                    # Precondições semânticas (SVBE, D29): verificadas pela tool sobre o
+                    # estado ATUAL, na mesma transação do reembolso. A aprovação pode ter
+                    # levado dias; se o pedido mudou mas as condições continuam válidas,
+                    # o reembolso segue.
+                    paid = refund(order, p.amount):
+                        requires state.status == Delivered
+                        requires state.refunded + p.amount <= state.total
+                    notice = email(c.email, claude(reply(c, p.amount)))
+                    notice after paid
+                    return "reembolsado"

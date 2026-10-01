@@ -25,22 +25,22 @@ Um agente real faz dezenas ou centenas de chamadas de LLM e de tools, muitas em 
 - **Ao rodar**, o runtime deriva sozinho o que hoje se escreve à mão: o paralelismo, a retomada depois de uma queda sem pagar de novo, a garantia de não enviar nada duas vezes, e o rastreamento de custo por passo.
 
 ```
-graph research(topic: Text) -> Text {
-  limits { threads: 8, budget: 2 USD }
+graph research(topic: Text) -> Text:
+    limits threads 8, budget 2 USD
 
-  node plan     = claude(split_topic(topic))
-  node findings[q in plan.questions] = agent claude {   // paralelismo derivado, sem "parallel"
-    tools     [web_search]
-    max_turns 10
-    task      investigate(q)
-    on turn_limit => final_answer
-    on stuck      => final_answer
-  }
-  node report   = claude(write_report(topic, findings))
+    plan = claude(split_topic(topic))
+    findings = for each q in plan.questions:   # paralelismo derivado, sem "parallel"
+        agent claude:
+            tools [web_search]
+            max_turns 10
+            task investigate(q)
+            on turn_limit: final_answer
+            on stuck: final_answer
 
-  return report
-}
+    return claude(write_report(topic, findings))
 ```
+
+A sintaxe **parece Python e se comporta como uma linguagem funcional**: cada linha `nome = ...` é um passo do grafo, valores não mudam, e quem decide a ordem de execução são as dependências, não a ordem das linhas.
 
 A analogia mais próxima é o **SQL**: você declara o que quer, e o banco decide como executar, paralelizar e se recuperar. A Calyx tenta fazer isso para agentes.
 

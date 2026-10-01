@@ -1,9 +1,13 @@
 //! Recursive-descent parser for Calyx.
 //!
-//! The parser recovers from errors (it skips to the next statement or
+//! The syntax looks like Python: blocks are introduced by `:` and indented,
+//! calls use parentheses, keyword arguments use `=`, comments start with `#`.
+//! The semantics are functional: every name is bound once and never changes.
+//!
+//! The parser recovers from errors (it skips to the next line or
 //! declaration) so one run reports every problem. Constructs from later
 //! milestones are recognized and reported as "not supported yet", with the
-//! milestone where they arrive, instead of a generic syntax error.
+//! milestone where they arrive.
 
 use crate::ast::*;
 use crate::lexer::{Token, TokenKind};
@@ -16,6 +20,8 @@ pub fn parse(text: &str) -> (Program, Vec<Diagnostic>) {
         text,
         tokens,
         pos: 0,
+        depth: 0,
+        broken: None,
         diags: Vec::new(),
     };
     let program = p.program();
@@ -30,9 +36,11 @@ const UNITS: &[&str] = &[
 /// Units accepted after `/` in a rate, as in `50/s`.
 const RATE_UNITS: &[&str] = &["s", "min", "h"];
 
+const DECLS: &[&str] = &["model", "tool", "type", "prompt", "graph"];
+
 /// Declarations planned for later milestones.
 const FUTURE_DECLS: &[(&str, &str)] = &[
-    ("fn", "M5"),
+    ("def", "M5"),
     ("message", "M6"),
     ("entity", "M6"),
     ("router", "a later milestone"),
@@ -59,6 +67,10 @@ struct Parser<'a> {
     text: &'a str,
     tokens: Vec<Token>,
     pos: usize,
+    /// Number of indented blocks open at `pos`.
+    depth: usize,
+    /// Name of a `name = ...` statement whose value failed to parse.
+    broken: Option<Ident>,
     diags: Vec<Diagnostic>,
 }
 
@@ -87,15 +99,27 @@ impl Parser<'_> {
         &self.text[t.span.start as usize..t.span.end as usize]
     }
 
+    fn word(&self) -> &str {
+        if self.kind() == TokenKind::Ident {
+            self.text_of(self.tok())
+        } else {
+            ""
+        }
+    }
+
     fn is_word(&self, word: &str) -> bool {
-        self.kind() == TokenKind::Ident && self.text_of(self.tok()) == word
+        self.word() == word
     }
 
     fn advance(&mut self) -> Token {
         let t = self.tok();
-        if t.kind != TokenKind::Eof {
-            self.pos += 1;
+        match t.kind {
+            TokenKind::Eof => return t,
+            TokenKind::Indent => self.depth += 1,
+            TokenKind::Dedent => self.depth = self.depth.saturating_sub(1),
+            _ => {}
         }
+        self.pos += 1;
         t
     }
 
@@ -108,15 +132,11 @@ impl Parser<'_> {
         }
     }
 
-    fn skip_newlines(&mut self) {
-        while self.kind() == TokenKind::Newline {
-            self.advance();
-        }
-    }
-
     fn describe(&self, t: Token) -> String {
         match t.kind {
             TokenKind::Newline => "end of line".into(),
+            TokenKind::Indent => "an indented line".into(),
+            TokenKind::Dedent => "the end of the block".into(),
             TokenKind::Eof => "end of file".into(),
             TokenKind::Str | TokenKind::LongStr => "text".into(),
             _ => format!("`{}`", self.text_of(t)),
@@ -179,17 +199,110 @@ impl Parser<'_> {
         Reported
     }
 
-    /// Skips to the start of the next top-level declaration.
-    fn recover_to_decl(&mut self) {
-        let mut depth = 0i32;
+    /// End of a line: a `Newline`, or the end of the enclosing block.
+    fn end_of_line(&mut self) -> PResult<()> {
+        match self.kind() {
+            TokenKind::Newline => {
+                self.advance();
+                Ok(())
+            }
+            TokenKind::Dedent | TokenKind::Eof => Ok(()),
+            _ => {
+                let r = self.error_here(
+                    "E0103",
+                    "unexpected input at the end of the line",
+                    "a line break",
+                );
+                self.recover_line();
+                Err(r)
+            }
+        }
+    }
+
+    /// `:` followed by a line break and an indented block. Leaves the parser
+    /// on the first token of the block.
+    fn block_start(&mut self, what: &str) -> PResult<()> {
+        self.expect(TokenKind::Colon, &format!("`:` and {what}"))?;
+        self.expect(
+            TokenKind::Newline,
+            &format!("a line break, then {what} indented"),
+        )?;
+        self.expect(TokenKind::Indent, &format!("{what}, indented"))?;
+        Ok(())
+    }
+
+    /// Skips the rest of the current line, and any block that hangs from it.
+    fn recover_line(&mut self) {
+        self.recover_to(self.depth);
+    }
+
+    /// Skips to the start of the next line at block depth `base`. An error deep
+    /// inside a nested block skips the rest of that block too, so the enclosing
+    /// graph keeps parsing its next statement instead of ending early.
+    fn recover_to(&mut self, base: usize) {
         loop {
             match self.kind() {
                 TokenKind::Eof => return,
-                TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => depth += 1,
-                TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => depth -= 1,
-                TokenKind::Newline if depth <= 0 => {
-                    self.skip_newlines();
-                    if self.at_decl_start() {
+                TokenKind::Dedent if self.depth <= base => return,
+                TokenKind::Dedent => {
+                    self.advance();
+                    if self.depth == base {
+                        return;
+                    }
+                }
+                TokenKind::Newline if self.depth == base => {
+                    self.advance();
+                    if self.kind() == TokenKind::Indent {
+                        self.skip_block();
+                    }
+                    return;
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
+    /// Skips an indented block, starting at its `Indent`.
+    fn skip_block(&mut self) {
+        let mut level = 0usize;
+        loop {
+            match self.advance().kind {
+                TokenKind::Indent => level += 1,
+                TokenKind::Dedent => {
+                    level = level.saturating_sub(1);
+                    if level == 0 {
+                        return;
+                    }
+                }
+                TokenKind::Eof => return,
+                _ => {}
+            }
+        }
+    }
+
+    /// Skips to the start of the next top-level declaration.
+    fn recover_to_decl(&mut self) {
+        let mut level = 0i32;
+        loop {
+            match self.kind() {
+                TokenKind::Eof => return,
+                TokenKind::Indent => level += 1,
+                TokenKind::Dedent => {
+                    level -= 1;
+                    self.advance();
+                    if level <= 0 && self.at_decl_start() {
+                        return;
+                    }
+                    continue;
+                }
+                TokenKind::Newline if level <= 0 => {
+                    self.advance();
+                    while self.kind() == TokenKind::Dedent {
+                        self.advance();
+                    }
+                    if self.at_decl_start() || self.kind() == TokenKind::Eof {
                         return;
                     }
                     continue;
@@ -200,32 +313,9 @@ impl Parser<'_> {
         }
     }
 
-    /// Skips to the end of the current statement (newline at depth 0) or to
-    /// the `}` that closes the enclosing block, which is not consumed.
-    fn recover_to_stmt(&mut self) {
-        let mut depth = 0i32;
-        loop {
-            match self.kind() {
-                TokenKind::Eof => return,
-                // `depth` goes negative when the error happened inside
-                // parentheses: their closing tokens are part of this statement.
-                TokenKind::Newline if depth <= 0 => return,
-                TokenKind::RBrace if depth <= 0 => return,
-                TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => depth += 1,
-                TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => depth -= 1,
-                _ => {}
-            }
-            self.advance();
-        }
-    }
-
     fn at_decl_start(&self) -> bool {
-        const DECLS: &[&str] = &["model", "tool", "type", "prompt", "graph"];
-        self.kind() == TokenKind::Ident
-            && (DECLS.contains(&self.text_of(self.tok()))
-                || FUTURE_DECLS
-                    .iter()
-                    .any(|(k, _)| *k == self.text_of(self.tok())))
+        let w = self.word();
+        DECLS.contains(&w) || FUTURE_DECLS.iter().any(|(k, _)| *k == w)
     }
 
     // ----- declarations --------------------------------------------------
@@ -233,12 +323,27 @@ impl Parser<'_> {
     fn program(&mut self) -> Program {
         let mut decls = Vec::new();
         loop {
-            self.skip_newlines();
-            if self.kind() == TokenKind::Eof {
-                break;
+            while matches!(self.kind(), TokenKind::Newline | TokenKind::Dedent) {
+                self.advance();
             }
+            match self.kind() {
+                TokenKind::Eof => break,
+                TokenKind::Indent => {
+                    let _ = self.error_here(
+                        "E0106",
+                        "unexpected indentation",
+                        "a declaration starting at the beginning of the line",
+                    );
+                    self.skip_block();
+                    continue;
+                }
+                _ => {}
+            }
+            let at = self.pos;
             match self.decl() {
                 Ok(d) => decls.push(d),
+                // A declaration that already recovered to the next one stays there.
+                Err(Reported) if self.pos > at && self.depth == 0 && self.at_decl_start() => {}
                 Err(Reported) => self.recover_to_decl(),
             }
         }
@@ -246,11 +351,7 @@ impl Parser<'_> {
     }
 
     fn decl(&mut self) -> PResult<Decl> {
-        let word = if self.kind() == TokenKind::Ident {
-            self.text_of(self.tok()).to_owned()
-        } else {
-            String::new()
-        };
+        let word = self.word().to_owned();
         match word.as_str() {
             "model" => self.model_decl().map(Decl::Model),
             "tool" => self.tool_decl().map(Decl::Tool),
@@ -271,48 +372,45 @@ impl Parser<'_> {
         }
     }
 
+    /// `model claude = "id"` with an optional properties block.
     fn model_decl(&mut self) -> PResult<ModelDecl> {
         let start = self.advance().span;
         let name = self.ident("a model name")?;
-        self.expect(TokenKind::Eq, "`=`")?;
-        self.expect_word("llm")?;
-        self.expect(TokenKind::LParen, "`(`")?;
-        self.skip_newlines();
-        let id_tok = self.expect(TokenKind::Str, "the model identifier as text")?;
+        self.expect(TokenKind::Eq, "`=` and the model identifier")?;
+        let id_tok = self.expect(
+            TokenKind::Str,
+            "the model identifier as text, e.g. \"claude-sonnet-5-5\"",
+        )?;
         let model_id = self.text_of(id_tok).trim_matches('"').to_owned();
         let mut max_output = None;
-        self.skip_newlines();
-        while self.eat(TokenKind::Comma) {
-            self.skip_newlines();
-            if self.kind() == TokenKind::RParen {
-                break;
-            }
-            let key = self.ident("a model option")?;
-            self.expect(TokenKind::Colon, "`:`")?;
-            let value = self.expr()?;
-            match (key.name.as_str(), &value.kind) {
-                ("max_output", ExprKind::Int { value, unit })
-                    if unit.as_deref() == Some("tokens") =>
-                {
-                    max_output = Some(*value);
-                }
-                ("max_output", _) => {
-                    self.diags.push(
-                        Diagnostic::error("E0100", "syntax error", value.span)
-                            .expected("a number of tokens, e.g. `2_000 tokens`"),
-                    );
-                }
-                _ => {
-                    self.diags.push(
-                        Diagnostic::error("E0102", "unknown model option", key.span)
+        if self.kind() == TokenKind::Colon {
+            for p in self.props("the model properties")? {
+                match (p.key.name.as_str(), p.value.as_slice()) {
+                    (
+                        "max_output",
+                        [
+                            Expr {
+                                kind: ExprKind::Int { value, unit },
+                                ..
+                            },
+                        ],
+                    ) if unit.as_deref() == Some("tokens") => {
+                        max_output = Some(*value);
+                    }
+                    ("max_output", _) => self.diags.push(
+                        Diagnostic::error("E0305", "invalid value for `max_output`", p.span)
+                            .expected("a number of tokens, e.g. `2000 tokens`"),
+                    ),
+                    (k, _) => self.diags.push(
+                        Diagnostic::error("E0102", "unknown model property", p.key.span)
                             .expected("`max_output`")
-                            .observed(format!("`{}`", key.name)),
-                    );
+                            .observed(format!("`{k}`")),
+                    ),
                 }
             }
-            self.skip_newlines();
+        } else {
+            self.end_of_line()?;
         }
-        self.expect(TokenKind::RParen, "`)`")?;
         Ok(ModelDecl {
             name,
             model_id,
@@ -321,27 +419,15 @@ impl Parser<'_> {
         })
     }
 
-    fn tool_decl(&mut self) -> PResult<ToolDecl> {
-        let start = self.advance().span;
-        let name = self.ident("a tool name")?;
-        let params = self.params()?;
-        self.expect(TokenKind::Arrow, "`->` and the return type")?;
-        let ret = self.type_expr()?;
-        self.expect(TokenKind::LBrace, "`{` with the tool properties")?;
+    /// A `:` block of `key value...` lines.
+    fn props(&mut self, what: &str) -> PResult<Vec<ToolProp>> {
+        self.block_start(what)?;
         let mut props = Vec::new();
-        loop {
-            self.skip_newlines();
-            if self.eat(TokenKind::RBrace) {
-                break;
-            }
-            if self.kind() == TokenKind::Eof {
-                return Err(self.error_here("E0100", "syntax error", "`}`"));
-            }
-            let key = match self.ident("a tool property (e.g. `effect read`)") {
+        while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
+            let key = match self.ident("a property name, e.g. `effect`") {
                 Ok(k) => k,
-                Err(r) => {
-                    self.recover_to_stmt();
-                    let _ = r;
+                Err(Reported) => {
+                    self.recover_line();
                     continue;
                 }
             };
@@ -349,18 +435,19 @@ impl Parser<'_> {
             let mut ok = true;
             while !matches!(
                 self.kind(),
-                TokenKind::Newline | TokenKind::RBrace | TokenKind::Eof
+                TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof
             ) {
                 match self.expr() {
                     Ok(e) => value.push(e),
                     Err(Reported) => {
-                        self.recover_to_stmt();
+                        self.recover_line();
                         ok = false;
                         break;
                     }
                 }
             }
             if ok {
+                self.eat(TokenKind::Newline);
                 let span = Span {
                     start: key.span.start,
                     end: value.last().map_or(key.span.end, |e| e.span.end),
@@ -368,6 +455,17 @@ impl Parser<'_> {
                 props.push(ToolProp { key, value, span });
             }
         }
+        self.eat(TokenKind::Dedent);
+        Ok(props)
+    }
+
+    fn tool_decl(&mut self) -> PResult<ToolDecl> {
+        let start = self.advance().span;
+        let name = self.ident("a tool name")?;
+        let params = self.params()?;
+        self.expect(TokenKind::Arrow, "`->` and the return type")?;
+        let ret = self.type_expr()?;
+        let props = self.props("the tool properties (e.g. `effect read`)")?;
         Ok(ToolDecl {
             name,
             params,
@@ -377,26 +475,89 @@ impl Parser<'_> {
         })
     }
 
+    /// `type T = A | B(x: Text)`, `type Id = Text`, or `type T:` with fields.
     fn type_decl(&mut self) -> PResult<TypeDecl> {
         let start = self.advance().span;
         let name = self.ident("a type name")?;
-        self.expect(TokenKind::Eq, "`=`")?;
-        if self.kind() == TokenKind::Newline {
-            // Variants may start on the next line: `type T =\n  | A\n  | B`.
-            let mut n = 0;
-            while self.nth_kind(n) == TokenKind::Newline {
-                n += 1;
+        let ty_start = self.tok().span;
+        let ty = if self.kind() == TokenKind::Colon {
+            self.block_start("the fields (`name: Type`)")?;
+            let mut fields = Vec::new();
+            while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
+                match self.field() {
+                    Ok(f) => {
+                        fields.push(f);
+                        let _ = self.end_of_line();
+                    }
+                    Err(Reported) => self.recover_line(),
+                }
             }
-            if self.nth_kind(n) == TokenKind::Pipe {
-                self.skip_newlines();
+            self.eat(TokenKind::Dedent);
+            TypeExpr {
+                kind: TypeKind::Record(fields),
+                span: self.span_from(ty_start),
             }
-        }
-        let ty = self.type_expr()?;
+        } else {
+            self.expect(TokenKind::Eq, "`=` or `:`")?;
+            let ty = self.type_rhs()?;
+            if self.kind() == TokenKind::Colon {
+                // `type Plan = Graph[T]:` with limits for generated graphs (D4).
+                let r = self.unsupported("a property block on a type", "a later milestone");
+                self.recover_line();
+                return Err(r);
+            }
+            self.end_of_line()?;
+            ty
+        };
         Ok(TypeDecl {
             name,
             ty,
             span: self.span_from(start),
         })
+    }
+
+    /// The right side of `type T = ...`: variants or another type.
+    fn type_rhs(&mut self) -> PResult<TypeExpr> {
+        let start = self.tok().span;
+        let leading_pipe = self.eat(TokenKind::Pipe);
+        let is_variants = leading_pipe
+            || self.nth_kind(1) == TokenKind::Pipe
+            || self.nth_kind(1) == TokenKind::LParen;
+        if !is_variants {
+            return self.type_expr();
+        }
+        let mut variants = Vec::new();
+        loop {
+            let name = self.ident("a variant name")?;
+            let mut fields = Vec::new();
+            if self.eat(TokenKind::LParen) {
+                loop {
+                    if self.eat(TokenKind::RParen) {
+                        break;
+                    }
+                    fields.push(self.field()?);
+                    if !self.eat(TokenKind::Comma) {
+                        self.expect(TokenKind::RParen, "`,` or `)`")?;
+                        break;
+                    }
+                }
+            }
+            variants.push(Variant { name, fields });
+            if !self.eat(TokenKind::Pipe) {
+                break;
+            }
+        }
+        Ok(TypeExpr {
+            kind: TypeKind::Variants(variants),
+            span: self.span_from(start),
+        })
+    }
+
+    fn field(&mut self) -> PResult<Field> {
+        let name = self.ident("a field name")?;
+        self.expect(TokenKind::Colon, "`:` and the field type")?;
+        let ty = self.type_expr()?;
+        Ok(Field { name, ty })
     }
 
     fn prompt_decl(&mut self) -> PResult<PromptDecl> {
@@ -405,8 +566,7 @@ impl Parser<'_> {
         let params = self.params()?;
         self.expect(TokenKind::Arrow, "`->` and the output type")?;
         let ret = self.type_expr()?;
-        self.expect(TokenKind::LBrace, "`{` with the prompt text")?;
-        self.skip_newlines();
+        self.block_start("the prompt text as `\"\"\"...\"\"\"`")?;
         let template = match self.kind() {
             TokenKind::Str | TokenKind::LongStr => {
                 let t = self.advance();
@@ -420,8 +580,15 @@ impl Parser<'_> {
                 ));
             }
         };
-        self.skip_newlines();
-        self.expect(TokenKind::RBrace, "`}`")?;
+        self.end_of_line()?;
+        if self.kind() != TokenKind::Dedent && self.kind() != TokenKind::Eof {
+            return Err(self.error_here(
+                "E0100",
+                "syntax error",
+                "the end of the prompt (a prompt has a single text)",
+            ));
+        }
+        self.eat(TokenKind::Dedent);
         Ok(PromptDecl {
             name,
             params,
@@ -437,26 +604,64 @@ impl Parser<'_> {
         let params = self.params()?;
         self.expect(TokenKind::Arrow, "`->` and the return type")?;
         let ret = self.type_expr()?;
+        self.block_start("the graph body")?;
         let mut max_effect = None;
         let mut decreases = None;
-        loop {
+        let mut body = Vec::new();
+        let mut incomplete = false;
+        while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
             if self.is_word("effect") {
                 self.advance();
                 let mut words = Vec::new();
-                while self.kind() == TokenKind::Ident && !self.is_word("decreases") {
-                    words.push(self.ident("an effect")?);
+                while self.kind() == TokenKind::Ident {
+                    let t = self.advance();
+                    words.push(Ident {
+                        name: self.text_of(t).to_owned(),
+                        span: t.span,
+                    });
                 }
                 max_effect = Some(words);
-            } else if self.is_word("decreases") {
-                self.advance();
-                decreases = Some(self.ident("the parameter that decreases")?);
-            } else {
-                break;
+                let _ = self.end_of_line();
+                continue;
             }
-            self.skip_newlines();
+            if self.is_word("decreases") {
+                self.advance();
+                match self.ident("the parameter that decreases") {
+                    Ok(p) => decreases = Some(p),
+                    Err(Reported) => self.recover_line(),
+                }
+                let _ = self.end_of_line();
+                continue;
+            }
+            let base = self.depth;
+            self.broken = None;
+            match self.stmt() {
+                Ok(s) => {
+                    body.push(s);
+                    // A statement that ended with an indented block is complete.
+                    if self.tokens[self.pos.saturating_sub(1)].kind != TokenKind::Dedent {
+                        let _ = self.end_of_line();
+                    }
+                }
+                Err(Reported) => {
+                    incomplete = true;
+                    self.recover_to(base);
+                    // Keep the name declared, so its uses do not cascade.
+                    if let Some(name) = self.broken.take() {
+                        let span = name.span;
+                        body.push(Stmt::Node {
+                            name,
+                            fan_out: None,
+                            value: Expr {
+                                kind: ExprKind::Error,
+                                span,
+                            },
+                        });
+                    }
+                }
+            }
         }
-        self.expect(TokenKind::LBrace, "`{` with the graph body")?;
-        let body = self.block_body();
+        self.eat(TokenKind::Dedent);
         Ok(GraphDecl {
             name,
             params,
@@ -464,6 +669,7 @@ impl Parser<'_> {
             max_effect,
             decreases,
             body,
+            incomplete,
             span: self.span_from(start),
         })
     }
@@ -472,21 +678,18 @@ impl Parser<'_> {
         self.expect(TokenKind::LParen, "`(` with the parameters")?;
         let mut params = Vec::new();
         loop {
-            self.skip_newlines();
             if self.eat(TokenKind::RParen) {
                 break;
             }
             let name = self.ident("a parameter name")?;
             self.expect(TokenKind::Colon, "`:` and the parameter type")?;
             if self.is_word("reads") || self.is_word("edits") {
-                let w = self.text_of(self.tok()).to_owned();
+                let w = self.word().to_owned();
                 return Err(self.unsupported(&w, "M6"));
             }
             let ty = self.type_expr()?;
             params.push(Param { name, ty });
-            self.skip_newlines();
             if !self.eat(TokenKind::Comma) {
-                self.skip_newlines();
                 self.expect(TokenKind::RParen, "`,` or `)`")?;
                 break;
             }
@@ -496,134 +699,122 @@ impl Parser<'_> {
 
     // ----- types ---------------------------------------------------------
 
+    /// `Text`, `List[Text]`, `List[Text] max 5`, `Map[Text, Nat]`
     fn type_expr(&mut self) -> PResult<TypeExpr> {
         let start = self.tok().span;
-        match self.kind() {
-            TokenKind::LBrace => {
-                let fields = self.fields()?;
-                Ok(TypeExpr {
-                    kind: TypeKind::Record(fields),
-                    span: self.span_from(start),
-                })
-            }
-            TokenKind::Pipe => {
-                let mut variants = Vec::new();
-                while self.eat(TokenKind::Pipe) {
-                    let name = self.ident("a variant name")?;
-                    let fields = if self.kind() == TokenKind::LBrace {
-                        self.fields()?
-                    } else {
-                        Vec::new()
-                    };
-                    variants.push(Variant { name, fields });
-                    // The next variant may be on the next line.
-                    let mut n = 0;
-                    while self.nth_kind(n) == TokenKind::Newline {
-                        n += 1;
-                    }
-                    if n > 0 && self.nth_kind(n) == TokenKind::Pipe {
-                        self.skip_newlines();
-                    }
-                }
-                Ok(TypeExpr {
-                    kind: TypeKind::Variants(variants),
-                    span: self.span_from(start),
-                })
-            }
-            _ => {
-                let name = self.ident("a type")?;
-                let mut args = Vec::new();
-                if self.eat(TokenKind::Lt) {
-                    loop {
-                        args.push(self.type_expr()?);
-                        if !self.eat(TokenKind::Comma) {
-                            break;
-                        }
-                    }
-                    self.expect(TokenKind::Gt, "`>`")?;
-                }
-                let mut max = None;
-                if self.is_word("max") {
-                    self.advance();
-                    let t = self.expect(TokenKind::Int, "a number after `max`")?;
-                    max = Some(self.int_value(t));
-                }
-                Ok(TypeExpr {
-                    kind: TypeKind::Named { name, args, max },
-                    span: self.span_from(start),
-                })
-            }
+        let name = self.ident("a type")?;
+        if self.kind() == TokenKind::LParen {
+            return Err(self.unsupported(&format!("{}(...) types", name.name), "M5"));
         }
-    }
-
-    fn fields(&mut self) -> PResult<Vec<Field>> {
-        self.expect(TokenKind::LBrace, "`{`")?;
-        let mut fields = Vec::new();
-        loop {
-            self.skip_newlines();
-            if self.eat(TokenKind::RBrace) {
-                break;
+        let mut args = Vec::new();
+        if self.eat(TokenKind::LBracket) {
+            loop {
+                args.push(self.type_expr()?);
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
             }
-            let name = self.ident("a field name")?;
-            self.expect(TokenKind::Colon, "`:` and the field type")?;
-            let ty = self.type_expr()?;
-            fields.push(Field { name, ty });
-            self.skip_newlines();
-            if !self.eat(TokenKind::Comma) {
-                self.skip_newlines();
-                self.expect(TokenKind::RBrace, "`,` or `}`")?;
-                break;
-            }
+            self.expect(TokenKind::RBracket, "`]`")?;
         }
-        Ok(fields)
+        let mut max = None;
+        if self.is_word("max") {
+            self.advance();
+            let t = self.expect(TokenKind::Int, "a number after `max`")?;
+            max = Some(self.int_value(t));
+        }
+        Ok(TypeExpr {
+            kind: TypeKind::Named { name, args, max },
+            span: self.span_from(start),
+        })
     }
 
     // ----- statements ----------------------------------------------------
 
-    /// Parses statements until the closing `}` (consumed).
-    fn block_body(&mut self) -> Vec<Stmt> {
-        let mut body = Vec::new();
-        loop {
-            self.skip_newlines();
-            match self.kind() {
-                TokenKind::RBrace => {
-                    self.advance();
-                    return body;
+    fn stmt(&mut self) -> PResult<Stmt> {
+        if self.is_word("limits") {
+            self.advance();
+            let mut entries = Vec::new();
+            loop {
+                let key = self.ident("a limit (`threads`, `rate`, `budget` or `memory`)")?;
+                let value = self.expr()?;
+                entries.push((key, value));
+                if !self.eat(TokenKind::Comma) {
+                    break;
                 }
-                TokenKind::Eof => {
-                    let _ = self.error_here("E0100", "syntax error", "`}` closing the graph");
-                    return body;
-                }
-                _ => {}
             }
-            match self.stmt() {
-                Ok(s) => {
-                    if !matches!(
-                        self.kind(),
-                        TokenKind::Newline | TokenKind::RBrace | TokenKind::Eof
-                    ) {
-                        let _ = self.error_here(
-                            "E0103",
-                            "unexpected input after the statement",
-                            "a line break",
-                        );
-                        self.recover_to_stmt();
-                    }
-                    body.push(s);
-                }
-                Err(Reported) => self.recover_to_stmt(),
-            }
+            return Ok(Stmt::Limits(entries));
         }
+        if self.is_word("return") {
+            self.advance();
+            return Ok(Stmt::Return(self.expr()?));
+        }
+        if let Some((k, m)) = self.future_keyword() {
+            return Err(self.unsupported(k, m));
+        }
+        if self.kind() == TokenKind::Ident && self.nth_kind(1) == TokenKind::Eq {
+            let name = self.ident("a name")?;
+            self.advance(); // `=`
+            self.broken = Some(name.clone());
+            if self.is_word("for") && self.nth_kind(1) == TokenKind::Ident {
+                let t = self.tokens[self.pos + 1];
+                if self.text_of(t) == "each" {
+                    return self.for_each(name);
+                }
+            }
+            let value = self.expr()?;
+            return Ok(Stmt::Node {
+                name,
+                fan_out: None,
+                value,
+            });
+        }
+        if self.kind() == TokenKind::Ident && self.nth_kind(1) == TokenKind::Comma {
+            return Err(self.unsupported("a, b = ... (destructuring)", "M5"));
+        }
+        if self.kind() == TokenKind::Ident
+            && self.nth_kind(1) == TokenKind::Ident
+            && self.text_of(self.tokens[self.pos + 1]) == "after"
+        {
+            return Err(self.unsupported("after", "M6"));
+        }
+        Err(self.error_here(
+            "E0104",
+            "expected a statement",
+            "`name = ...`, `return ...` or `limits ...`",
+        ))
+    }
+
+    /// `name = for each x in list: expr` (inline or indented body).
+    fn for_each(&mut self, name: Ident) -> PResult<Stmt> {
+        self.advance(); // for
+        self.advance(); // each
+        let var = self.ident("the name of each item")?;
+        self.expect_word("in")?;
+        let over = self.expr()?;
+        self.expect(TokenKind::Colon, "`:` and what to do with each item")?;
+        let value = if self.eat(TokenKind::Newline) {
+            self.expect(TokenKind::Indent, "what to do with each item, indented")?;
+            let value = self.expr()?;
+            self.eat(TokenKind::Newline);
+            if self.kind() != TokenKind::Dedent {
+                return Err(self.unsupported("multi-line `for each` bodies", "M5"));
+            }
+            self.advance();
+            value
+        } else {
+            self.expr()?
+        };
+        Ok(Stmt::Node {
+            name,
+            fan_out: Some((var, over)),
+            value,
+        })
     }
 
     /// Is the current token a keyword from a later milestone, used as a
     /// keyword? `ask(x)` or `run.x` are ordinary names; `ask Mem(...)` is not.
     fn future_keyword(&self) -> Option<(&'static str, &'static str)> {
-        if self.kind() != TokenKind::Ident {
-            return None;
-        }
-        let word = self.text_of(self.tok());
-        let entry = FUTURE_STMTS.iter().find(|(k, _)| *k == word)?;
+        let entry = FUTURE_STMTS.iter().find(|(k, _)| *k == self.word())?;
         let used_as_name = matches!(
             self.nth_kind(1),
             TokenKind::LParen
@@ -631,93 +822,11 @@ impl Parser<'_> {
                 | TokenKind::Comma
                 | TokenKind::RParen
                 | TokenKind::RBracket
+                | TokenKind::Eq
                 | TokenKind::Newline
                 | TokenKind::Eof
         );
         (!used_as_name).then_some(*entry)
-    }
-
-    fn stmt(&mut self) -> PResult<Stmt> {
-        let word = if self.kind() == TokenKind::Ident {
-            self.text_of(self.tok()).to_owned()
-        } else {
-            String::new()
-        };
-        match word.as_str() {
-            "limits" => {
-                self.advance();
-                self.expect(TokenKind::LBrace, "`{`")?;
-                let mut entries = Vec::new();
-                loop {
-                    self.skip_newlines();
-                    if self.eat(TokenKind::RBrace) {
-                        break;
-                    }
-                    let key = self.ident("a limit (`threads`, `rate`, `budget`, `memory`)")?;
-                    self.expect(TokenKind::Colon, "`:`")?;
-                    let value = self.expr()?;
-                    entries.push((key, value));
-                    self.skip_newlines();
-                    if !self.eat(TokenKind::Comma) {
-                        self.skip_newlines();
-                        self.expect(TokenKind::RBrace, "`,` or `}`")?;
-                        break;
-                    }
-                }
-                Ok(Stmt::Limits(entries))
-            }
-            "node" => {
-                self.advance();
-                let name = self.ident("a node name")?;
-                let fan_out = if self.eat(TokenKind::LBracket) {
-                    let var = self.ident("the loop variable")?;
-                    self.expect_word("in")?;
-                    let over = self.expr()?;
-                    self.expect(TokenKind::RBracket, "`]`")?;
-                    Some((var, over))
-                } else {
-                    None
-                };
-                self.expect(TokenKind::Eq, "`=`")?;
-                self.skip_newlines();
-                let value = self.expr()?;
-                Ok(Stmt::Node {
-                    name,
-                    fan_out,
-                    value,
-                })
-            }
-            "let" => {
-                self.advance();
-                if self.kind() == TokenKind::LBracket {
-                    return Err(self.unsupported("let [..] destructuring", "M6"));
-                }
-                let name = self.ident("a name")?;
-                self.expect(TokenKind::Eq, "`=`")?;
-                self.skip_newlines();
-                let value = self.expr()?;
-                Ok(Stmt::Let { name, value })
-            }
-            "return" => {
-                self.advance();
-                Ok(Stmt::Return(self.expr()?))
-            }
-            _ => {
-                if let Some((k, m)) = self.future_keyword() {
-                    return Err(self.unsupported(k, m));
-                }
-                if self.nth_kind(1) == TokenKind::Ident
-                    && self.text_of(self.tokens[self.pos + 1]) == "after"
-                {
-                    return Err(self.unsupported("after", "M6"));
-                }
-                Err(self.error_here(
-                    "E0104",
-                    "expected a statement",
-                    "`node`, `let`, `return` or `limits`",
-                ))
-            }
-        }
     }
 
     // ----- expressions ---------------------------------------------------
@@ -725,6 +834,18 @@ impl Parser<'_> {
     fn expr(&mut self) -> PResult<Expr> {
         if let Some((k, m)) = self.future_keyword() {
             return Err(self.unsupported(k, m));
+        }
+        if self.is_word("for") {
+            return Err(self.error_here(
+                "E0107",
+                "`for each` must be assigned to a name",
+                "`name = for each item in list: ...`",
+            ));
+        }
+        if (self.is_word("reads") || self.is_word("edits")) && self.nth_kind(1) == TokenKind::Ident
+        {
+            let w = self.word().to_owned();
+            return Err(self.unsupported(&w, "M6"));
         }
         let mut e = self.primary()?;
         loop {
@@ -769,22 +890,19 @@ impl Parser<'_> {
     fn args(&mut self) -> PResult<Vec<Arg>> {
         let mut args = Vec::new();
         loop {
-            self.skip_newlines();
             if self.eat(TokenKind::RParen) {
                 break;
             }
-            let name = if self.kind() == TokenKind::Ident && self.nth_kind(1) == TokenKind::Colon {
+            let name = if self.kind() == TokenKind::Ident && self.nth_kind(1) == TokenKind::Eq {
                 let n = self.ident("an argument name")?;
-                self.advance(); // `:`
+                self.advance(); // `=`
                 Some(n)
             } else {
                 None
             };
             let value = self.expr()?;
             args.push(Arg { name, value });
-            self.skip_newlines();
             if !self.eat(TokenKind::Comma) {
-                self.skip_newlines();
                 self.expect(TokenKind::RParen, "`,` or `)`")?;
                 break;
             }
@@ -832,14 +950,11 @@ impl Parser<'_> {
                 self.advance();
                 let mut items = Vec::new();
                 loop {
-                    self.skip_newlines();
                     if self.eat(TokenKind::RBracket) {
                         break;
                     }
                     items.push(self.expr()?);
-                    self.skip_newlines();
                     if !self.eat(TokenKind::Comma) {
-                        self.skip_newlines();
                         self.expect(TokenKind::RBracket, "`,` or `]`")?;
                         break;
                     }
@@ -849,13 +964,13 @@ impl Parser<'_> {
                     span: self.span_from(t.span),
                 })
             }
-            TokenKind::LBrace => Err(self.unsupported("record literal", "M5")),
+            TokenKind::LBrace => Err(self.unsupported("`{...}` literals", "M5")),
             _ => Err(self.error_here("E0102", "expected an expression", "a value or a call")),
         }
     }
 
     fn unit(&mut self) -> Option<String> {
-        if self.kind() == TokenKind::Ident && UNITS.contains(&self.text_of(self.tok())) {
+        if UNITS.contains(&self.word()) {
             let t = self.advance();
             return Some(self.text_of(t).to_owned());
         }
@@ -934,54 +1049,79 @@ mod tests {
     fn full_subset_program() {
         let p = parse_ok(
             r#"
-model claude = llm("claude-sonnet-5-5", max_output: 2_000 tokens)
+# Um programa completo do subconjunto M1.
+model claude = "claude-sonnet-5-5":
+    max_output 2000 tokens
 
-tool web_search(query: Text) -> Text {
-  effect     read
-  max_output 4_000 tokens
-  retry_on   [Timeout, RateLimit]
-}
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 4000 tokens
+    retry_on [Timeout, RateLimit]
 
-type Plan = { questions: List<Text> max 5 }
+type Plan:
+    questions: List[Text] max 5
+    owner: Text
 
-type Review =
-  | Approved
-  | Rejected { feedback: Text }
+type Review = Approved | Rejected(feedback: Text)
 
-prompt split(topic: Text) -> Plan {
-  """
-  Divida {topic}.
-  """
-}
+type OrderId = Text
 
-graph research(topic: Text) -> List<Text> effect read {
-  limits { threads: 8, budget: 2 USD, rate: 50/s }
-  node plan = claude(split(topic))
-  node found[q in plan.questions] = web_search(q)
-  let label = "pesquisa: {topic}"
-  return found
-}
+prompt split(topic: Text) -> Plan:
+    """
+    Divida {topic}.
+    """
+
+graph research(topic: Text) -> List[Text]:
+    effect read
+    limits threads 8, budget 2 USD, rate 50/s
+    plan = claude(split(topic))
+    found = for each q in plan.questions:
+        web_search(q)
+    label = "pesquisa: {topic}"
+    return found
 "#,
         );
-        assert_eq!(p.decls.len(), 6);
-        let Decl::Graph(g) = &p.decls[5] else {
+        assert_eq!(p.decls.len(), 7);
+        let Decl::Graph(g) = &p.decls[6] else {
             panic!()
         };
         assert_eq!(g.body.len(), 5);
         assert_eq!(g.max_effect.as_ref().unwrap()[0].name, "read");
         let Decl::Type(t) = &p.decls[3] else { panic!() };
         assert!(matches!(&t.ty.kind, TypeKind::Variants(v) if v.len() == 2));
+        let Decl::Type(t) = &p.decls[2] else { panic!() };
+        assert!(matches!(&t.ty.kind, TypeKind::Record(f) if f.len() == 2));
     }
 
     #[test]
-    fn multi_line_call_arguments() {
-        parse_ok("graph g() -> Text {\n  node a = f(\n    x,\n    y: z\n  )\n  return a\n}\n");
+    fn inline_for_each_and_keyword_arguments() {
+        let p = parse_ok(
+            "graph g(xs: List[Text]) -> List[Text]:\n    ys = for each x in xs: f(x, limit=2)\n    return ys\n",
+        );
+        let Decl::Graph(g) = &p.decls[0] else {
+            panic!()
+        };
+        let Stmt::Node { fan_out, value, .. } = &g.body[0] else {
+            panic!()
+        };
+        assert!(fan_out.is_some());
+        let ExprKind::Call { args, .. } = &value.kind else {
+            panic!()
+        };
+        assert_eq!(args[1].name.as_ref().unwrap().name, "limit");
+    }
+
+    #[test]
+    fn calls_may_span_lines() {
+        parse_ok("graph g() -> Text:\n    a = f(\n        x,\n    y=z,\n    )\n    return a\n");
     }
 
     #[test]
     fn future_constructs_name_their_milestone() {
-        let (_, diags) = parse("graph g() -> Text {\n  node a = agent claude {}\n  return a\n}\n");
-        assert_eq!(diags.len(), 1);
+        let (_, diags) = parse(
+            "graph g() -> Text:\n    a = agent claude:\n        max_turns 10\n    return a\n",
+        );
+        assert_eq!(diags.len(), 1, "{diags:#?}");
         assert_eq!(diags[0].code, "E0101");
         assert!(diags[0].message.contains("M5"));
     }
@@ -989,10 +1129,10 @@ graph research(topic: Text) -> List<Text> effect read {
     #[test]
     fn recovers_and_reports_every_error() {
         let (p, diags) = parse(
-            "graph g() -> Text {\n  node = f()\n  bogus x\n  return a\n}\nfn h() -> Text { x }\ngraph k() -> Text {\n  return b\n}\n",
+            "graph g() -> Text:\n    = f()\n    bogus x\n    return a\ndef h() -> Text:\n    x\ngraph k() -> Text:\n    return b\n",
         );
         let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
-        assert_eq!(codes, vec!["E0100", "E0104", "E0101"]);
+        assert_eq!(codes, vec!["E0104", "E0104", "E0101"]);
         assert_eq!(p.decls.len(), 2); // g and k
     }
 }

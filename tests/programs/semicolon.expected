@@ -1,4 +1,4 @@
 error[E0004]: Calyx does not use `;`
 - expected : a line break between statements
 - observed : `;`
-Location: semicolon.clyx:8:41
+Location: semicolon.clyx:7:38

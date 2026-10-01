@@ -36,7 +36,7 @@ impl Decl {
     }
 }
 
-/// `model claude = llm("id", max_output: 2_000 tokens)`
+/// `model claude = "id"`, optionally followed by a block with `max_output`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelDecl {
     pub name: Ident,
@@ -45,7 +45,7 @@ pub struct ModelDecl {
     pub span: Span,
 }
 
-/// `tool name(params) -> T { props }`
+/// `tool name(params) -> T:` followed by a block of properties.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolDecl {
     pub name: Ident,
@@ -55,7 +55,7 @@ pub struct ToolDecl {
     pub span: Span,
 }
 
-/// One line inside a tool block, e.g. `effect write once`, `max_output 4_000 tokens`.
+/// One line of a properties block, e.g. `effect write once`, `max_output 4000 tokens`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolProp {
     pub key: Ident,
@@ -85,15 +85,15 @@ pub struct TypeExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeKind {
-    /// `Text`, `List<Text> max 5`, `Map<Text, Nat>`
+    /// `Text`, `List[Text] max 5`, `Map[Text, Nat]`
     Named {
         name: Ident,
         args: Vec<TypeExpr>,
         max: Option<u64>,
     },
-    /// `{ field: T, ... }`
+    /// A block of `field: T` lines.
     Record(Vec<Field>),
-    /// `| A | B { field: T }`
+    /// `A | B(field: T)`
     Variants(Vec<Variant>),
 }
 
@@ -109,7 +109,7 @@ pub struct Variant {
     pub fields: Vec<Field>,
 }
 
-/// `prompt name(params) -> T { """...""" }`
+/// `prompt name(params) -> T:` followed by an indented `"""..."""` text.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromptDecl {
     pub name: Ident,
@@ -119,7 +119,8 @@ pub struct PromptDecl {
     pub span: Span,
 }
 
-/// `graph name(params) -> T [effect E] [decreases p] { body }`
+/// `graph name(params) -> T:` followed by an indented body. The body may
+/// declare `effect ...` (the maximum effect) and `decreases p` (recursion).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphDecl {
     pub name: Ident,
@@ -128,21 +129,22 @@ pub struct GraphDecl {
     pub max_effect: Option<Vec<Ident>>,
     pub decreases: Option<Ident>,
     pub body: Vec<Stmt>,
+    /// Some statement failed to parse, so the body is partial. Checks that
+    /// look at the body as a whole (such as "has a `return`") are skipped.
+    pub incomplete: bool,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    /// `limits { threads: 8, budget: 2 USD }`
+    /// `limits threads 8, budget 2 USD`
     Limits(Vec<(Ident, Expr)>),
-    /// `node x = e` or `node xs[i in list] = e`
+    /// `x = e` (a step of the graph), or `xs = for each i in list: e`.
     Node {
         name: Ident,
         fan_out: Option<(Ident, Expr)>,
         value: Expr,
     },
-    /// `let x = e`
-    Let { name: Ident, value: Expr },
     /// `return e`
     Return(Expr),
 }
@@ -164,6 +166,9 @@ pub struct Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExprKind {
+    /// A value that failed to parse (already reported). Typed as an error so
+    /// later uses of its name do not report again.
+    Error,
     Ident(String),
     Str(StrLit),
     /// Integer with an optional unit: `8`, `2 USD`, `2_000 tokens`, `50/s`.

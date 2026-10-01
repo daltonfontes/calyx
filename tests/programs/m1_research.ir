@@ -1,5 +1,5 @@
 graph research(topic: Text) -> Text [read]
   %0 plan: Plan = model claude(split_topic) [llm]
-  %1 answers[q]: List<Text> max 5 = model claude(summarize) [read] <- %0
-  %2 report: Text = model claude(write_report) [llm] <- %1
+  %1 answers[q]: List[Text] max 5 = model claude(summarize) [read] <- %0
+  %2 return: Text = model claude(write_report) [llm] <- %1
   return %2

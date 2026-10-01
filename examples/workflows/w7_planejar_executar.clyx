@@ -1,68 +1,63 @@
-// W7. Planejar e executar (o LLM gera o grafo)
-// Força: grafo dinâmico gerado em tempo de execução, verificado antes de rodar (D4, nível 3).
+# W7. Planejar e executar (o LLM gera o grafo)
+# Força: grafo dinâmico gerado em tempo de execução, verificado antes de rodar (D4, nível 3).
 
-model planner = llm("claude-sonnet-5-5", max_output: 3_000 tokens)
-model worker  = llm("claude-haiku-4-5",  max_output: 1_500 tokens)
+model planner = "claude-sonnet-5-5":
+    max_output 3000 tokens
 
-tool web_search(query: Text) -> Text {
-  effect     read
-  max_output 4_000 tokens
-}
+model worker = "claude-haiku-4-5":
+    max_output 1500 tokens
 
-tool fetch_page(url: Url) -> Text {
-  effect     read
-  max_output 8_000 tokens
-}
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 4000 tokens
 
-tool send_email(to: Email, body: Text) -> Unit {
-  effect       write once
-  on_uncertain pause
-}
+tool fetch_page(url: Url) -> Text:
+    effect read
+    max_output 8000 tokens
 
-prompt make_plan(request: Text) -> Plan {
-  """
-  Monte um plano para atender o pedido abaixo, como um grafo de passos.
-  Use apenas as tools disponíveis. Passos independentes não devem depender uns dos outros.
+tool send_email(to: Email, body: Text) -> Unit:
+    effect write once
+    on_uncertain pause
 
-  Pedido: {request}
-  """
-}
+# O TIPO do plano limita o que o LLM pode gerar: só estas tools, efeito no máximo
+# read, no máximo 20 passos. Um plano que tente usar send_email não passa na verificação.
+type Plan = Graph[Map[Text, Text]]:
+    tools [web_search, fetch_page]
+    models [worker]
+    max_effect read
+    max_nodes 20
 
-prompt synthesize(request: Text, results: Map<Text, Text>) -> Text {
-  """
-  Responda ao pedido "{request}" usando os resultados dos passos:
-  {results}
-  """
-}
+prompt make_plan(request: Text) -> Plan:
+    """
+    Monte um plano para atender o pedido abaixo, como um grafo de passos.
+    Use apenas as tools disponíveis. Passos independentes não devem depender uns dos outros.
 
-// O TIPO do plano limita o que o LLM pode gerar: só estas tools, efeito no máximo read,
-// no máximo 20 nós. Um plano que tente usar send_email não passa na verificação.
-type Plan = Graph<
-  tools:      [web_search, fetch_page],
-  models:     [worker],
-  max_effect: read,
-  max_nodes:  20,
-  returns:    Map<Text, Text>
->
+    Pedido: {request}
+    """
 
-graph assist(request: Text) -> Text {
-  limits { threads: 6, budget: 1 USD }
+prompt synthesize(request: Text, results: Map[Text, Text]) -> Text:
+    """
+    Responda ao pedido "{request}" usando os resultados dos passos:
+    {results}
+    """
 
-  // O LLM gera o plano como DADOS (a representação intermediária do grafo),
-  // não como código-fonte. O plano fica no diário: na retomada, é o mesmo plano.
-  node plan = planner(make_plan(request))
+graph assist(request: Text) -> Text:
+    limits threads 6, budget 1 USD
 
-  // "run" passa o plano pelo mesmo verificador do compilador e só então executa.
-  // Se a verificação falhar, o resultado é Failed com o motivo, que volta ao planejador.
-  node results = loop p = plan, max 2 {
-    match try run p {
-      Ok(r)          => done r
-      Failed(reason) => next planner(make_plan("{request}\n\nO plano anterior foi rejeitado: {reason}"))
-    }
-  } else fail "não foi possível gerar um plano válido"
+    # O LLM gera o plano como DADOS (a representação intermediária do grafo), não
+    # como código-fonte. O plano fica no diário: na retomada, é o mesmo plano.
+    plan = planner(make_plan(request))
 
-  // A concorrência dentro do plano é derivada do grafo gerado, como em qualquer grafo:
-  // o LLM decide o quê; o runtime decide quando (Plan-over-Graph).
-  node answer = planner(synthesize(request, results))
-  return answer
-}
+    # "run" passa o plano pelo mesmo verificador do compilador e só então executa.
+    # Se a verificação falhar, o resultado é Failed com o motivo, que volta ao planejador.
+    results = loop p = plan, max 2:
+        match try run(p):
+            case Ok(r):
+                done r
+            case Failed(reason):
+                next planner(make_plan("{request}\n\nO plano anterior foi rejeitado: {reason}"))
+        on limit: fail "não foi possível gerar um plano válido"
+
+    # A concorrência dentro do plano é derivada do grafo gerado, como em qualquer
+    # grafo: o LLM decide o quê; o runtime decide quando (Plan-over-Graph).
+    return planner(synthesize(request, results))

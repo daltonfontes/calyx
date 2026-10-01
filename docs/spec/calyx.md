@@ -1,6 +1,6 @@
 # Especificação da Calyx (rascunho v0)
 
-**Status:** rascunho consolidado ao fim do discovery. Reúne as 34 decisões de [`docs/discovery/03-decisoes.md`](../discovery/03-decisoes.md) num lugar só. Onde a sintaxe ainda é provisória, isso está indicado.
+**Status:** rascunho consolidado ao fim do discovery. Reúne as 34 decisões de [`docs/discovery/03-decisoes.md`](../discovery/03-decisoes.md) num lugar só. Onde a sintaxe ainda é provisória, isso está indicado. O que o compilador já verifica hoje está no [roadmap](../roadmap.md).
 
 A Calyx é uma linguagem para programar agentes de IA como **grafos**. O programador escreve o grafo; o compilador verifica as garantias; o runtime extrai a concorrência, recupera falhas e registra tudo.
 
@@ -19,34 +19,36 @@ A Calyx é uma linguagem para programar agentes de IA como **grafos**. O program
 
 ## 2. Visão geral de um programa
 
+A sintaxe **parece Python e se comporta como uma linguagem funcional**: blocos por indentação, `#` para comentários, `nome = expressão` para cada passo. Mas todo valor é imutável, cada atribuição é um passo do grafo, e a ordem das linhas não define a ordem de execução: quem define são as dependências.
+
 ```
-model claude = llm("claude-sonnet-5-5", max_output: 2_000 tokens)
+model claude = "claude-sonnet-5-5":
+    max_output 2000 tokens
 
-tool web_search(query: Text) -> Text {
-  effect     read
-  max_output 4_000 tokens
-}
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 4000 tokens
 
-type Plan = { questions: List<Text> max 5 }
+type Plan:
+    questions: List[Text] max 5
 
-prompt split_topic(topic: Text) -> Plan {
-  """
-  Divida o tema abaixo em até 5 perguntas de pesquisa.
-  Tema: {topic}
-  """
-}
+prompt split_topic(topic: Text) -> Plan:
+    """
+    Divida o tema abaixo em até 5 perguntas de pesquisa.
+    Tema: {topic}
+    """
 
-graph research(topic: Text) -> List<Text> {
-  limits { threads: 8, budget: 2 USD }
+graph research(topic: Text) -> List[Text]:
+    limits threads 8, budget 2 USD
 
-  node plan     = claude(split_topic(topic))
-  node findings[q in plan.questions] = web_search(q)
+    plan = claude(split_topic(topic))
+    findings = for each q in plan.questions:
+        web_search(q)
 
-  return findings
-}
+    return findings
 ```
 
-Exemplos completos: [`examples/teste.clyx`](../../examples/teste.clyx) e [`examples/workflows/`](../../examples/workflows/).
+Exemplos completos: [`examples/research.clyx`](../../examples/research.clyx) (verificado hoje pelo compilador), [`examples/teste.clyx`](../../examples/teste.clyx) e [`examples/workflows/`](../../examples/workflows/) (usam construções dos próximos marcos).
 
 ---
 
@@ -54,12 +56,13 @@ Exemplos completos: [`examples/teste.clyx`](../../examples/teste.clyx) e [`examp
 
 | Elemento | Forma |
 |---|---|
-| Comentário | `// até o fim da linha` |
+| Comentário | `# até o fim da linha` |
 | Texto | `"..."`, com interpolação `{expressão}` |
 | Texto longo (prompts) | `"""..."""`, várias linhas, com interpolação |
 | Números | `42`, `1_000`, `0.5` |
-| Unidades | tokens (`2_000 tokens`), dinheiro (`2 USD`, `100 BRL`), tempo (`30 s`, `5 min`, `3 days`), memória (`4 GB`), taxa (`50/s`) |
-| Blocos | `{ }`; sem `;`; formatação padronizada por `calyx fmt` |
+| Unidades | tokens (`2000 tokens`), dinheiro (`2 USD`, `100 BRL`), tempo (`30 s`, `5 min`, `3 days`), memória (`4 GB`), taxa (`50/s`) |
+| Blocos | `:` no fim da linha e o conteúdo indentado com **espaços** (tab é erro); sem `{ }` e sem `;` |
+| Quebra de linha | dentro de `( )` e `[ ]` a linha pode continuar na seguinte |
 | Palavras-chave | em inglês; nomes, textos e comentários em qualquer língua |
 | Extensão | `.clyx` |
 
@@ -70,32 +73,33 @@ Exemplos completos: [`examples/teste.clyx`](../../examples/teste.clyx) e [`examp
 ### 4.1 Modelo
 
 ```
-model NOME = llm("identificador-do-modelo", max_output: N tokens)
+model NOME = "identificador-do-modelo"
+
+model NOME = "identificador-do-modelo":
+    max_output N tokens
 ```
 
 ### 4.2 Roteador (D30)
 
 ```
-router NOME = route [modelo1, modelo2, modelo3] {
-  policy cheapest_that_passes(verificacao)
-}
+router NOME = route [modelo1, modelo2, modelo3]:
+    policy cheapest_that_passes(verificacao)
 ```
 
-Tenta os modelos na ordem dada (do mais barato ao mais caro) até a resposta passar em `verificacao` (uma `fn` pura). A escolha feita é gravada no diário. Na v1, esta é a única política.
+Tenta os modelos na ordem dada (do mais barato ao mais caro) até a resposta passar em `verificacao` (uma função pura, `def`). A escolha feita é gravada no diário. Na v1, esta é a única política.
 
 ### 4.3 Tool
 
 ```
-tool NOME(parametros) -> Tipo {
-  effect          read | write | write once | sandbox
-  max_output      N tokens                // obrigatório para tools usadas por agentes (D16)
-  timeout         duração                 // opcional; há padrão por efeito (D22)
-  retry_on        [Erro, ...]             // erros temporários, repetidos pelo runtime
-  idempotency_key expressão               // para `write`
-  on_uncertain    verify(fn) | pause | accept_loss   // obrigatório para `write once`
-  checks          TipoDeEstado            // estado validável no momento do efeito (D29)
-  repeatable                              // repetir com os mesmos argumentos é legítimo (D5)
-}
+tool NOME(parametros) -> Tipo:
+    effect read | write | write once | sandbox
+    max_output N tokens                  # obrigatório para tools usadas por agentes (D16)
+    timeout duração                      # opcional; há padrão por efeito (D22)
+    retry_on [Erro, ...]                 # erros temporários, repetidos pelo runtime
+    idempotency_key expressão            # para `write`
+    on_uncertain verify(f(...)) | pause | accept_loss   # obrigatório para `write once`
+    checks TipoDeEstado                  # estado validável no momento do efeito (D29)
+    repeatable                           # repetir com os mesmos argumentos é legítimo (D5)
 ```
 
 **Implementação (D34):** a tool roda num servidor **MCP** separado, escrito em qualquer linguagem. A declaração `tool` é o **contrato** que a Calyx verifica e que o runtime aplica (efeito, limites, timeout, retentativa, idempotência, precondições). O nome da tool e o servidor que a implementa são ligados na configuração do projeto *(formato a definir no M2)*.
@@ -103,61 +107,67 @@ tool NOME(parametros) -> Tipo {
 ### 4.4 Tipos
 
 ```
-type Registro = { campo: Tipo, ... }
+type Registro:
+    campo: Tipo
+    outro: List[Text] max 5
 
-type Variante =
-  | Caso1
-  | Caso2 { campo: Tipo }
+type Variante = Caso1 | Caso2(campo: Tipo)
+
+type Apelido = Text
 ```
+
+Variantes sem campos são valores: `Caso1` tem o tipo `Variante`.
 
 ### 4.5 Mensagens (D21)
 
 ```
-message Nome =
-  | Caso1
-  | Caso2 { campo: Tipo }
+message Nome = Caso1 | Caso2(campo: Tipo)
 ```
 
 ### 4.6 Prompt
 
 ```
-prompt NOME(parametros) -> TipoDeSaida {
-  """
-  Texto com {interpolação}.
-  """
-}
+prompt NOME(parametros) -> TipoDeSaida:
+    """
+    Texto com {interpolação}.
+    """
 ```
 
-O compilador verifica que toda `{variável}` existe e que a saída é decodificada para `TipoDeSaida`.
+O compilador verifica que toda `{variável}` existe (inclusive caminhos como `{pedido.cliente}`) e que a saída é decodificada para `TipoDeSaida`.
 
 ### 4.7 Função pura (D27)
 
 ```
-fn NOME(parametros) -> Tipo { expressão }
+def NOME(parametros) -> Tipo:
+    corpo
+    return expressão
 ```
 
-Sem efeitos; o compilador pode recalculá-la à vontade; não vai para o diário.
+Sem efeitos; o compilador pode recalculá-la à vontade; não vai para o diário. Dentro de `def`, `x = ...` cria um valor novo; nada é alterado no lugar.
 
 ### 4.8 Grafo
 
 ```
-graph NOME(parametros) -> Tipo [effect EFEITO_MAXIMO] [decreases PARAMETRO] {
-  corpo
-}
+graph NOME(parametros) -> Tipo:
+    effect EFEITO_MAXIMO                 # opcional
+    decreases PARAMETRO                  # obrigatório se o grafo chama a si mesmo
+    corpo
 ```
 
-- `effect` (opcional) restringe o efeito máximo do grafo; o compilador verifica.
-- `decreases` (obrigatório se o grafo chama a si mesmo) indica o parâmetro que diminui a cada chamada recursiva (D17).
+- `effect` restringe o efeito máximo do grafo; o compilador verifica.
+- `decreases` indica o parâmetro que diminui a cada chamada recursiva (D17).
 
 ### 4.9 Entidade (D15)
 
 ```
-entity NOME key CHAVE: Tipo {
-  state CAMPO: Tipo = valor_inicial
+entity NOME(key CHAVE: Tipo):
+    state CAMPO: Tipo = valor_inicial
 
-  on Mensagem(parametros) -> Tipo { ... }   // leitura: pode rodar em paralelo com outras leituras
-  on Mensagem(parametros) { next CAMPO = ... }  // escrita: exclusiva
-}
+    on Mensagem(parametros) -> Tipo:     # leitura: pode rodar em paralelo com outras leituras
+        return ...
+
+    on Mensagem(parametros):             # escrita: exclusiva
+        next CAMPO = ...
 ```
 
 No máximo **uma** entidade aberta por chave. Se um handler altera `state`, ele é de escrita; caso contrário, de leitura (inferido pelo compilador).
@@ -169,61 +179,66 @@ No máximo **uma** entidade aberta por chave. Se um handler altera `state`, ele 
 ### 5.1 Limites (D3)
 
 ```
-limits { threads: 8, rate: 50/s, budget: 2 USD, memory: 4 GB }
+limits threads 8, rate 50/s, budget 2 USD, memory 4 GB
 ```
 
 Todos opcionais. O programador **limita** a concorrência, nunca a cria.
 
-### 5.2 Nós e valores
+### 5.2 Passos e valores
 
 | Forma | Significado |
 |---|---|
-| `node x = expr` | Um passo do grafo. Se tem efeito, vai para o diário |
-| `node xs[i in lista] = expr` | Fan-out: um nó por item; `xs` é uma lista **na ordem de `lista`** (D7) |
-| `let x = expr` | Valor da camada pura; não vai para o diário (D27) |
+| `x = expr` | Um passo do grafo. Se tem efeito, vai para o diário; se é puro, o compilador sabe que pode recalcular (D27) |
+| `xs = for each i in lista: expr` | Fan-out: um passo por item; `xs` é uma lista **na ordem de `lista`** (D7). O corpo pode vir na linha seguinte, indentado |
 | `return expr` | Resultado do grafo |
 | `respond expr` | Entrega o resultado antes do fim; o resto do grafo continua em segundo plano. Grafo com `respond` não tem `return` de valor; no máximo um `respond` por caminho (D19) |
+
+Cada nome é atribuído uma vez. A ordem das linhas não importa: o compilador ordena os passos pelas dependências e recusa ciclos.
 
 ### 5.3 Chamada a modelo (D28)
 
 | Forma | Resultado |
 |---|---|
-| `modelo(prompt)` | Valor do tipo de saída do prompt |
-| `modelo(prompt, continue: conversa)` | `Reply<T>`, com `.value` e `.conversation` |
-| `modelo(prompt, continue: new)` | Começa uma conversa nova |
+| `modelo(prompt(...))` | Valor do tipo de saída do prompt |
+| `modelo(prompt(...), continue=conversa)` | `Reply[T]`, com `.value` e `.conversation` |
+| `modelo(prompt(...), continue=new)` | Começa uma conversa nova |
 
 ### 5.4 Escolha
 
 ```
-if condição { ... } else { ... }
+x = if condição:
+    expr
+else:
+    expr
 
-match expr {
-  Caso1             => expr
-  Caso2 { campo }   => { ... }
-}
+match expr:
+    case Caso1:
+        ...
+    case Caso2(campo):
+        ...
 ```
 
-`match` precisa cobrir todas as variantes. **Nós de um ramo não escolhido nunca rodam** (D32).
+`match` precisa cobrir todas as variantes. **Passos de um ramo não escolhido nunca rodam** (D32).
 
 ### 5.5 Laço (D5)
 
 ```
-node final = loop x = valor_inicial, max N {
-  ...
-  done valor        // termina com este valor
-  next valor        // próxima volta com este valor
-} else last | fail "motivo"
+final = loop x = valor_inicial, max N:
+    ...
+    done valor        # termina com este valor
+    next valor        # próxima volta com este valor
+    on limit: last | fail "motivo"
 ```
 
-O limite é obrigatório. `else` define o que acontece se o limite for atingido.
+O limite é obrigatório. `on limit` define o que acontece se ele for atingido.
 
 ### 5.6 Rodadas (D18)
 
 ```
-node final = rounds 1..3 carry x: Tipo = valor_inicial {
-  node passo[r in participantes] = ...
-  next novo_valor
-}
+final = rounds N, carry x = valor_inicial:
+    passo = for each r in participantes:
+        ...
+    next novo_valor
 ```
 
 Como o `loop`, mas com **barreira** no fim de cada rodada: só ali os resultados de uma rodada ficam visíveis para a próxima.
@@ -231,14 +246,13 @@ Como o `loop`, mas com **barreira** no fim de cada rodada: só ali os resultados
 ### 5.7 Agente (D5)
 
 ```
-node resultado = agent modelo {
-  tools      [tool1, tool2(reads recurso), tool3(edits recurso)]
-  max_turns  N
-  task       prompt(...)
-  compact    with prompt_de_resumo      // opcional; compactação por tamanho
-  on turn_limit => final_answer | fail "motivo"
-  on stuck      => final_answer | fail "motivo"
-}
+resultado = agent modelo:
+    tools [tool1, tool2(reads recurso), tool3(edits recurso)]
+    max_turns N
+    task prompt(...)
+    compact with prompt_de_resumo        # opcional; compactação por tamanho
+    on turn_limit: final_answer | fail "motivo"
+    on stuck: final_answer | fail "motivo"
 ```
 
 `agent` é atalho: o compilador o expande num ciclo explícito `modelo → tools → observação`. As variantes `turn_limit` e `stuck` (mesma tool, mesmos argumentos, repetidamente) são obrigatórias.
@@ -246,20 +260,20 @@ node resultado = agent modelo {
 ### 5.8 Corrida (D12)
 
 ```
-node vencedor = race {
-  a: expr
-  b: expr
-} first where condição else fail "motivo"
+vencedor = race first where condição:
+    a: expr
+    b: expr
+    on none: fail "motivo"
 ```
 
-Os ramos rodam em paralelo; vence o primeiro que satisfaz a condição; os outros são cancelados entre nós. O vencedor é gravado no diário. Recursos passados aos ramos são consumidos; só os do vencedor voltam.
+Os ramos rodam em paralelo; vence o primeiro que satisfaz a condição (`it` é o resultado de cada ramo); os outros são cancelados entre passos. O vencedor é gravado no diário. Recursos passados aos ramos são consumidos; só os do vencedor voltam.
 
 ### 5.9 Falha como valor (D11)
 
 ```
-node r = try expr          // Ok(valor) | Failed(erro)
-node bons  = lista.ok()
-node falhas = lista.failed()
+r = try expr                 # Ok(valor) | Failed(erro)
+bons = lista.ok()
+falhas = lista.failed()
 ```
 
 O compilador obriga a tratar `Failed` antes de usar o valor.
@@ -270,17 +284,17 @@ O compilador obriga a tratar `Failed` antes de usar o valor.
 notificar after salvar
 ```
 
-Aresta de ordem, sem dados. O compilador avisa quando dois nós com efeito de escrita externa não têm ordem definida. Recursos com dono (seção 7) já geram ordem sozinhos.
+Aresta de ordem, sem dados. O compilador avisa quando dois passos com efeito de escrita externa não têm ordem definida. Recursos com dono (seção 7) já geram ordem sozinhos.
 
 ### 5.11 Precondições e invariantes (D29, D25)
 
 ```
-node pago = refund(pedido, valor) requires {
-  state.status == Delivered
-  state.refunded + valor <= state.total
-}
+pago = refund(pedido, valor):
+    requires state.status == Delivered
+    requires state.refunded + valor <= state.total
 
-node gastos[i in itens] = ... ensures { sum(gastos) <= limite }
+gastos = for each i in itens: ...
+ensures sum(gastos) <= limite
 ```
 
 - `requires`: avaliado **pela tool**, sobre o estado atual, na mesma transação do efeito. Só operadores permitidos (comparação, aritmética, pertencimento). Pode ser escrito pelo programador ou vir de um LLM como saída tipada.
@@ -289,9 +303,10 @@ node gastos[i in itens] = ... ensures { sum(gastos) <= limite }
 ### 5.12 Mensagens (D21)
 
 ```
-node aprovacao = receive Approval timeout 3 days else Denied { reason: "expirou" }
-node fatos     = ask Memoria(usuario).Recall(texto)     // síncrono
-send Memoria(usuario).Remember(novos)                   // assíncrono
+aprovacao = receive Approval, timeout 3 days:
+    on timeout: Denied(reason="expirou")
+fatos = ask Memoria(usuario).Recall(texto)     # síncrono
+send Memoria(usuario).Remember(novos)          # assíncrono
 ```
 
 O compilador recusa ciclos de `ask` (D33).
@@ -299,13 +314,17 @@ O compilador recusa ciclos de `ask` (D33).
 ### 5.13 Grafos gerados por LLM (D4)
 
 ```
-type Plano = Graph<tools: [busca, leitura], models: [worker], max_effect: read, max_nodes: 20, returns: T>
+type Plano = Graph[T]:
+    tools [busca, leitura]
+    models [worker]
+    max_effect read
+    max_nodes 20
 
-node plano     = planner(make_plan(pedido))
-node resultado = try run plano
+plano = planner(make_plan(pedido))
+resultado = try run(plano)
 ```
 
-`run` passa o grafo pelo mesmo verificador do compilador antes de executar. O tipo `Graph<...>` limita o que o LLM pode gerar.
+`run` passa o grafo pelo mesmo verificador do compilador antes de executar. O tipo `Graph[...]` limita o que o LLM pode gerar.
 
 ### 5.14 Estado nomeado (D1) — *sintaxe provisória*
 
@@ -321,15 +340,15 @@ Ramos paralelos veem o valor do momento da bifurcação (snapshot) e suas escrit
 
 | Tipo | Uso |
 |---|---|
-| `Text`, `Nat`, `Int`, `Bool`, `Money`, `Duration`, `Date` | Básicos |
-| `List<T>`, `List<T> max N` | Listas; o limite entra nas análises de custo |
-| `Map<K, V>` | Mapas |
+| `Text`, `Nat`, `Int`, `Float`, `Bool`, `Money`, `Duration`, `Date` | Básicos |
+| `List[T]`, `List[T] max N` | Listas; o limite entra nas análises de custo |
+| `Map[K, V]` | Mapas |
 | Registros e variantes | Seção 4.4 |
 | `Conversation` | Histórico de conversa com um modelo; valor imutável (D3) |
-| `Reply<T>` | Resposta com `.value: T` e `.conversation` |
+| `Reply[T]` | Resposta com `.value: T` e `.conversation` |
 | `Ok(T) \| Failed(Erro)` | Resultado de `try` |
-| `Prompt<T>` | Prompt como valor (ex.: passado a um subgrafo) |
-| `Graph<...>` | Grafo gerado em tempo de execução |
+| `Prompt[T]` | Prompt como valor (ex.: passado a um subgrafo) |
+| `Graph[T]` | Grafo gerado em tempo de execução |
 | `Sandbox`, `Budget` | **Recursos** (seção 7) |
 
 ---
@@ -340,7 +359,7 @@ Ramos paralelos veem o valor do momento da bifurcação (snapshot) e suas escrit
 
 | Efeito | Exemplo | Na recuperação | Retentativa automática |
 |---|---|---|---|
-| `pure` | `fn`, `let` | Recalcula | — |
+| `pure` | `def`, passos sem chamadas | Recalcula | — |
 | `llm` | Chamada a modelo | Reaproveita do diário | Sim, em erros temporários |
 | `read` | Busca, leitura de arquivo, input humano, relógio | Reaproveita do diário | Sim |
 | `sandbox` | Comando na sandbox | Restaura o snapshot da sandbox com o diário | Sim |

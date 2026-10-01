@@ -12,7 +12,7 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D6 | Unidade de recuperação | ✅ **Decidido:** diário de eventos com uma entrada por chamada de LLM ou tool; escrito só no fim do arquivo, em lotes; formato próprio em arquivo local (uma máquina); backend PostgreSQL depois, atrás da mesma interface, para várias máquinas |
 | D7 | Junção de ramos paralelos | ✅ **Decidido:** resultados na ordem da entrada; redutor obrigatório quando ramos escrevem no mesmo estado |
 | D8 | Template / realized graph / trace | ✅ **Decidido:** os três são conceitos da linguagem: o código, o grafo desenrolado de cada execução e o diário |
-| D9 | Superfície da linguagem | ✅ **Decidido:** linguagem textual (superfície familiar, estilo Rust/TypeScript, sem a complexidade do Rust), com visualização do grafo gerada a partir do código. Ver [sintaxe](09-sintaxe.md) |
+| D9 | Superfície da linguagem | ✅ **Decidido:** linguagem textual que **parece Python e se comporta como linguagem funcional** (blocos por indentação, `#`, `x = ...` para cada passo; valores imutáveis e ordem dada pelas dependências), com visualização do grafo gerada a partir do código. Substitui a primeira direção, com chaves no estilo Rust/TypeScript. Ver [sintaxe](09-sintaxe.md) |
 | D10 | Plataforma | ✅ **Direção decidida:** o compilador emite C (um arquivo por programa, com o runtime); runtime em C com o modelo de atores da BEAM reimplementado; o mesmo binário roda de uma thread a várias máquinas; `calyx check` em até 1 segundo. **Compilador em Rust**, com o verificador compilado também como biblioteca estática ligada ao runtime em C (um verificador só). Ver [arquitetura do runtime](12-arquitetura-runtime.md) |
 | D11 | Falha parcial em fan-out | ✅ **Decidido:** falhas são valores (`Ok` / `Failed`); o compilador obriga a tratar; tools declaram erros não retentáveis |
 | D12 | Corrida e cancelamento | ✅ **Decidido:** `race` explícito; vencedor gravado no diário; cancelamento cooperativo entre nós (`llm`/`read` abandonados, `write` termina antes de valer). Compensação (saga) fica para uma versão futura |
@@ -204,6 +204,8 @@ A tensão expressividade × verificabilidade do survey de ACG.
 | Visual | Bom para inspeção; ruim como única forma de autoria |
 
 **Recomendação:** linguagem **textual** própria, com **visualização do grafo derivada** do código (o editor sincronizado do AgentSPEX foi bem avaliado).
+
+**Decisão final:** textual, com sintaxe que **parece Python e se comporta como linguagem funcional**. A primeira versão usava chaves (estilo Rust/TypeScript); foi trocada para ficar simples para qualquer pessoa usar. Detalhes e motivos em [09-sintaxe.md](09-sintaxe.md#revisão-parecer-python-se-comportar-como-linguagem-funcional).
 
 ## D10. Plataforma: C# ou C
 

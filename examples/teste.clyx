@@ -1,137 +1,130 @@
-// teste.clyx
-// Exemplo ilustrativo da Calyx. É uma PROPOSTA de sintaxe para discussão, não a definitiva.
-//
-// O que o programa faz:
-//   1. divide um tema em perguntas;
-//   2. pesquisa cada pergunta com um agente (todas em paralelo);
-//   3. escreve um relatório e o revisa até 3 vezes;
-//   4. salva o relatório e avisa o responsável por e-mail.
-//
-// Como rodar (modo de desenvolvimento local):
-//   calyx run teste.clyx --topic "energia solar no Brasil" --owner "ana@exemplo.com"
+# teste.clyx
+# Exemplo ilustrativo da Calyx, com construções dos próximos marcos (agent, loop, match).
+# Hoje o compilador só verifica o subconjunto do M1; veja examples/research.clyx.
+#
+# O que o programa faz:
+#   1. divide um tema em perguntas;
+#   2. pesquisa cada pergunta com um agente (todas em paralelo);
+#   3. escreve um relatório e o revisa até 3 vezes;
+#   4. salva o relatório e avisa o responsável por e-mail.
+#
+# Como rodar (modo de desenvolvimento local):
+#   calyx run teste.clyx --topic "energia solar no Brasil" --owner "ana@exemplo.com"
 
 
-// ─── Modelo ───────────────────────────────────────────────────────────────────
+# ─── Modelo ──────────────────────────────────────────────────────────────────
 
-model claude = llm("claude-sonnet-5-5", max_output: 2_000 tokens)
-
-
-// ─── Tools ────────────────────────────────────────────────────────────────────
-// Cada tool declara o próprio efeito (D2) e o tamanho máximo da saída (D16).
-// O efeito dos nós é inferido pelo compilador a partir das tools que eles usam.
-
-tool web_search(query: Text) -> Text {
-  effect     read
-  max_output 4_000 tokens
-  retry_on   [Timeout, RateLimit]        // erros temporários: o runtime repete sozinho
-}
-
-tool save_file(path: Text, content: Text) -> Unit {
-  effect          write                  // idempotente: pode repetir com segurança
-  idempotency_key path
-}
-
-tool send_email(to: Email, subject: Text, body: Text) -> Unit {
-  effect       write once                // não idempotente: nunca repete sozinho
-  on_uncertain verify(email_was_sent(to, subject))   // política obrigatória se cair no meio
-}
+model claude = "claude-sonnet-5-5":
+    max_output 2000 tokens
 
 
-// ─── Tipos ────────────────────────────────────────────────────────────────────
+# ─── Tools ───────────────────────────────────────────────────────────────────
+# Cada tool declara o próprio efeito (D2) e o tamanho máximo da saída (D16).
+# O efeito dos passos do grafo é inferido a partir das tools que eles usam.
 
-type Plan = { questions: List<Text> max 5 }
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 4000 tokens
+    retry_on [Timeout, RateLimit]        # erros temporários: o runtime repete sozinho
 
-type Review =
-  | Approved
-  | Rejected { feedback: Text }          // o compilador obriga a tratar as duas variantes
+tool save_file(path: Text, content: Text) -> Unit:
+    effect write                         # idempotente: pode repetir com segurança
+    idempotency_key path
 
-
-// ─── Prompts ──────────────────────────────────────────────────────────────────
-// Separados da lógica: o grafo só referencia. Cada prompt tem tipo de entrada e de saída,
-// e o compilador verifica que toda {variável} existe.
-
-prompt split_topic(topic: Text) -> Plan {
-  """
-  Divida o tema abaixo em até 5 perguntas de pesquisa independentes.
-
-  Tema: {topic}
-  """
-}
-
-prompt investigate(question: Text) -> Text {
-  """
-  Pesquise a pergunta abaixo e responda citando as fontes.
-
-  Pergunta: {question}
-  """
-}
-
-prompt write_report(topic: Text, findings: List<Text>) -> Text {
-  """
-  Escreva um relatório sobre "{topic}" usando apenas as descobertas abaixo.
-
-  {findings}
-  """
-}
-
-prompt revise(text: Text) -> Review {
-  """
-  Revise criticamente o relatório abaixo.
-  Aponte erros factuais e trechos sem fonte.
-
-  {text}
-  """
-}
-
-prompt rewrite(text: Text, feedback: Text) -> Text {
-  """
-  Reescreva o relatório corrigindo os pontos indicados.
-
-  Pontos: {feedback}
-
-  Relatório:
-  {text}
-  """
-}
+tool send_email(to: Email, subject: Text, body: Text) -> Unit:
+    effect write once                    # não idempotente: nunca repete sozinho
+    on_uncertain verify(email_was_sent(to, subject))   # obrigatório se cair no meio
 
 
-// ─── Grafo ────────────────────────────────────────────────────────────────────
+# ─── Tipos ───────────────────────────────────────────────────────────────────
 
-graph research(topic: Text, owner: Email) -> Text {
+type Plan:
+    questions: List[Text] max 5
 
-  // Limites: o programador não cria threads, só limita (D3).
-  limits { threads: 8, budget: 2 USD }
+# O compilador obriga a tratar as duas variantes.
+type Review = Approved | Rejected(feedback: Text)
 
-  node plan = claude(split_topic(topic))
 
-  // Fan-out: um agente por pergunta. Não há "parallel": o runtime deriva que os
-  // agentes são independentes e roda até 8 ao mesmo tempo.
-  // "agent" é atalho para o ciclo modelo → tools → observação (ReAct).
-  node findings[q in plan.questions] = agent claude {
-    tools      [web_search]
-    max_turns  10
-    task       investigate(q)
-    on turn_limit => final_answer        // limite de voltas: uma última volta pedindo a resposta
-    on stuck      => final_answer        // mesma tool, mesmos argumentos, várias vezes
-  }
+# ─── Prompts ─────────────────────────────────────────────────────────────────
+# Separados da lógica: o grafo só referencia. Cada prompt tem tipo de entrada e
+# de saída, e o compilador verifica que toda {variável} existe.
 
-  // findings chega aqui como lista, na ordem das perguntas (não na ordem de término).
-  node draft = claude(write_report(topic, findings))
+prompt split_topic(topic: Text) -> Plan:
+    """
+    Divida o tema abaixo em até 5 perguntas de pesquisa independentes.
 
-  // Ciclo com valor carregado (text) e limite obrigatório (D5).
-  node final = loop text = draft, max 3 {
-    match claude(revise(text)) {
-      Approved              => done text
-      Rejected { feedback } => next claude(rewrite(text, feedback))
-    }
-  } else last                            // limite atingido: fica com a última versão
+    Tema: {topic}
+    """
 
-  // Efeitos externos.
-  node save   = save_file("relatorios/{topic}.md", final)
-  node notify = send_email(owner, "Relatório pronto: {topic}", final)
+prompt investigate(question: Text) -> Text:
+    """
+    Pesquise a pergunta abaixo e responda citando as fontes.
 
-  // Aresta de ordem: não troca dados, só garante a sequência (D2).
-  notify after save
+    Pergunta: {question}
+    """
 
-  return final
-}
+prompt write_report(topic: Text, findings: List[Text]) -> Text:
+    """
+    Escreva um relatório sobre "{topic}" usando apenas as descobertas abaixo.
+
+    {findings}
+    """
+
+prompt revise(text: Text) -> Review:
+    """
+    Revise criticamente o relatório abaixo.
+    Aponte erros factuais e trechos sem fonte.
+
+    {text}
+    """
+
+prompt rewrite(text: Text, feedback: Text) -> Text:
+    """
+    Reescreva o relatório corrigindo os pontos indicados.
+
+    Pontos: {feedback}
+
+    Relatório:
+    {text}
+    """
+
+
+# ─── Grafo ───────────────────────────────────────────────────────────────────
+
+graph research(topic: Text, owner: Email) -> Text:
+    # O programador não cria threads, só limita (D3).
+    limits threads 8, budget 2 USD
+
+    plan = claude(split_topic(topic))
+
+    # Um agente por pergunta. Não há "parallel": o runtime vê que os agentes são
+    # independentes e roda até 8 ao mesmo tempo.
+    # "agent" é o ciclo modelo → tools → observação (ReAct).
+    findings = for each q in plan.questions:
+        agent claude:
+            tools [web_search]
+            max_turns 10
+            task investigate(q)
+            on turn_limit: final_answer  # limite de voltas: uma última pedindo a resposta
+            on stuck: final_answer       # mesma tool, mesmos argumentos, várias vezes
+
+    # findings chega como lista, na ordem das perguntas (não na ordem de término).
+    draft = claude(write_report(topic, findings))
+
+    # Ciclo com valor carregado (text) e limite obrigatório (D5).
+    final = loop text = draft, max 3:
+        match claude(revise(text)):
+            case Approved:
+                done text
+            case Rejected(feedback):
+                next claude(rewrite(text, feedback))
+        on limit: last                   # limite atingido: fica com a última versão
+
+    # Efeitos externos.
+    save = save_file("relatorios/{topic}.md", final)
+    notify = send_email(owner, "Relatório pronto: {topic}", final)
+
+    # Aresta de ordem: não troca dados, só garante a sequência (D2).
+    notify after save
+
+    return final

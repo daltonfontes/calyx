@@ -1,71 +1,77 @@
-// W5. Extração em lote (1000 documentos)
-// Força: escala, limites, falha parcial como valor (D11), retentativa derivada do efeito.
+# W5. Extração em lote (1000 documentos)
+# Força: escala, limites, falha parcial como valor (D11), retentativa derivada do efeito.
 
-model claude = llm("claude-haiku-4-5", max_output: 800 tokens)
+model claude = "claude-haiku-4-5":
+    max_output 800 tokens
 
-tool load_documents(folder: Text) -> List<Document> {
-  effect read
-}
+tool load_documents(folder: Text) -> List[Document]:
+    effect read
 
-tool write_sheet(path: Text, rows: List<Contract>) -> Unit {
-  effect          write
-  idempotency_key path
-}
+tool write_sheet(path: Text, rows: List[Contract]) -> Unit:
+    effect write
+    idempotency_key path
 
-type Contract = { parties: List<Text>, value: Money, signed_at: Date }
+type Contract:
+    parties: List[Text]
+    value: Money
+    signed_at: Date
 
-prompt extract(doc: Document) -> Contract {
-  """
-  Extraia partes, valor e data de assinatura do contrato abaixo.
+type Summary:
+    extracted: Nat
+    failed: List[Failure]
 
-  {doc.text}
-  """
-}
+prompt extract(doc: Document) -> Contract:
+    """
+    Extraia partes, valor e data de assinatura do contrato abaixo.
 
-prompt correct(doc: Document, attempt: Contract, problems: List<Text>) -> Contract {
-  """
-  A extração abaixo tem problemas: {problems}
-  Corrija usando o documento original.
+    {doc.text}
+    """
 
-  Extração: {attempt}
-  Documento: {doc.text}
-  """
-}
+prompt correct(doc: Document, attempt: Contract, problems: List[Text]) -> Contract:
+    """
+    A extração abaixo tem problemas: {problems}
+    Corrija usando o documento original.
 
-// Validação pura: sem efeito, o compilador sabe que pode recalcular à vontade.
-fn check(c: Contract) -> List<Text> {
-  [
-    if c.parties.length < 2 { "menos de duas partes" },
-    if c.value <= 0 BRL     { "valor inválido" },
-  ].compact()
-}
+    Extração: {attempt}
+    Documento: {doc.text}
+    """
 
-graph batch(folder: Text) -> Summary {
-  // Concorrência controlada só pelos limites. Retentativa de erros temporários
-  // (limite de requisições, erro 500) é automática porque os nós são llm/read.
-  limits { threads: 20, rate: 50/s, budget: 30 USD }
+# Função pura: sem efeito, o compilador sabe que pode recalcular à vontade.
+# Cada "problems = ..." cria um valor novo; nada é alterado no lugar.
+def check(c: Contract) -> List[Text]:
+    problems = []
+    if len(c.parties) < 2:
+        problems = problems + ["menos de duas partes"]
+    if c.value <= 0 BRL:
+        problems = problems + ["valor inválido"]
+    return problems
 
-  node docs = load_documents(folder)
+graph batch(folder: Text) -> Summary:
+    # Concorrência controlada só pelos limites. Retentativa de erros temporários
+    # (limite de requisições, erro 500) é automática porque os passos são llm/read.
+    limits threads 20, rate 50/s, budget 30 USD
 
-  // "try": o resultado de cada item é um valor Ok(...) ou Failed(...) (D11).
-  // A falha de um documento não derruba os outros 999.
-  node contracts[d in docs] = try {
-    loop c = claude(extract(d)), max 2 {
-      match check(c) {
-        []       => done c
-        problems => next claude(correct(d, c, problems))
-      }
-    } else fail "continua inválido após 2 correções"
-  }
+    docs = load_documents(folder)
 
-  // O compilador obriga a tratar as duas variantes antes de usar a lista.
-  node good   = contracts.ok()
-  node failed = contracts.failed()
+    # "try": o resultado de cada item é um valor Ok(...) ou Failed(...) (D11).
+    # A falha de um documento não derruba os outros 999.
+    contracts = for each d in docs:
+        try:
+            loop c = claude(extract(d)), max 2:
+                match check(c):
+                    case []:
+                        done c
+                    case problems:
+                        next claude(correct(d, c, problems))
+                on limit: fail "continua inválido após 2 correções"
 
-  node sheet = write_sheet("{folder}/contratos.xlsx", good)
+    # O compilador obriga a separar as duas variantes antes de usar a lista.
+    good = contracts.ok()
+    failed = contracts.failed()
 
-  return { extracted: good.length, failed: failed }
-}
+    sheet = write_sheet("{folder}/contratos.xlsx", good)
 
-// Se o orçamento acabar no meio, a execução pausa e pode ser retomada com mais orçamento;
-// os documentos já extraídos vêm do diário.
+    return Summary(extracted=len(good), failed=failed)
+
+# Se o orçamento acabar no meio, a execução pausa e pode ser retomada com mais
+# orçamento; os documentos já extraídos vêm do diário.

@@ -21,7 +21,7 @@ static int failures = 0;
     } while (0)
 
 static void test_valid_program(void) {
-    const char *src = "graph g() -> Text {\n  return \"oi\"\n}\n";
+    const char *src = "graph g() -> Text:\n    return \"oi\"\n";
     char *json = NULL;
     int r = calyx_runtime_verify(src, strlen(src), &json);
     EXPECT(r == 1, "valid program should be accepted");

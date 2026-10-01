@@ -1,13 +1,10 @@
-// The smallest valid program: no diagnostics expected.
-model claude = llm("claude-sonnet-5-5", max_output: 2_000 tokens)
+# The smallest valid program: no diagnostics expected.
+model claude = "claude-sonnet-5-5"
 
-prompt greet(name: Text) -> Text {
-  """
-  Diga olá para {name}.
-  """
-}
+prompt greet(name: Text) -> Text:
+    """
+    Diga olá para {name}.
+    """
 
-graph hello(name: Text) -> Text {
-  node reply = claude(greet(name))
-  return reply
-}
+graph hello(name: Text) -> Text:
+    return claude(greet(name))

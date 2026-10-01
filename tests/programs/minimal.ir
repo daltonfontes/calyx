@@ -1,3 +1,3 @@
 graph hello(name: Text) -> Text [llm]
-  %0 reply: Text = model claude(greet) [llm]
+  %0 return: Text = model claude(greet) [llm]
   return %0

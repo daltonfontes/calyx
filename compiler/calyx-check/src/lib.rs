@@ -87,17 +87,19 @@ mod tests {
     }
 
     const PRELUDE: &str = r#"
-model claude = llm("m", max_output: 1_000 tokens)
-tool search(q: Text) -> Text {
-  effect read
-}
-type Plan = { questions: List<Text> max 5 }
-prompt split(topic: Text) -> Plan {
-  """{topic}"""
-}
-prompt summarize(items: List<Text>) -> Text {
-  """{items}"""
-}
+model claude = "m"
+
+tool search(q: Text) -> Text:
+    effect read
+
+type Plan:
+    questions: List[Text] max 5
+
+prompt split(topic: Text) -> Plan:
+    """{topic}"""
+
+prompt summarize(items: List[Text]) -> Text:
+    """{items}"""
 "#;
 
     fn with_prelude(body: &str) -> String {
@@ -109,22 +111,22 @@ prompt summarize(items: List<Text>) -> Text {
         let r = check(
             "ok.clyx",
             &with_prelude(
-                "graph g(topic: Text) -> Text {\n  node plan = claude(split(topic))\n  node found[q in plan.questions] = search(q)\n  node out = claude(summarize(found))\n  return out\n}\n",
+                "graph g(topic: Text) -> Text:\n    plan = claude(split(topic))\n    found = for each q in plan.questions: search(q)\n    out = claude(summarize(found))\n    return out\n",
             ),
         );
         assert!(r.diagnostics.is_empty(), "{}", r.render());
         let g = &r.ir.graphs[0];
         assert_eq!(g.effect, Some(calyx_ir::Effect::Read));
         assert_eq!(g.nodes.len(), 3);
-        assert_eq!(g.nodes[1].ty, "List<Text> max 5");
+        assert_eq!(g.nodes[1].ty, "List[Text] max 5");
     }
 
     #[test]
-    fn nodes_may_be_written_in_any_order() {
+    fn steps_may_be_written_in_any_order() {
         let r = check(
             "t.clyx",
             &with_prelude(
-                "graph g(topic: Text) -> Text {\n  node out = claude(summarize(plan.questions))\n  node plan = claude(split(topic))\n  return out\n}\n",
+                "graph g(topic: Text) -> Text:\n    out = claude(summarize(plan.questions))\n    plan = claude(split(topic))\n    return out\n",
             ),
         );
         assert!(r.diagnostics.is_empty(), "{}", r.render());
@@ -132,28 +134,40 @@ prompt summarize(items: List<Text>) -> Text {
     }
 
     #[test]
+    fn pure_steps_are_inferred() {
+        let r = check(
+            "t.clyx",
+            &with_prelude(
+                "graph g(topic: Text) -> Text:\n    label = \"tema: {topic}\"\n    return label\n",
+            ),
+        );
+        assert!(r.diagnostics.is_empty(), "{}", r.render());
+        assert_eq!(r.ir.graphs[0].effect, Some(calyx_ir::Effect::Pure));
+    }
+
+    #[test]
     fn reports_semantic_errors() {
         assert_eq!(
             codes(&with_prelude(
-                "graph g() -> Text {\n  node a = search(1)\n  return a\n}\n"
+                "graph g() -> Text:\n    a = search(1)\n    return a\n"
             )),
             vec!["E0608"]
         );
         assert_eq!(
             codes(&with_prelude(
-                "graph g(t: Text) -> Text {\n  node a = split(t)\n  return a\n}\n"
+                "graph g(t: Text) -> Text:\n    a = split(t)\n    return a\n"
             )),
             vec!["E0606"]
         );
         assert_eq!(
             codes(&with_prelude(
-                "graph g() -> Nat {\n  node a = search(\"x\")\n  return a\n}\n"
+                "graph g() -> Nat:\n    a = search(\"x\")\n    return a\n"
             )),
             vec!["E0610"]
         );
         assert_eq!(
             codes(&with_prelude(
-                "graph g() -> Text {\n  node a = b\n  node b = a\n  return a\n}\n"
+                "graph g() -> Text:\n    a = b\n    b = a\n    return a\n"
             )),
             vec!["E0506"]
         );
@@ -163,7 +177,7 @@ prompt summarize(items: List<Text>) -> Text {
     fn effect_limit_is_enforced() {
         assert_eq!(
             codes(&with_prelude(
-                "graph g(t: Text) -> Text effect llm {\n  node a = search(t)\n  return a\n}\n"
+                "graph g(t: Text) -> Text:\n    effect llm\n    a = search(t)\n    return a\n"
             )),
             vec!["E0701"]
         );
@@ -172,7 +186,7 @@ prompt summarize(items: List<Text>) -> Text {
     #[test]
     fn write_once_needs_a_policy() {
         assert_eq!(
-            codes("tool send(to: Text) -> Unit {\n  effect write once\n}\n"),
+            codes("tool send(to: Text) -> Unit:\n    effect write once\n"),
             vec!["E0304"]
         );
     }
@@ -181,11 +195,9 @@ prompt summarize(items: List<Text>) -> Text {
     fn unused_llm_result_is_a_warning() {
         let r = check(
             "t.clyx",
-            &with_prelude(
-                "graph g(t: Text) -> Text {\n  node a = claude(split(t))\n  return t\n}\n",
-            ),
+            &with_prelude("graph g(t: Text) -> Text:\n    a = claude(split(t))\n    return t\n"),
         );
-        assert_eq!(r.diagnostics.len(), 1);
+        assert_eq!(r.diagnostics.len(), 1, "{}", r.render());
         assert_eq!(r.diagnostics[0].code, "W0801");
         assert!(!r.has_errors());
     }

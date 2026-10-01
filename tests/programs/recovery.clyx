@@ -1,0 +1,28 @@
+# Error recovery: each construct from a later milestone is reported once,
+# and the rest of the graph is still checked without cascades.
+model claude = "m"
+
+type Role = Optimist | Skeptic
+
+prompt ask_it(q: Text) -> Text:
+    """{q}"""
+
+prompt opening(role: Role) -> Text:
+    """Você é {role}."""
+
+graph g(q: Text) -> Text:
+    roles = [Optimist, Skeptic]
+    intros = for each r in roles: claude(opening(r))
+    found = for each x in intros:
+        agent claude:
+            tools []
+            task ask_it(x)
+    a, b = split(q)
+    c = claude(ask_it(found))
+    return c
+
+type Plan = Graph[Text]:
+    max_nodes 20
+
+graph h(q: Text) -> Text:
+    return unknown_name

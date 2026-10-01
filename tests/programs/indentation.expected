@@ -1,0 +1,9 @@
+error[E0007]: indentation does not match any outer block
+- expected : 4 spaces, like an enclosing line
+- observed : 2 spaces
+Location: indentation.clyx:9:1
+
+error[E0006]: tab used for indentation
+- expected : spaces
+- observed : a tab
+Location: indentation.clyx:13:1

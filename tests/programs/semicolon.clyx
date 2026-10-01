@@ -1,10 +1,8 @@
-model claude = llm("m", max_output: 1_000 tokens)
+model claude = "m"
 
-prompt split_topic(topic: Text) -> Text {
-  """{topic}"""
-}
+prompt split_topic(topic: Text) -> Text:
+    """{topic}"""
 
-graph g(topic: Text) -> Text {
-  node plan = claude(split_topic(topic));
-  return plan
-}
+graph g(topic: Text) -> Text:
+    plan = claude(split_topic(topic));
+    return plan

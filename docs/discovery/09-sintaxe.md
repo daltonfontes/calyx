@@ -1,15 +1,38 @@
 # Sintaxe: primeiro teste com programas reais
 
-**Status:** direção aprovada (superfície familiar, estilo Rust/TypeScript/Swift, sem a complexidade do Rust: sem `&`, *lifetimes*, `;`, `impl`, `async`). Detalhes em evolução.
+**Status:** ✅ revisada. A primeira versão usava chaves, no estilo Rust/TypeScript. A direção atual é **parecer Python e se comportar como linguagem funcional** (seção abaixo). As seções seguintes registram o teste original; os exemplos já foram reescritos na sintaxe nova.
+
+## Revisão: parecer Python, se comportar como linguagem funcional
+
+O objetivo passou a ser uma sintaxe **simples para qualquer pessoa usar**, não só para quem já programa em Rust. Python é a linguagem que mais gente lê e a que os LLMs mais escrevem; e o que a Calyx precisa garantir (imutabilidade, efeitos, dependências) está na **semântica**, não na pontuação.
+
+| Antes (chaves) | Agora | Por quê |
+|---|---|---|
+| `// comentário` | `# comentário` | Igual a Python |
+| `{ ... }` e `;` | `:` e bloco indentado com espaços | Menos símbolos; tab é erro (E0006) para evitar ambiguidade |
+| `node plan = ...` | `plan = ...` | Toda atribuição já é um passo do grafo; o compilador sabe se é puro |
+| `let x = ...` | `x = ...` | A camada pura (D27) é inferida, sem palavra extra |
+| `node xs[q in lista] = ...` | `xs = for each q in lista: ...` | Lê como frase |
+| `fn f(...) -> T { ... }` | `def f(...) -> T:` | Igual a Python |
+| `List<Text>`, `Map<K, V>` | `List[Text]`, `Map[K, V]` | Igual às anotações de tipo de Python |
+| `type P = { a: Text }` | `type P:` com um campo por linha | Parece uma `dataclass` |
+| `\| A \| B { x: T }` | `A \| B(x: T)` | Construtor com parênteses |
+| `limits { threads: 8 }` | `limits threads 8, budget 2 USD` | Uma linha |
+| `continue: c` | `continue=c` | Argumento nomeado de Python |
+| `match x { A => ... }` | `match x:` / `case A:` | O `match` de Python 3.10 |
+
+O que **não** muda é o comportamento funcional: cada nome é atribuído uma vez, valores são imutáveis, a ordem das linhas não define a ordem de execução (o compilador ordena pelas dependências), e efeitos têm tipo.
+
+**Risco conhecido:** indentação significativa é mais frágil para prompts longos e para código editado por LLM (motivo original da escolha por chaves). Mitigações: prompts ficam em declarações próprias (o texto `"""..."""` não conta para a indentação), quebras de linha dentro de `( )` e `[ ]` são livres, e erros de indentação têm códigos próprios (E0006, E0007) com recuperação que não gera erros em cascata.
 
 ## Escolhas de base
 
 | Escolha | Decisão | Motivo |
 |---|---|---|
 | Palavras-chave | Inglês | LLMs vão escrever muito código Calyx (grafos gerados, assistentes de código) e escrevem melhor com palavras-chave em inglês. Nomes, prompts e comentários podem estar em qualquer língua |
-| Blocos | Chaves `{ }`, com formatador oficial (`calyx fmt`) | Prompts longos de várias linhas e código editado por LLM tornam a indentação significativa frágil |
+| Blocos | ~~Chaves `{ }`~~ → indentação com `:` (revisão acima) | Na primeira versão, a fragilidade da indentação pesou mais; na revisão, pesou a simplicidade para quem lê |
 | Extensão | `.clyx` | Curta e lembra o nome |
-| Prompts | Declarações próprias (`prompt nome(...) -> Tipo { """...""" }`), separadas do grafo | Lição do AgentSPEX: separar prompts da lógica foi o ponto mais elogiado. O grafo fica curto e mostra só a estrutura; o compilador verifica as variáveis e o tipo da saída |
+| Prompts | Declarações próprias (`prompt nome(...) -> Tipo:` seguido do texto), separadas do grafo | Lição do AgentSPEX: separar prompts da lógica foi o ponto mais elogiado. O grafo fica curto e mostra só a estrutura; o compilador verifica as variáveis e o tipo da saída |
 
 ## Os programas
 
@@ -20,9 +43,9 @@
 | [`w2_agente_de_codigo.clyx`](../../examples/workflows/w2_agente_de_codigo.clyx) | Sandbox como recurso afim, `effect sandbox`, compactação |
 | [`w3_reembolso.clyx`](../../examples/workflows/w3_reembolso.clyx) | `receive ... timeout`, mensagens, `write once` com `pause` |
 | [`w4_debate.clyx`](../../examples/workflows/w4_debate.clyx) | `rounds` com barreira, uma `Conversation` por agente |
-| [`w5_lote.clyx`](../../examples/workflows/w5_lote.clyx) | `try` e falha como valor, funções puras (`fn`), limites de taxa |
+| [`w5_lote.clyx`](../../examples/workflows/w5_lote.clyx) | `try` e falha como valor, funções puras (`def`), limites de taxa |
 | [`w6_memoria.clyx`](../../examples/workflows/w6_memoria.clyx) | `entity` com chave, `ask` / `send`, `respond` antecipado |
-| [`w7_planejar_executar.clyx`](../../examples/workflows/w7_planejar_executar.clyx) | Plano gerado como `Graph<...>` tipado, `run` com verificação |
+| [`w7_planejar_executar.clyx`](../../examples/workflows/w7_planejar_executar.clyx) | Plano gerado como `Graph[...]` tipado, `run` com verificação |
 | [`w8_corrida.clyx`](../../examples/workflows/w8_corrida.clyx) | `race ... first where`, `fork` de sandbox |
 
 ## Resultado

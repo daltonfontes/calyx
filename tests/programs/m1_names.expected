@@ -6,24 +6,24 @@ Location: m1_names.clyx:3:7
 error[E0401]: unknown name in text
 - expected : a parameter or a value in scope
 - observed : `nome`
-Location: m1_names.clyx:6:10
+Location: m1_names.clyx:6:12
 
 error[E0603]: unknown field
 - expected : a field of `Text`
 - observed : `first`
-Location: m1_names.clyx:6:18
+Location: m1_names.clyx:6:20
 
 error[E0501]: name already used
 - expected : a name not used by a parameter, another node or a declaration
 - observed : `name`
-Location: m1_names.clyx:11:8
+Location: m1_names.clyx:10:5
 
 error[E0602]: unknown name
 - expected : a parameter, node or value in scope
 - observed : `desconhecido`
-Location: m1_names.clyx:12:12
+Location: m1_names.clyx:11:9
 
 error[E0601]: declaration used as a value
 - expected : a call, e.g. `claude(...)`
 - observed : `claude`
-Location: m1_names.clyx:13:12
+Location: m1_names.clyx:12:9

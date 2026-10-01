@@ -1,9 +1,13 @@
 //! Lexer for Calyx source text.
 //!
+//! Calyx uses indentation for blocks, like Python. The lexer turns leading
+//! whitespace into `Indent` / `Dedent` tokens and line breaks into `Newline`.
+//! Inside `(...)`, `[...]` and `{...}` line breaks are ignored, so long calls
+//! can span lines. The content of `"""..."""` text is never indentation.
+//!
 //! The lexer never stops at the first error: it reports a diagnostic, skips
-//! the offending input and keeps going, so one `calyx check` run shows every
-//! lexical problem in the file. Keywords are not distinguished here; the
-//! parser recognizes them from identifiers.
+//! the offending input and keeps going. Keywords are not distinguished here;
+//! the parser recognizes them from identifiers.
 
 use crate::{Diagnostic, Span};
 
@@ -16,8 +20,12 @@ pub enum TokenKind {
     Str,
     /// `"""..."""`, may span lines, may contain `{interpolation}`.
     LongStr,
-    /// One or more line breaks. Statements are separated by newlines.
+    /// End of a logical line.
     Newline,
+    /// The next line is indented more: a block starts.
+    Indent,
+    /// The indentation went back: a block ends.
+    Dedent,
 
     LBrace,
     RBrace,
@@ -65,6 +73,9 @@ pub fn lex(text: &str) -> (Vec<Token>, Vec<Diagnostic>) {
         pos: 0,
         tokens: Vec::new(),
         diags: Vec::new(),
+        indents: vec![0],
+        depth: 0,
+        at_line_start: true,
     };
     lx.run();
     (lx.tokens, lx.diags)
@@ -75,6 +86,11 @@ struct Lexer<'a> {
     pos: usize,
     tokens: Vec<Token>,
     diags: Vec<Diagnostic>,
+    /// Stack of indentation widths of the open blocks.
+    indents: Vec<usize>,
+    /// Bracket nesting: line breaks inside brackets are ignored.
+    depth: i32,
+    at_line_start: bool,
 }
 
 impl Lexer<'_> {
@@ -103,8 +119,26 @@ impl Lexer<'_> {
         });
     }
 
+    fn push_at(&mut self, kind: TokenKind, at: usize) {
+        self.tokens.push(Token {
+            kind,
+            span: Span::new(at, at),
+        });
+    }
+
+    fn last_kind(&self) -> Option<TokenKind> {
+        self.tokens.last().map(|t| t.kind)
+    }
+
     fn run(&mut self) {
-        while let Some(c) = self.peek() {
+        loop {
+            if self.at_line_start && self.depth <= 0 {
+                self.at_line_start = false;
+                if self.indentation() {
+                    continue;
+                }
+            }
+            let Some(c) = self.peek() else { break };
             let start = self.pos;
             match c {
                 ' ' | '\t' | '\r' => {
@@ -112,12 +146,12 @@ impl Lexer<'_> {
                 }
                 '\n' => {
                     self.bump();
-                    // Collapse consecutive line breaks into one token.
-                    if self.tokens.last().map(|t| t.kind) != Some(TokenKind::Newline) {
-                        self.push(TokenKind::Newline, start);
+                    if self.depth <= 0 {
+                        self.newline(start);
+                        self.at_line_start = true;
                     }
                 }
-                '/' if self.starts_with("//") => {
+                '#' => {
                     while self.peek().is_some_and(|c| c != '\n') {
                         self.bump();
                     }
@@ -146,8 +180,87 @@ impl Lexer<'_> {
                 _ => self.punct(start, c),
             }
         }
+        // Close the last line and every open block.
         let end = self.pos;
-        self.push(TokenKind::Eof, end);
+        self.newline(end);
+        while self.indents.len() > 1 {
+            self.indents.pop();
+            self.push_at(TokenKind::Dedent, end);
+        }
+        self.push_at(TokenKind::Eof, end);
+    }
+
+    /// Emits one `Newline` for the end of a non-empty logical line.
+    fn newline(&mut self, at: usize) {
+        if !matches!(
+            self.last_kind(),
+            None | Some(TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent)
+        ) {
+            self.tokens.push(Token {
+                kind: TokenKind::Newline,
+                span: Span::new(at, at + usize::from(at < self.text.len())),
+            });
+        }
+    }
+
+    /// Measures the indentation of a new line and emits `Indent` / `Dedent`.
+    /// Returns true when the line is blank or a comment (nothing emitted).
+    fn indentation(&mut self) -> bool {
+        let start = self.pos;
+        let mut width = 0;
+        let mut tab = None;
+        while let Some(c) = self.peek() {
+            match c {
+                ' ' => width += 1,
+                '\t' => {
+                    tab.get_or_insert(self.pos);
+                    width += 4;
+                }
+                '\r' => {}
+                _ => break,
+            }
+            self.bump();
+        }
+        match self.peek() {
+            // Blank and comment-only lines do not affect indentation.
+            None | Some('\n' | '#') => return false,
+            _ => {}
+        }
+        if let Some(at) = tab {
+            self.diags.push(
+                Diagnostic::error("E0006", "tab used for indentation", Span::new(at, at + 1))
+                    .expected("spaces")
+                    .observed("a tab"),
+            );
+        }
+        let current = *self.indents.last().unwrap_or(&0);
+        if width > current {
+            self.indents.push(width);
+            self.push(TokenKind::Indent, start);
+        } else if width < current {
+            // Close blocks only while the line still fits an outer one. A line
+            // that falls between two levels stays in the inner block, so one
+            // misplaced line does not end its graph and cascade into errors.
+            while self.indents.len() > 1 && width <= self.indents[self.indents.len() - 2] {
+                self.indents.pop();
+                self.push_at(TokenKind::Dedent, self.pos);
+            }
+            if width != *self.indents.last().unwrap_or(&0) {
+                self.diags.push(
+                    Diagnostic::error(
+                        "E0007",
+                        "indentation does not match any outer block",
+                        Span::new(start, self.pos),
+                    )
+                    .expected(format!(
+                        "{} spaces, like an enclosing line",
+                        self.indents.last().unwrap_or(&0)
+                    ))
+                    .observed(format!("{width} spaces")),
+                );
+            }
+        }
+        false
     }
 
     fn punct(&mut self, start: usize, c: char) {
@@ -212,6 +325,11 @@ impl Lexer<'_> {
             };
             (k, 1)
         };
+        match kind {
+            LBrace | LParen | LBracket => self.depth += 1,
+            RBrace | RParen | RBracket => self.depth -= 1,
+            _ => {}
+        }
         for _ in 0..len {
             self.bump();
         }
@@ -350,22 +468,60 @@ mod tests {
     }
 
     #[test]
-    fn node_declaration() {
+    fn blocks_become_indent_and_dedent() {
         assert_eq!(
-            kinds("node xs[q in plan.questions] = web_search(q)\n"),
+            kinds("graph g():\n    a = 1\n    b = 2\nmodel m\n"),
             vec![
-                Ident, Ident, LBracket, Ident, Ident, Ident, Dot, Ident, RBracket, Eq, Ident,
-                LParen, Ident, RParen, Newline, Eof
+                Ident, Ident, LParen, RParen, Colon, Newline, Indent, Ident, Eq, Int, Newline,
+                Ident, Eq, Int, Newline, Dedent, Ident, Ident, Newline, Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_blocks_close_at_end_of_file() {
+        assert_eq!(
+            kinds("a:\n  b:\n    c"),
+            vec![
+                Ident, Colon, Newline, Indent, Ident, Colon, Newline, Indent, Ident, Newline,
+                Dedent, Dedent, Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn blank_and_comment_lines_are_ignored() {
+        assert_eq!(
+            kinds("a:\n\n    # comentário\n    b # fim\n\n# fora\nc\n"),
+            vec![
+                Ident, Colon, Newline, Indent, Ident, Newline, Dedent, Ident, Newline, Eof
+            ]
+        );
+    }
+
+    #[test]
+    fn line_breaks_inside_brackets_are_ignored() {
+        assert_eq!(
+            kinds("f(\n  a,\n      b\n)\n"),
+            vec![Ident, LParen, Ident, Comma, Ident, RParen, Newline, Eof]
+        );
+    }
+
+    #[test]
+    fn long_text_content_is_not_indentation() {
+        assert_eq!(
+            kinds("p:\n    \"\"\"\n  linha\n        outra {x}\n    \"\"\"\nq\n"),
+            vec![
+                Ident, Colon, Newline, Indent, LongStr, Newline, Dedent, Ident, Newline, Eof
             ]
         );
     }
 
     #[test]
     fn ranges_and_numbers() {
-        assert_eq!(kinds("1..3"), vec![Int, DotDot, Int, Eof]);
-        assert_eq!(kinds("0.20 USD"), vec![Float, Ident, Eof]);
-        assert_eq!(kinds("2_000 tokens"), vec![Int, Ident, Eof]);
-        assert_eq!(kinds("50/s"), vec![Int, Slash, Ident, Eof]);
+        assert_eq!(kinds("1..3"), vec![Int, DotDot, Int, Newline, Eof]);
+        assert_eq!(kinds("0.20 USD"), vec![Float, Ident, Newline, Eof]);
+        assert_eq!(kinds("2_000 tokens"), vec![Int, Ident, Newline, Eof]);
     }
 
     #[test]
@@ -373,32 +529,24 @@ mod tests {
         assert_eq!(
             kinds("=> -> == != <= >= ++ || &&"),
             vec![
-                FatArrow, Arrow, EqEq, Ne, Le, Ge, PlusPlus, OrOr, AndAnd, Eof
+                FatArrow, Arrow, EqEq, Ne, Le, Ge, PlusPlus, OrOr, AndAnd, Newline, Eof
             ]
         );
     }
 
     #[test]
-    fn comments_and_newlines_collapse() {
-        assert_eq!(
-            kinds("a // comentário\n\n\nb"),
-            vec![Ident, Newline, Ident, Eof]
-        );
+    fn strings_and_unicode_identifiers() {
+        assert_eq!(kinds(r#""relatorios/{topic}.md""#), vec![Str, Newline, Eof]);
+        assert_eq!(kinds(r#""a \"b\" \{lit\}""#), vec![Str, Newline, Eof]);
+        assert_eq!(kinds("orçamento"), vec![Ident, Newline, Eof]);
     }
 
     #[test]
-    fn strings() {
-        assert_eq!(kinds(r#""relatorios/{topic}.md""#), vec![Str, Eof]);
-        assert_eq!(
-            kinds("\"\"\"\n  linha 1\n  {x}\n\"\"\""),
-            vec![LongStr, Eof]
-        );
-        assert_eq!(kinds(r#""a \"b\" \{lit\}""#), vec![Str, Eof]);
-    }
-
-    #[test]
-    fn unicode_identifiers() {
-        assert_eq!(kinds("orçamento"), vec![Ident, Eof]);
+    fn indentation_errors() {
+        let (_, diags) = lex("a:\n\tb\n");
+        assert_eq!(diags[0].code, "E0006");
+        let (_, diags) = lex("a:\n    b\n  c\n");
+        assert_eq!(diags[0].code, "E0007");
     }
 
     #[test]

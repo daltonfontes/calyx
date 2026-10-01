@@ -1,64 +1,63 @@
-// W8. Estratégias concorrentes ("vence a primeira")
-// Força: corrida (D12), cancelamento, não-determinismo gravado no diário,
-//        sandbox afim dividida entre ramos (D13, D26).
+# W8. Estratégias concorrentes ("vence a primeira")
+# Força: corrida (D12), cancelamento, não-determinismo gravado no diário,
+#        sandbox afim dividida entre ramos (D13, D26).
 
-model claude = llm("claude-sonnet-5-5", max_output: 4_000 tokens)
+model claude = "claude-sonnet-5-5":
+    max_output 4000 tokens
 
-tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Unit {
-  effect sandbox
-}
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Unit:
+    effect sandbox
 
-tool run_tests(box: edits Sandbox, filter: Text) -> TestReport {
-  effect     sandbox
-  max_output 6_000 tokens
-  timeout    10 min
-}
+tool run_tests(box: edits Sandbox, filter: Text) -> TestReport:
+    effect sandbox
+    max_output 6000 tokens
+    timeout 10 min
 
-type TestReport = { passed: Nat, failed: Nat, log: Text }
+type TestReport:
+    passed: Nat
+    failed: Nat
+    log: Text
 
-prompt minimal_fix(issue: Text) -> Text {
-  """Corrija com a menor mudança possível: {issue}"""
-}
+type Attempt:
+    report: TestReport
+    box: Sandbox
 
-prompt refactor_fix(issue: Text) -> Text {
-  """Corrija reorganizando o código afetado: {issue}"""
-}
+prompt minimal_fix(issue: Text) -> Text:
+    """Corrija com a menor mudança possível: {issue}"""
 
-prompt test_first(issue: Text) -> Text {
-  """Escreva primeiro um teste que reproduz o problema, depois corrija: {issue}"""
-}
+prompt refactor_fix(issue: Text) -> Text:
+    """Corrija reorganizando o código afetado: {issue}"""
 
-graph fix_race(issue: Text, repo: Sandbox) -> Sandbox {
-  limits { threads: 3, budget: 6 USD }
+prompt test_first(issue: Text) -> Text:
+    """Escreva primeiro um teste que reproduz o problema, depois corrija: {issue}"""
 
-  // A sandbox é afim (D26): para três ramos a usarem, ela precisa ser dividida
-  // explicitamente em três cópias. O compilador recusa passar "repo" para os três.
-  let [a, b, c] = repo.fork(3)
+graph fix_race(issue: Text, repo: Sandbox) -> Sandbox:
+    limits threads 3, budget 6 USD
 
-  // "race": os ramos rodam em paralelo; vence o primeiro que satisfizer a condição.
-  // Os outros são cancelados ENTRE nós (D12): uma chamada de LLM em andamento é abandonada;
-  // uma escrita externa em andamento terminaria antes do cancelamento valer.
-  // Qual ramo venceu é gravado no diário: na retomada, o vencedor é o mesmo.
-  node winner = race {
-    minimal:  attempt(issue, minimal_fix,  a)
-    refactor: attempt(issue, refactor_fix, b)
-    tests:    attempt(issue, test_first,   c)
-  } first where it.report.failed == 0
-    else fail "nenhuma estratégia passou nos testes"
+    # A sandbox é afim (D26): para três ramos a usarem, ela precisa ser dividida
+    # explicitamente em três cópias. O compilador recusa passar "repo" para os três.
+    a, b, c = repo.fork(3)
 
-  // ⚠️ As sandboxes dos ramos perdedores são descartadas. Precisa ficar explícito
-  // que "race" consome as três e devolve só a do vencedor.
-  return winner.box
-}
+    # "race": os ramos rodam em paralelo; vence o primeiro que satisfizer a condição.
+    # Os outros são cancelados ENTRE passos (D12): uma chamada de LLM em andamento
+    # é abandonada; uma escrita externa em andamento termina antes do cancelamento valer.
+    # Qual ramo venceu é gravado no diário: na retomada, o vencedor é o mesmo.
+    # As sandboxes dos ramos perdedores são descartadas: "race" consome as três
+    # e devolve só a do vencedor.
+    winner = race first where it.report.failed == 0:
+        minimal: attempt(issue, minimal_fix, a)
+        refactor: attempt(issue, refactor_fix, b)
+        tests: attempt(issue, test_first, c)
+        on none: fail "nenhuma estratégia passou nos testes"
 
-graph attempt(issue: Text, how: Prompt<Text>, box: Sandbox) -> { report: TestReport, box: Sandbox } {
-  node work = agent claude {
-    tools      [edit_file(edits box), run_tests(edits box)]
-    max_turns  20
-    task       how(issue)
-    on turn_limit => final_answer
-    on stuck      => final_answer
-  }
-  node report = run_tests(edits box, "")
-  return { report: report, box: box }
-}
+    return winner.box
+
+graph attempt(issue: Text, how: Prompt[Text], box: Sandbox) -> Attempt:
+    work = agent claude:
+        tools [edit_file(edits box), run_tests(edits box)]
+        max_turns 20
+        task how(issue)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    report = run_tests(edits box, "")
+    return Attempt(report=report, box=box)

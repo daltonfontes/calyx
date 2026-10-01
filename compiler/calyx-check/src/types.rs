@@ -15,7 +15,7 @@ pub enum Ty {
     Unit,
     /// An integer literal without unit: fits `Int`, `Nat` and `Float`.
     IntLit,
-    /// `List<T>`, with an optional maximum length.
+    /// `List[T]`, with an optional maximum length.
     List(Box<Ty>, Option<u64>),
     Map(Box<Ty>, Box<Ty>),
     /// A type declared with `type`.
@@ -65,9 +65,9 @@ impl fmt::Display for Ty {
             Ty::Duration => f.write_str("Duration"),
             Ty::Date => f.write_str("Date"),
             Ty::Unit => f.write_str("Unit"),
-            Ty::List(t, None) => write!(f, "List<{t}>"),
-            Ty::List(t, Some(n)) => write!(f, "List<{t}> max {n}"),
-            Ty::Map(k, v) => write!(f, "Map<{k}, {v}>"),
+            Ty::List(t, None) => write!(f, "List[{t}]"),
+            Ty::List(t, Some(n)) => write!(f, "List[{t}] max {n}"),
+            Ty::Map(k, v) => write!(f, "Map[{k}, {v}]"),
             Ty::User(n) => f.write_str(n),
             Ty::Error => f.write_str("?"),
         }
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn display() {
-        assert_eq!(list(Ty::Text, Some(5)).to_string(), "List<Text> max 5");
+        assert_eq!(list(Ty::Text, Some(5)).to_string(), "List[Text] max 5");
         assert_eq!(Ty::IntLit.to_string(), "Int");
     }
 }

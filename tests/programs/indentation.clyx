@@ -1,0 +1,13 @@
+# Indentation errors.
+model claude = "m"
+
+prompt ask_it(q: Text) -> Text:
+    """{q}"""
+
+graph g(q: Text) -> Text:
+    a = claude(ask_it(q))
+  b = claude(ask_it(a))
+    return a
+
+graph h(q: Text) -> Text:
+	return q

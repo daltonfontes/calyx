@@ -6,23 +6,23 @@ Location: m1_tools.clyx:2:6
 error[E0303]: invalid effect
 - expected : `read`, `write`, `write once` or `sandbox`
 - observed : `delete`
-Location: m1_tools.clyx:7:3
+Location: m1_tools.clyx:6:5
 
 error[E0304]: `write once` tool needs a policy for uncertain outcomes
 - expected : `on_uncertain verify(...)`, `on_uncertain pause` or `on_uncertain accept_loss`
 - observed : no `on_uncertain` property
-Location: m1_tools.clyx:10:6
+Location: m1_tools.clyx:8:6
 
 error[E0306]: idempotency key is not a parameter of the tool
 - expected : one of the tool's parameters
 - observed : `recipient`
-Location: m1_tools.clyx:12:19
+Location: m1_tools.clyx:10:21
 
 error[E0305]: invalid value for `max_output`
-- expected : a number of tokens, e.g. `4_000 tokens`
-Location: m1_tools.clyx:13:3
+- expected : a number of tokens, e.g. `4000 tokens`
+Location: m1_tools.clyx:11:5
 
 error[E0301]: unknown tool property
 - expected : `effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `checks` or `repeatable`
 - observed : `color`
-Location: m1_tools.clyx:14:3
+Location: m1_tools.clyx:12:5

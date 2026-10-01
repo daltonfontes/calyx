@@ -21,6 +21,7 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
         prompts: HashMap::new(),
         graphs: HashMap::new(),
         types: HashMap::new(),
+        unit_variants: HashMap::new(),
         graph_effects: HashMap::new(),
     };
     cx.collect(program);
@@ -72,6 +73,8 @@ struct Cx<'a, 'p> {
     prompts: HashMap<&'p str, PromptSig>,
     graphs: HashMap<&'p str, (&'p GraphDecl, GraphSig)>,
     types: HashMap<&'p str, UserType>,
+    /// Variants without fields, usable as values: `Optimist` is a `Role`.
+    unit_variants: HashMap<&'p str, &'p str>,
     graph_effects: HashMap<String, Effect>,
 }
 
@@ -135,6 +138,9 @@ impl<'p> Cx<'_, 'p> {
                     TypeKind::Variants(vs) => {
                         for v in vs {
                             self.fields(&v.fields);
+                            if v.fields.is_empty() {
+                                self.unit_variants.insert(&v.name.name, &t.name.name);
+                            }
                         }
                         UserType::Variants
                     }
@@ -282,7 +288,7 @@ impl<'p> Cx<'_, 'p> {
             }
             match key {
                 "effect" => effect = self.effect_words(&p.value, p.span),
-                "max_output" => self.prop_int(p, &["tokens"], "a number of tokens, e.g. `4_000 tokens`"),
+                "max_output" => self.prop_int(p, &["tokens"], "a number of tokens, e.g. `4000 tokens`"),
                 "timeout" => self.prop_int(
                     p,
                     &["ms", "s", "min", "h", "days"],
@@ -569,13 +575,6 @@ impl<'p> Cx<'_, 'p> {
                     name,
                     fan_out: fan_out.as_ref(),
                     value,
-                    is_node: true,
-                }),
-                Stmt::Let { name, value } => locals.push(Local {
-                    name,
-                    fan_out: None,
-                    value,
-                    is_node: false,
                 }),
                 Stmt::Return(e) => returns.push(e),
                 Stmt::Limits(entries) => limits.push(entries),
@@ -665,9 +664,9 @@ impl<'p> Cx<'_, 'p> {
                 id,
                 name: l.name.name.clone(),
                 ty: ty.to_string(),
-                kind: if l.is_node { kind } else { NodeKind::Pure },
+                kind,
                 fan_out: l.fan_out.map(|(v, _)| v.name.clone()),
-                effect: if l.is_node { effect } else { Effect::Pure },
+                effect,
                 inputs: deps[i].iter().filter_map(|d| ids.get(d).copied()).collect(),
             });
         }
@@ -676,6 +675,7 @@ impl<'p> Cx<'_, 'p> {
         let mut output = None;
         let mut used: HashSet<usize> = deps.iter().flatten().copied().collect();
         match returns.as_slice() {
+            [] if g.incomplete => {}
             [] => self.push(
                 err("E0504", "graph has no `return`", g.name.span)
                     .expected("a `return` with the graph's result"),
@@ -891,6 +891,9 @@ impl<'p> Cx<'_, 'p> {
                 if let Some(t) = gc.scope.get(n) {
                     return Typed::pure(t.clone());
                 }
+                if let Some(ty) = self.unit_variants.get(n.as_str()) {
+                    return Typed::pure(Ty::User((*ty).to_owned()));
+                }
                 if self.is_global(n) {
                     self.push(
                         err("E0601", "declaration used as a value", e.span)
@@ -943,6 +946,7 @@ impl<'p> Cx<'_, 'p> {
                 Typed { ty, ..t }
             }
             ExprKind::Call { callee, args } => self.call(e, callee, args, gc),
+            ExprKind::Error => Typed::pure(Ty::Error),
         }
     }
 
@@ -968,6 +972,17 @@ impl<'p> Cx<'_, 'p> {
                 err("E0606", "a prompt must be sent to a model", e.span)
                     .expected(format!("`model({n}(...))`, e.g. `claude({n}(...))`"))
                     .observed(format!("`{n}(...)`")),
+            );
+            return Typed::pure(Ty::Error);
+        }
+        if self.types.contains_key(n) {
+            self.push(
+                err(
+                    "E0101",
+                    "building values of a declared type is not supported yet (planned for M5)",
+                    callee.span,
+                )
+                .observed(format!("`{n}(...)`")),
             );
             return Typed::pure(Ty::Error);
         }
@@ -1007,15 +1022,15 @@ impl<'p> Cx<'_, 'p> {
                 Some(n) if n.name == "continue" => self.push(
                     err(
                         "E0101",
-                        "`continue:` is not supported yet (planned for M5)",
+                        "`continue=` is not supported yet (planned for M5)",
                         n.span,
                     )
-                    .observed("`continue:`"),
+                    .observed("`continue=`"),
                 ),
                 Some(n) => self.push(
                     err("E0612", "unknown argument", n.span)
                         .expected("a prompt call")
-                        .observed(format!("`{}:`", n.name)),
+                        .observed(format!("`{}=`", n.name)),
                 ),
                 None if prompt_call.is_none() => prompt_call = Some(&a.value),
                 None => self.push(
@@ -1139,7 +1154,6 @@ struct Local<'p> {
     name: &'p Ident,
     fan_out: Option<&'p (Ident, Expr)>,
     value: &'p Expr,
-    is_node: bool,
 }
 
 #[derive(Default)]
@@ -1185,7 +1199,6 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
             }
             walk(value, f);
         }
-        Stmt::Let { value, .. } => walk(value, f),
         Stmt::Return(e) => walk(e, f),
     }
 }
@@ -1216,7 +1229,7 @@ fn collect_refs(e: &Expr, bound: Option<&str>, index: &HashMap<&str, usize>, out
         ExprKind::Call { args, .. } => args
             .iter()
             .for_each(|a| collect_refs(&a.value, bound, index, out)),
-        ExprKind::Int { .. } | ExprKind::Float { .. } => {}
+        ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Error => {}
     }
 }
 

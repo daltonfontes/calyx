@@ -1,0 +1,16 @@
+error[E0101]: `agent` is not supported yet (planned for M5)
+- observed : `agent`
+Location: recovery.clyx:17:9
+
+error[E0101]: `a, b = ... (destructuring)` is not supported yet (planned for M5)
+- observed : `a, b = ... (destructuring)`
+Location: recovery.clyx:20:5
+
+error[E0101]: `a property block on a type` is not supported yet (planned for a later milestone)
+- observed : `a property block on a type`
+Location: recovery.clyx:24:24
+
+error[E0602]: unknown name
+- expected : a parameter, node or value in scope
+- observed : `unknown_name`
+Location: recovery.clyx:28:12
