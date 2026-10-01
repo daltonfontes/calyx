@@ -2,7 +2,7 @@
 
 Calyx é uma linguagem de programação **graph-native** para agentes de IA.
 
-O projeto está na fase de **discovery**: ainda não há implementação. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípio do projeto: **rodar rápido e compilar rápido**.
+O projeto está na fase de **discovery**: ainda não há implementação. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípio do projeto, inspirado no Bend: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
 
 ## Documentos de discovery
 

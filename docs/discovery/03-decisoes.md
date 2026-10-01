@@ -13,7 +13,7 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D7 | Junção de ramos paralelos | Lista ordenada por padrão; redutores declarados |
 | D8 | Template / realized graph / trace | Os três são conceitos de primeira classe |
 | D9 | Superfície da linguagem | Linguagem textual, com visualização derivada |
-| D10 | Plataforma | ✅ **Direção decidida:** compilador e runtime nativos, com o modelo de atores da BEAM reimplementado (processos leves, supervisão, mensagens). Em aberto: C# ou C. Ver [arquitetura do runtime](12-arquitetura-runtime.md) |
+| D10 | Plataforma | ✅ **Direção decidida:** filosofia do Bend. O compilador emite C (um arquivo por programa, com o runtime); runtime em C com o modelo de atores da BEAM reimplementado; o mesmo binário roda de uma thread a várias máquinas; `calyx check` em até 1 segundo. Em aberto: linguagem do compilador. Ver [arquitetura do runtime](12-arquitetura-runtime.md) |
 | D11 | Falha parcial em fan-out | Falhas são valores (`ok` / `falha`); o compilador obriga a tratar; tools declaram erros não retentáveis |
 | D12 | Corrida e cancelamento | Construção `corrida` explícita; vencedor no diário; cancelamento cooperativo entre nós; `llm`/`read` abandonáveis, `write` protegidos; nós de compensação |
 | D13 | Ambiente da execução (sandbox) | Efeitos na sandbox recuperáveis por snapshot, restaurado junto com o diário; isolamento entre ramos por validação do conjunto de leitura a cada escrita (STORM), preferida a cópia + merge |
