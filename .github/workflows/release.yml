@@ -22,6 +22,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Without it, macOS binaries require the runner's own (latest) macOS.
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+
 jobs:
   build:
     strategy:
@@ -91,6 +95,7 @@ jobs:
             file "$bin" | grep -q "statically linked"
           else
             otool -L "$bin"
+            otool -l "$bin" | grep -m1 minos
           fi
           ${{ matrix.run }} "$bin" --version
           ${{ matrix.run }} "$bin" build examples/research.clyx -o examples/research
