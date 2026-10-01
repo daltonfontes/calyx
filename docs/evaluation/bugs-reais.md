@@ -120,20 +120,22 @@ Ao conferir o CrewAI 5802 (a tarefa é repetida quando a saída não passa numa
 conferência, e o pagamento sai de novo), a Calyx acerta com a tool `write` e
 chave de idempotência: o laço chama `refund` três vezes e a loja paga uma.
 Mas com a mesma tool declarada `write once` dentro de um `loop`, **o
-compilador não diz nada e a loja paga três vezes**: cada volta tem sua chave
+compilador não dizia nada e a loja pagava três vezes**: cada volta tem sua chave
 no diário, então cada volta é um pagamento novo. Pela regra do empate, o
 5802 conta como "não pega".
 
-É um aviso que falta: uma chamada `write once` no corpo de um `loop` ou
-`rounds` cujos argumentos não dependem da volta repete o mesmo efeito a cada
-volta. Fica registrado aqui como achado do estudo; se o aviso for criado, a
-contagem acima não muda (ela vale para a Calyx de antes do estudo).
+Era um aviso que faltava, e **depois do estudo virou o `W0605`**: uma
+chamada `write once` no corpo de um `loop` ou `rounds` cujos argumentos não
+usam nada que muda de volta para volta repete o mesmo efeito a cada volta. O
+caso entrou no corpus Q2 como o bug 53. A contagem acima não muda: ela vale
+para a Calyx de antes do estudo, e contar o 5802 como "compilador" agora
+seria ajustar a linguagem ao teste.
 
 ### Verificação
 
 `python bench/real_bugs/run_verify.py` roda os programas de
 [`bench/real_bugs/verify/`](../../bench/real_bugs/verify/), um por caso
-classificado a favor da Calyx (e um para a lacuna), e confere o que está dito
+classificado a favor da Calyx (e um para a lacuna, que agora confere o `W0605`), e confere o que está dito
 acima. Os de entidades e sandbox já têm testes (`tests/entities.rs`,
 `tests/sandbox.rs`). Resultado em `bench/results/real_bugs_verify.json`.
 

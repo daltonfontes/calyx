@@ -203,4 +203,19 @@ prompt summarize(items: List[Text]) -> Text:
         assert_eq!(r.diagnostics[0].code, "W0801");
         assert!(!r.has_errors());
     }
+
+    #[test]
+    fn the_same_write_once_on_every_turn_is_a_warning() {
+        let program = |args: &str| {
+            format!(
+                "tool send(to: Text, text: Text) -> Unit:\n    effect write once\n    on_uncertain pause\n\n\
+                 graph g(to: Text) -> Int:\n    r = loop n = 1, max 3:\n        \
+                 sent = send({args})\n        next n + 1\n        on limit: last\n    return r\n"
+            )
+        };
+        assert_eq!(codes(&program("to, \"oi\"")), vec!["W0605"]);
+        // What changes from turn to turn, directly or inside a text, is a new write.
+        assert!(codes(&program("to, \"tentativa {n}\"")).is_empty());
+        assert!(codes(&program("\"{to}\", \"oi {n}\"")).is_empty());
+    }
 }

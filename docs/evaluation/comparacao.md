@@ -13,7 +13,7 @@ crus, em `bench/results/`.
 |---|---|---|---|
 | **Q3: recuperação com efeitos externos** (W2, 6 pontos de queda) | 6 de 6 certos, sem código de recuperação | Temporal e LangGraph `sync`: 4 de 6; 6 de 6 só com cuidado manual. LangGraph no padrão: 3 de 6 | **A diferença é o padrão, não o teto:** com cuidado manual os baselines empatam; na Calyx o cuidado é obrigatório |
 | **Q2: bugs antes de rodar** (14 bugs que a Calyx pega) | 14 de 14 | pyright + mypy: 2 de 14; LangGraph para 3 ao rodar, 2 depois do dano | Forte, mas o corpus foi escrito por quem fez o compilador |
-| **Bugs reais** (44 issues de LangGraph, CrewAI, AutoGen; [`bugs-reais.md`](bugs-reais.md)) | Dos 15 de workflow: evita 7 (runtime 5, construção 2), deixa passar 8; compilador: 0 | — (29 dos 44 são bugs dos próprios frameworks) | Issues relatam o framework errando, não o programador: não confirmam a Q2. Achada uma lacuna (`write once` em laço) |
+| **Bugs reais** (44 issues de LangGraph, CrewAI, AutoGen; [`bugs-reais.md`](bugs-reais.md)) | Dos 15 de workflow: evita 7 (runtime 5, construção 2), deixa passar 8; compilador: 0 | — (29 dos 44 são bugs dos próprios frameworks) | Issues relatam o framework errando, não o programador: não confirmam a Q2. Achada uma lacuna (`write once` em laço), que virou o aviso `W0605` |
 | **Q1: paralelismo** (W1) | A 30–50 ms do limite teórico | asyncio à mão: a 80–95 ms; LangGraph: +0,8 s | Empate com asyncio. O ganho é não escrever o paralelismo, não ser mais rápido |
 | **Custo do runtime** (W1 sem latência) | Linear, 0,16 ms por item | asyncio: 0,025 ms; LangGraph: 8,4 ms e crescendo | Desprezível perto de uma chamada de modelo; o LangGraph cresce mais que linearmente |
 
@@ -142,7 +142,7 @@ sem o bug. Para cada um: aparece no pyright ou no mypy? Ao rodar? Causa dano?
   Ficam no corpus de propósito.
 - **Viés de seleção:** os 14 primeiros foram escolhidos entre os que a Calyx
   pega, para ver o que o Python faz com eles. A taxa da Calyx no corpus
-  inteiro é **34 de 52**, não 14 de 14. O plano do paper pede o corpus
+  inteiro é **35 de 53**, não 14 de 14. O plano do paper pede o corpus
   inteiro portado por outra pessoa e bugs tirados de issues reais. O estudo
   das issues está em [`bugs-reais.md`](bugs-reais.md): o compilador não pegou
   nenhum dos 44, porque as issues relatam erros dos frameworks, não do
