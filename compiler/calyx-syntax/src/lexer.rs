@@ -267,6 +267,8 @@ impl Lexer<'_> {
                             "end of file"
                         }),
                     );
+                    // Still emit the text, so the parser does not cascade.
+                    self.push(TokenKind::Str, start);
                     return;
                 }
                 Some(_) => {
@@ -302,6 +304,7 @@ impl Lexer<'_> {
                         .expected("closing `\"\"\"`")
                         .observed("end of file"),
                     );
+                    self.push(TokenKind::LongStr, start);
                     return;
                 }
             }

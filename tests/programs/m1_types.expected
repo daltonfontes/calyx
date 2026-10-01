@@ -1,0 +1,39 @@
+error[E0202]: unknown type
+- expected : a built-in type or one declared with `type`
+- observed : `Pessoa`
+Location: m1_types.clyx:4:51
+
+error[E0608]: argument has the wrong type
+- expected : `Text` for `q`
+- observed : `Nat`
+Location: m1_types.clyx:16:23
+
+error[E0607]: missing arguments
+- expected : a value for `limit`
+- observed : 1 argument(s)
+Location: m1_types.clyx:17:16
+
+error[E0607]: too many arguments
+- expected : 2 argument(s) for `search`
+- observed : 3
+Location: m1_types.clyx:18:33
+
+error[E0603]: unknown field
+- expected : a field of `Plan`
+- observed : `missing`
+Location: m1_types.clyx:19:21
+
+error[E0609]: fan-out over a value that is not a list
+- expected : a list
+- observed : `Text`
+Location: m1_types.clyx:20:15
+
+error[E0611]: list elements have different types
+- expected : `Text`
+- observed : `Nat`
+Location: m1_types.clyx:21:24
+
+error[E0610]: returned value has the wrong type
+- expected : `Nat`
+- observed : `Text`
+Location: m1_types.clyx:23:10

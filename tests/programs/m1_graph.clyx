@@ -1,0 +1,46 @@
+// Graph structure errors.
+model claude = llm("m", max_output: 1_000 tokens)
+
+tool search(q: Text) -> Text {
+  effect read
+}
+
+tool save(path: Text, body: Text) -> Unit {
+  effect          write
+  idempotency_key path
+}
+
+prompt ask(q: Text) -> Text {
+  """{q}"""
+}
+
+graph no_return(q: Text) -> Text {
+  node a = search(q)
+}
+
+graph two_returns(q: Text) -> Text {
+  return q
+  return q
+}
+
+graph cycle(q: Text) -> Text {
+  node a = claude(ask(b))
+  node b = claude(ask(a))
+  return a
+}
+
+graph limits_bad(q: Text) -> Text {
+  limits { threads: 0, budget: 2 tokens, speed: 3 }
+  return q
+}
+
+graph only_reads(q: Text) -> Text effect read {
+  node found = search(q)
+  node saved = save("out.txt", found)
+  return found
+}
+
+graph wasteful(q: Text) -> Text {
+  node unused = claude(ask(q))
+  return q
+}

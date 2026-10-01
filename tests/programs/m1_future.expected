@@ -1,0 +1,15 @@
+error[E0101]: `fn` is not supported yet (planned for M5)
+- observed : `fn`
+Location: m1_future.clyx:4:1
+
+error[E0101]: `agent` is not supported yet (planned for M5)
+- observed : `agent`
+Location: m1_future.clyx:7:12
+
+error[E0101]: `loop` is not supported yet (planned for M5)
+- observed : `loop`
+Location: m1_future.clyx:10:12
+
+error[E0101]: `after` is not supported yet (planned for M6)
+- observed : `after`
+Location: m1_future.clyx:13:3

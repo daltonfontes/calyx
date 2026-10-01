@@ -20,9 +20,7 @@ jobs:
       - name: Test (Rust compiler + C runtime)
         run: make test
 
-      - name: Check every example with the CLI
+      - name: Check the M1 example with the CLI
         run: |
           cargo build --release
-          for f in examples/teste.clyx examples/workflows/*.clyx; do
-            ./target/release/calyx check "$f" --time
-          done
+          ./target/release/calyx check examples/research.clyx --ir --time

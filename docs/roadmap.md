@@ -34,5 +34,28 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | Marco | Situação |
 |---|---|
 | M0 | ✅ Concluído: workspace Rust (`calyx-syntax`, `calyx-check`, `calyx-ir`, `calyx-cli`), lexer completo com diagnósticos estruturados, verificador ligado ao runtime em C como biblioteca estática, testes de referência, CI |
-| M1 | Próximo |
-| M2–M6 | Não iniciados |
+| M1 | ✅ Concluído: parser com recuperação de erros; verificação de nomes, tipos, variáveis dos prompts, contratos das tools, limites, estrutura do grafo (ciclos, `return`) e efeitos (inferência e limite declarado); geração da representação intermediária (`calyx check --ir`); construções de marcos futuros reportadas com o marco em que chegam |
+| M2 | Próximo |
+| M3–M6 | Não iniciados |
+
+## Medidas
+
+### M1: tempo do `calyx check`
+
+Programas sintéticos (grafos de 21 nós com fan-out), binário de release, máquina de 4 núcleos:
+
+| Tamanho | Tempo | Instruções executadas |
+|---|---|---|
+| 1,3 mil linhas (50 grafos) | ~3 ms | — |
+| 12,5 mil linhas (500 grafos) | 37–39 ms | 342 milhões |
+| 125 mil linhas (5000 grafos) | 460–1170 ms (variável entre execuções) | 3,34 bilhões |
+
+- **Meta atingida** para projetos de tamanho médio: dezenas de milissegundos, muito abaixo de 1 s.
+- **O algoritmo é linear:** 10× mais código executa 9,75× mais instruções (medido com o callgrind). A variação do tempo de relógio no arquivo grande vem de alocação de memória no ambiente, não do algoritmo.
+- **Otimizações possíveis, ainda não necessárias:** cerca de 20% das instruções são alocação (`malloc`/`free`) e 5% são o hash padrão de `HashMap`. Trocar o hash por um mais rápido e reduzir cópias de texto deve reduzir o tempo do arquivo grande.
+
+Para repetir: `cargo run --release -p calyx-check --example phases -- arquivo.clyx`.
+
+### M1: erros encontrados pelo próprio verificador
+
+Ao escrever o `examples/research.clyx`, o verificador pegou um erro real do autor: dentro de um fan-out, a lista inteira de resultados era passada onde o prompt esperava o resultado de uma pergunta (`E0608`).

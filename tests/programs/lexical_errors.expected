@@ -3,6 +3,11 @@ error[E0001]: unexpected character
 - observed : `&`
 Location: lexical_errors.clyx:2:21
 
+error[E0202]: unknown type
+- expected : a built-in type or one declared with `type`
+- observed : `Sandbox`
+Location: lexical_errors.clyx:2:22
+
 error[E0005]: invalid escape sequence
 - expected : one of `\n`, `\t`, `\r`, `\"`, `\\`, `\{`, `\}`
 - observed : `\q`

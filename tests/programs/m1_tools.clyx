@@ -1,0 +1,20 @@
+// Tool contract errors.
+tool no_effect(x: Text) -> Text {
+  max_output 100 tokens
+}
+
+tool bad_effect(x: Text) -> Text {
+  effect delete
+}
+
+tool send(to: Text, body: Text) -> Unit {
+  effect          write once
+  idempotency_key recipient
+  max_output      lots
+  color           blue
+}
+
+tool ok(to: Text) -> Unit {
+  effect       write once
+  on_uncertain pause
+}

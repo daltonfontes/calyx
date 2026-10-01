@@ -4,25 +4,30 @@
 //! library, and the C runtime links it as a static library through the C ABI
 //! in [`ffi`], to check graphs generated at run time before running them.
 //!
-//! M0 runs the lexer only. Each later milestone adds analyses here, all of
-//! them linear or compositional so `calyx check` stays under one second.
+//! Every analysis is linear or compositional, so `calyx check` stays under
+//! one second.
 
 pub mod ffi;
+mod sema;
+mod types;
 
-use calyx_syntax::{Diagnostic, Source, lex};
+use calyx_syntax::{Diagnostic, Severity, Source, parse};
 
 /// Result of checking one source file.
 #[derive(Debug)]
 pub struct Report {
     pub source: Source,
+    /// Sorted by position in the file.
     pub diagnostics: Vec<Diagnostic>,
+    /// The compiled template. Only meaningful when there are no errors.
+    pub ir: calyx_ir::Program,
 }
 
 impl Report {
     pub fn has_errors(&self) -> bool {
         self.diagnostics
             .iter()
-            .any(|d| d.severity == calyx_syntax::Severity::Error)
+            .any(|d| d.severity == Severity::Error)
     }
 
     /// Human-readable output, one block per diagnostic.
@@ -43,10 +48,29 @@ impl Report {
 /// Checks a Calyx program.
 pub fn check(name: &str, text: &str) -> Report {
     let source = Source::new(name, text);
-    let (_tokens, diagnostics) = lex(&source.text);
+    let (program, mut diagnostics) = parse(&source.text);
+    let ir = sema::check_program(&program, &mut diagnostics);
+    // "Value is never used" is noise while the program still has errors.
+    if diagnostics.iter().any(|d| d.severity == Severity::Error) {
+        diagnostics.retain(|d| d.code != "W0801");
+    }
+    diagnostics.sort_by_key(|d| (d.span.start, d.span.end));
     Report {
         source,
         diagnostics,
+        ir,
+    }
+}
+
+/// Lexes a program without parsing it. Used to keep files that use
+/// constructs from later milestones (such as the examples) lexically valid.
+pub fn lex_only(name: &str, text: &str) -> Report {
+    let source = Source::new(name, text);
+    let (_, diagnostics) = calyx_syntax::lex(&source.text);
+    Report {
+        source,
+        diagnostics,
+        ir: calyx_ir::Program::default(),
     }
 }
 
@@ -54,17 +78,115 @@ pub fn check(name: &str, text: &str) -> Report {
 mod tests {
     use super::*;
 
-    #[test]
-    fn valid_program_has_no_diagnostics() {
-        let r = check("ok.clyx", "graph g() -> Text {\n  return \"oi\"\n}\n");
-        assert!(!r.has_errors());
-        assert_eq!(r.to_json(), "[]");
+    fn codes(src: &str) -> Vec<&'static str> {
+        check("t.clyx", src)
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect()
+    }
+
+    const PRELUDE: &str = r#"
+model claude = llm("m", max_output: 1_000 tokens)
+tool search(q: Text) -> Text {
+  effect read
+}
+type Plan = { questions: List<Text> max 5 }
+prompt split(topic: Text) -> Plan {
+  """{topic}"""
+}
+prompt summarize(items: List<Text>) -> Text {
+  """{items}"""
+}
+"#;
+
+    fn with_prelude(body: &str) -> String {
+        format!("{PRELUDE}\n{body}")
     }
 
     #[test]
-    fn invalid_program_reports_errors() {
-        let r = check("bad.clyx", "node x = f(a);\n");
-        assert!(r.has_errors());
-        assert!(r.render().contains("error[E0004]"));
+    fn valid_program_has_no_diagnostics() {
+        let r = check(
+            "ok.clyx",
+            &with_prelude(
+                "graph g(topic: Text) -> Text {\n  node plan = claude(split(topic))\n  node found[q in plan.questions] = search(q)\n  node out = claude(summarize(found))\n  return out\n}\n",
+            ),
+        );
+        assert!(r.diagnostics.is_empty(), "{}", r.render());
+        let g = &r.ir.graphs[0];
+        assert_eq!(g.effect, Some(calyx_ir::Effect::Read));
+        assert_eq!(g.nodes.len(), 3);
+        assert_eq!(g.nodes[1].ty, "List<Text> max 5");
+    }
+
+    #[test]
+    fn nodes_may_be_written_in_any_order() {
+        let r = check(
+            "t.clyx",
+            &with_prelude(
+                "graph g(topic: Text) -> Text {\n  node out = claude(summarize(plan.questions))\n  node plan = claude(split(topic))\n  return out\n}\n",
+            ),
+        );
+        assert!(r.diagnostics.is_empty(), "{}", r.render());
+        assert_eq!(r.ir.graphs[0].nodes[0].name, "plan");
+    }
+
+    #[test]
+    fn reports_semantic_errors() {
+        assert_eq!(
+            codes(&with_prelude(
+                "graph g() -> Text {\n  node a = search(1)\n  return a\n}\n"
+            )),
+            vec!["E0608"]
+        );
+        assert_eq!(
+            codes(&with_prelude(
+                "graph g(t: Text) -> Text {\n  node a = split(t)\n  return a\n}\n"
+            )),
+            vec!["E0606"]
+        );
+        assert_eq!(
+            codes(&with_prelude(
+                "graph g() -> Nat {\n  node a = search(\"x\")\n  return a\n}\n"
+            )),
+            vec!["E0610"]
+        );
+        assert_eq!(
+            codes(&with_prelude(
+                "graph g() -> Text {\n  node a = b\n  node b = a\n  return a\n}\n"
+            )),
+            vec!["E0506"]
+        );
+    }
+
+    #[test]
+    fn effect_limit_is_enforced() {
+        assert_eq!(
+            codes(&with_prelude(
+                "graph g(t: Text) -> Text effect llm {\n  node a = search(t)\n  return a\n}\n"
+            )),
+            vec!["E0701"]
+        );
+    }
+
+    #[test]
+    fn write_once_needs_a_policy() {
+        assert_eq!(
+            codes("tool send(to: Text) -> Unit {\n  effect write once\n}\n"),
+            vec!["E0304"]
+        );
+    }
+
+    #[test]
+    fn unused_llm_result_is_a_warning() {
+        let r = check(
+            "t.clyx",
+            &with_prelude(
+                "graph g(t: Text) -> Text {\n  node a = claude(split(t))\n  return t\n}\n",
+            ),
+        );
+        assert_eq!(r.diagnostics.len(), 1);
+        assert_eq!(r.diagnostics[0].code, "W0801");
+        assert!(!r.has_errors());
     }
 }

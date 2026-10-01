@@ -1,0 +1,30 @@
+error[E0504]: graph has no `return`
+- expected : a `return` with the graph's result
+Location: m1_graph.clyx:17:7
+
+error[E0505]: graph has more than one `return`
+- expected : a single `return`
+Location: m1_graph.clyx:23:10
+
+error[E0506]: nodes depend on each other in a cycle
+- expected : a graph without cycles (use `loop` for repetition, planned for M5)
+- observed : `a`, `b`
+Location: m1_graph.clyx:27:8
+
+error[E0503]: invalid value for `threads`
+- expected : a positive number, e.g. `8`
+Location: m1_graph.clyx:33:21
+
+error[E0503]: invalid value for `budget`
+- expected : an amount of money, e.g. `2 USD`
+Location: m1_graph.clyx:33:32
+
+error[E0502]: unknown limit
+- expected : `threads`, `rate`, `budget` or `memory`
+- observed : `speed`
+Location: m1_graph.clyx:33:42
+
+error[E0701]: graph exceeds its declared effect
+- expected : at most `read`
+- observed : `write` (node `saved` is `write`)
+Location: m1_graph.clyx:37:7

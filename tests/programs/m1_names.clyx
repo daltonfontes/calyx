@@ -1,0 +1,15 @@
+// Name resolution errors.
+model claude = llm("m", max_output: 1_000 tokens)
+model claude = llm("m2")
+
+prompt greet(name: Text) -> Text {
+  """Olá {nome}, {name.first}"""
+}
+
+graph g(name: Text) -> Text {
+  node a = claude(greet(name))
+  node name = claude(greet(a))
+  node b = desconhecido
+  node c = claude
+  return a
+}

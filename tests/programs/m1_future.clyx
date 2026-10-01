@@ -1,0 +1,15 @@
+// Constructs from later milestones say when they arrive.
+model claude = llm("m", max_output: 1_000 tokens)
+
+fn check(x: Text) -> Bool { x }
+
+graph g(q: Text) -> Text {
+  node a = agent claude {
+    max_turns 10
+  }
+  node b = loop t = q, max 3 {
+    done t
+  }
+  notify after a
+  return q
+}

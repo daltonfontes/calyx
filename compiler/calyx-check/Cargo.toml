@@ -12,3 +12,4 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 calyx-syntax = { path = "../calyx-syntax" }
+calyx-ir = { path = "../calyx-ir" }

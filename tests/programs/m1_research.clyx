@@ -1,0 +1,55 @@
+// research.clyx
+// Pesquisa um tema em paralelo e escreve um relatório.
+// Usa só o subconjunto do marco M1; é o alvo de ponta a ponta do M2.
+//
+//   calyx check examples/research.clyx --ir
+
+model claude = llm("claude-sonnet-5-5", max_output: 2_000 tokens)
+
+tool web_search(query: Text) -> Text {
+  effect     read
+  max_output 4_000 tokens
+  timeout    30 s
+  retry_on   [Timeout, RateLimit]
+}
+
+type Plan = { questions: List<Text> max 5 }
+
+prompt split_topic(topic: Text) -> Plan {
+  """
+  Divida o tema abaixo em até 5 perguntas de pesquisa independentes.
+
+  Tema: {topic}
+  """
+}
+
+prompt summarize(question: Text, results: Text) -> Text {
+  """
+  Responda à pergunta usando apenas os resultados de busca, citando as fontes.
+
+  Pergunta: {question}
+  Resultados: {results}
+  """
+}
+
+prompt write_report(topic: Text, findings: List<Text>) -> Text {
+  """
+  Escreva um relatório sobre "{topic}" usando apenas as descobertas abaixo.
+
+  {findings}
+  """
+}
+
+// "effect read": o compilador garante que este grafo nunca escreve no mundo.
+graph research(topic: Text) -> Text effect read {
+  limits { threads: 8, budget: 2 USD }
+
+  node plan    = claude(split_topic(topic))
+
+  // Fan-out: sem "parallel". Cada pergunta é buscada e resumida de forma
+  // independente, então o runtime roda até 8 ao mesmo tempo.
+  node answers[q in plan.questions] = claude(summarize(q, web_search(q)))
+
+  node report  = claude(write_report(topic, answers))
+  return report
+}
