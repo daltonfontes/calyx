@@ -1982,10 +1982,17 @@ static cx_value *keyed_line(ctx *c, const char *file, const char *key, const cha
     return found;
 }
 
+/* One write per line: receives running in parallel append to the same file,
+ * and two writes (line, then newline) could interleave with theirs. */
 static int append_line(const char *path, const char *data, size_t len) {
+    char *line = malloc(len + 1);
+    if (!line) return -1;
+    memcpy(line, data, len);
+    line[len] = '\n';
     int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    int ok = fd >= 0 && write(fd, line, len + 1) == (ssize_t)(len + 1) && fsync(fd) == 0;
+    free(line);
     if (fd < 0) return -1;
-    int ok = write(fd, data, len) == (ssize_t)len && write(fd, "\n", 1) == 1 && fsync(fd) == 0;
     return close(fd) == 0 && ok ? 0 : -1;
 }
 
