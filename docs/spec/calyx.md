@@ -88,6 +88,27 @@ router NOME = route [modelo1, modelo2, modelo3]:
 
 Tenta os modelos na ordem dada (do mais barato ao mais caro) até a resposta passar em `verificacao` (uma função pura, `def`). A escolha feita é gravada no diário. Na v1, esta é a única política.
 
+**Como está implementado (M10):**
+
+```
+model lite = "gemini-3.5-flash-lite"
+model flash = "gemini-3.5-flash"
+
+def confident(t: Triage) -> Bool:
+    return t.confidence >= 95 and len(t.summary) > 0
+
+router triager = route [lite, flash]:
+    policy cheapest_that_passes(confident)
+
+result = try triager(triage(ticket))
+```
+
+- **Chamado como um modelo:** `roteador(prompt(...))`, com o tipo da resposta do prompt.
+- **Um modelo por vez**, do mais barato ao mais caro; o seguinte só é chamado quando o anterior falha (depois das novas tentativas) ou a resposta dele não passa na verificação. Cada tentativa tem a sua chave no diário (`passo#id.0`, `passo#id.1`), e o modelo escolhido também (`passo#id`): a retomada e o `replay` não refazem a escolha.
+- **Nenhuma resposta passou:** a chamada falha ("no model's answer passed"), e `try` captura. O exemplo manda o chamado para uma pessoa.
+- **O compilador confere:** pelo menos dois modelos declarados (`E0690`, `E0691`), a política `cheapest_that_passes` (`E0692`), a verificação como um `def` que recebe a resposta e dá `Bool` (`E0693`), e, em cada chamada, que o prompt responde o tipo que a verificação recebe (`E0694`).
+- Agentes ainda usam um modelo só (`agent modelo:`), não um roteador.
+
 ### 4.3 Tool
 
 ```
@@ -383,7 +404,7 @@ O compilador obriga a tratar `Failed` antes de usar o valor.
 
 - O tipo de `try e` é `Result[T]`, com as variantes `Ok(value: T)` e `Failed(error: Text)`, desmontadas com `match`.
 - Também existe na forma de bloco: `try:` seguido da expressão indentada.
-- `try` captura falhas de chamadas (depois das novas tentativas), de subgrafos, de laços que atingem o limite com `fail` e de agentes. Não captura falhas que precisam parar a execução: diário corrompido, programa diferente na retomada, `write once` com resultado incerto.
+- `try` captura falhas de chamadas (depois das novas tentativas), de subgrafos, de laços que atingem o limite com `fail` e de agentes. Não captura falhas que precisam parar a execução: diário corrompido, programa diferente na retomada, `write once` com resultado incerto, e erros de configuração (chave de API ausente, tool sem servidor no `calyx.toml`): esses não dependem dos dados, e um `try` ou um roteador que os tratasse como uma chamada que falhou esconderia o problema.
 
 ### 5.10 Ordem entre efeitos (D2)
 
@@ -640,6 +661,7 @@ Todas lineares ou composicionais (meta: `calyx check` em até 1 segundo):
 | Orçamento de contexto por caminho, com invariante quando há compactação | D3, D5 |
 | Redutor presente para estado escrito em paralelo | D1 |
 | Corridas: dois ou mais ramos do mesmo tipo, condição pura, `on none` presente; escrita num ramo (aviso) | D12 |
+| Roteadores: dois ou mais modelos, política conhecida, verificação pura que recebe o tipo da resposta | D30 |
 | Ciclos de `ask` | D33 |
 | Regras de `respond` / `return` | D19 |
 

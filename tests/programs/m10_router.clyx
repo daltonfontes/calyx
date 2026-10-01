@@ -1,0 +1,23 @@
+# A router (M10): models tried in order until an answer passes a `def`.
+model cheap = "c"
+model strong = "s"
+
+type Answer:
+    text: Text
+    confident: Bool
+
+def sure(a: Answer) -> Bool:
+    return a.confident
+
+router smart = route [cheap, strong]:
+    policy cheapest_that_passes(sure)
+
+prompt ask(q: Text) -> Answer:
+    """{q}"""
+
+graph g(q: Text) -> Text:
+    a = smart(ask(q))
+    b = try smart(ask("{q}?"))
+    return match b:
+        case Ok(v): "{a.text} {v.text}"
+        case Failed(error): a.text

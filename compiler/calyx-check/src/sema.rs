@@ -17,6 +17,7 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
     let mut cx = Cx {
         diags,
         models: HashMap::new(),
+        routers: HashMap::new(),
         tools: HashMap::new(),
         prompts: HashMap::new(),
         graphs: HashMap::new(),
@@ -125,6 +126,8 @@ enum UserType {
 struct Cx<'a, 'p> {
     diags: &'a mut Vec<Diagnostic>,
     models: HashMap<&'p str, &'p ModelDecl>,
+    /// Routers (decision D30): called like models.
+    routers: HashMap<&'p str, &'p RouterDecl>,
     tools: HashMap<&'p str, ToolSig>,
     prompts: HashMap<&'p str, PromptSig>,
     graphs: HashMap<&'p str, (&'p GraphDecl, GraphSig)>,
@@ -187,6 +190,9 @@ impl<'p> Cx<'_, 'p> {
             match d {
                 Decl::Model(m) => {
                     self.models.insert(&m.name.name, m);
+                }
+                Decl::Router(r) => {
+                    self.routers.insert(&r.name.name, r);
                 }
                 Decl::Type(t) => {
                     if t.message {
@@ -277,10 +283,15 @@ impl<'p> Cx<'_, 'p> {
                     let ret = self.ty(&d.ret);
                     self.defs.insert(&d.name.name, DefSig { params, ret });
                 }
-                Decl::Model(_) | Decl::Type(_) => {}
+                Decl::Model(_) | Decl::Type(_) | Decl::Router(_) => {}
             }
         }
         self.check_write_contracts(program);
+        for d in &program.decls {
+            if let Decl::Router(r) = d {
+                self.check_router(r);
+            }
+        }
         for d in &program.decls {
             if let Decl::Def(f) = d {
                 self.check_def(f);
@@ -702,6 +713,7 @@ impl<'p> Cx<'_, 'p> {
                 ExprKind::Call { callee, .. } => {
                     if let ExprKind::Ident(n) = &callee.kind
                         && (self.models.contains_key(n.as_str())
+                            || self.routers.contains_key(n.as_str())
                             || self.tools.contains_key(n.as_str())
                             || self.graphs.contains_key(n.as_str()))
                     {
@@ -2030,6 +2042,7 @@ impl<'p> Cx<'_, 'p> {
         self.defs.contains_key(n)
             || self.entities.contains_key(n)
             || self.models.contains_key(n)
+            || self.routers.contains_key(n)
             || self.tools.contains_key(n)
             || self.prompts.contains_key(n)
             || self.graphs.contains_key(n)
@@ -3020,6 +3033,27 @@ impl<'p> Cx<'_, 'p> {
         if self.models.contains_key(n) {
             return self.model_call(n, e, args, gc);
         }
+        if let Some(r) = self.routers.get(n).copied() {
+            let typed = self.model_call(n, e, args, gc);
+            // The check must take what the prompt answers.
+            if let Some((_, check)) = &r.policy
+                && let Some(sig) = self.defs.get(check.name.as_str())
+                && let [(_, param)] = sig.params.as_slice()
+                && typed.ty != Ty::Error
+                && !assignable(&typed.ty, param)
+            {
+                let param = param.clone();
+                self.push(
+                    err("E0694", "the router's check takes another type", e.span)
+                        .expected(format!(
+                            "a prompt that answers `{param}`, what `{}` checks",
+                            check.name
+                        ))
+                        .observed(format!("an answer of type `{}`", typed.ty)),
+                );
+            }
+            return typed;
+        }
         if self.prompts.contains_key(n) {
             self.push(
                 err("E0606", "a prompt must be sent to a model", e.span)
@@ -3180,6 +3214,61 @@ impl<'p> Cx<'_, 'p> {
             );
         }
         effect
+    }
+
+    /// `router r = route [m1, m2]:` + `policy cheapest_that_passes(check)`
+    /// (decision D30).
+    fn check_router(&mut self, r: &RouterDecl) {
+        for m in &r.models {
+            if !self.models.contains_key(m.name.as_str()) {
+                self.push(
+                    err("E0690", "unknown model in a router", m.span)
+                        .expected("a model declared with `model`")
+                        .observed(format!("`{}`", m.name)),
+                );
+            }
+        }
+        if r.models.len() < 2 {
+            self.push(
+                err("E0691", "a router needs at least two models", r.name.span)
+                    .expected("`route [cheaper, stronger]`, cheapest first"),
+            );
+        }
+        let Some((policy, check)) = &r.policy else {
+            self.push(
+                err("E0692", "a router needs a policy", r.name.span)
+                    .expected("`policy cheapest_that_passes(check)`, with `check` a `def` that takes the answer and gives `Bool`"),
+            );
+            return;
+        };
+        if policy.name != "cheapest_that_passes" {
+            self.push(
+                err("E0692", "unknown router policy", policy.span)
+                    .expected("`cheapest_that_passes` (the only policy for now)")
+                    .observed(format!("`{}`", policy.name)),
+            );
+        }
+        match self.defs.get(check.name.as_str()) {
+            Some(sig) if sig.params.len() == 1 && sig.ret == Ty::Bool => {}
+            Some(sig) => {
+                let observed = format!(
+                    "`{}` takes {} value(s) and gives `{}`",
+                    check.name,
+                    sig.params.len(),
+                    sig.ret
+                );
+                self.push(
+                    err("E0693", "a router's check takes the answer and gives `Bool`", check.span)
+                        .expected("`def check(answer: T) -> Bool`")
+                        .observed(observed),
+                );
+            }
+            None => self.push(
+                err("E0693", "a router's check is a `def`", check.span)
+                    .expected("`def check(answer: T) -> Bool`: pure, so the choice is the same on every run")
+                    .observed(format!("`{}`", check.name)),
+            ),
+        }
     }
 
     fn model_call(&mut self, model: &str, e: &Expr, args: &[Arg], gc: &GraphCx) -> Typed {

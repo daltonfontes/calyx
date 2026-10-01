@@ -271,6 +271,13 @@ pub fn fake(req: &ModelRequest) -> Answer {
         }
         None => {
             let text = match &req.schema {
+                // `fake-unsure` says `false` to every yes/no: a router's
+                // check that asks for certainty passes it over (D30).
+                Some(schema) if req.model == "fake-unsure" => {
+                    let mut v = fake_value(schema, &summary, 0);
+                    falsify(&mut v);
+                    v.to_string()
+                }
                 Some(schema) => fake_value(schema, &summary, 0).to_string(),
                 None if observations > 0 => {
                     format!("[resposta falsa para: {summary}] (com {observations} observação(ões))")
@@ -288,6 +295,15 @@ pub fn fake(req: &ModelRequest) -> Answer {
         message,
         tool_calls,
         ms: started.elapsed().as_millis() as u64,
+    }
+}
+
+fn falsify(v: &mut Value) {
+    match v {
+        Value::Bool(b) => *b = false,
+        Value::Array(items) => items.iter_mut().for_each(falsify),
+        Value::Object(fields) => fields.values_mut().for_each(falsify),
+        _ => {}
     }
 }
 

@@ -176,7 +176,7 @@ struct exec {
     pthread_mutex_t mu, jmu;
     pthread_cond_t work_cv, io_cv;
     cx_arena arena; /* the main thread's */
-    cx_value *models, *tools, *prompts, *graphs, *entities, *defs;
+    cx_value *models, *tools, *prompts, *graphs, *entities, *defs, *routers;
     /* Identifies this run in entities' records of applied messages: the
      * run's directory name, the same when it is resumed. */
     const char *run_id;
@@ -1043,6 +1043,13 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
             else
                 snprintf(why, why_len, "tool `%s` failed: %s: %s", name, kind, message);
             trace(x, j->label, "%-5s %s  failed: %s: %s", effect, name, kind, message);
+            /* A missing API key or tool server: no `try` or router may hide
+             * it as a failed call; the run stops until the setup is fixed. */
+            if (strcmp(kind, "Config") == 0) {
+                stop_run(x, j, why);
+                snprintf(why, why_len, "stopped");
+                return NULL;
+            }
             if (write_once && maybe_happened(kind)) {
                 char cause[512];
                 snprintf(cause, sizeof cause, "%s: %s", kind, message);
@@ -1294,6 +1301,22 @@ static cx_buf prompt_text(cx_value *prompt, cx_value **args, size_t n) {
     return text;
 }
 
+/* The request for one model call with a prompt's text. */
+static cx_buf model_request(cx_value *model, cx_value *prompt, const cx_buf *text) {
+    cx_value *schema = cx_get(prompt, "schema");
+    cx_buf req = {0};
+    cx_buf_puts(&req, "{\"model\":");
+    cx_write(&req, cx_get(model, "id"));
+    cx_buf_puts(&req, ",\"prompt\":");
+    cx_buf_json_str(&req, text->data ? text->data : "", text->len);
+    cx_buf_puts(&req, ",\"schema\":");
+    cx_write(&req, schema && schema->kind != CX_NULL ? schema : NULL);
+    cx_buf_puts(&req, ",\"max_output\":");
+    cx_write(&req, cx_get(model, "max_output"));
+    cx_buf_puts(&req, ",\"timeout_ms\":300000}"); /* llm: 5 min per attempt (D22) */
+    return req;
+}
+
 static cx_value *call_model(ctx *c, cx_value *e) {
     exec *x = c->x;
     cx_value *model = at(x->models, index_of(e, "model"));
@@ -1304,17 +1327,7 @@ static cx_value *call_model(ctx *c, cx_value *e) {
     cx_value **args = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *args);
     EVAL_ALL(c, args_e, args);
     cx_buf text = prompt_text(prompt, args, n);
-    cx_value *schema = cx_get(prompt, "schema");
-    cx_buf req = {0};
-    cx_buf_puts(&req, "{\"model\":");
-    cx_write(&req, cx_get(model, "id"));
-    cx_buf_puts(&req, ",\"prompt\":");
-    cx_buf_json_str(&req, text.data ? text.data : "", text.len);
-    cx_buf_puts(&req, ",\"schema\":");
-    cx_write(&req, schema && schema->kind != CX_NULL ? schema : NULL);
-    cx_buf_puts(&req, ",\"max_output\":");
-    cx_write(&req, cx_get(model, "max_output"));
-    cx_buf_puts(&req, ",\"timeout_ms\":300000}"); /* llm: 5 min per attempt (D22) */
+    cx_buf req = model_request(model, prompt, &text);
     cx_buf_free(&text);
     return request(c, call_key(c, e), CALL_MODEL, model, prompt, &req, NULL);
 }
@@ -1546,20 +1559,12 @@ static cx_value *binary(ctx *c, cx_value *e) {
 
 /* ----- the pure layer (D27) -------------------------------------------------- */
 
-/* A call to a `def`: its own local slots, parameters first. */
-static cx_value *call_def(ctx *c, cx_value *e) {
-    cx_value *def = at(c->x->defs, index_of(e, "def"));
-    if (!def) return fatalf(c, "invalid IR: unknown def");
-    cx_value *args_e = cx_get(e, "args");
-    size_t n = len_of(args_e);
+/* A `def` applied to `n` values: its own local slots, parameters first. */
+static cx_value *apply_def(ctx *c, cx_value *def, cx_value **args, size_t n) {
     size_t nl = (size_t)cx_get_num(def, "nlocals", 0);
     if (nl < n) nl = n;
     cx_value **locals = cx_alloc(&c->w->arena, (nl ? nl : 1) * sizeof *locals);
-    for (size_t i = 0; i < nl; i++) locals[i] = NULL;
-    for (size_t i = 0; i < n; i++) {
-        locals[i] = eval(c, at(args_e, i));
-        if (!locals[i] || locals[i] == PENDING) return locals[i];
-    }
+    for (size_t i = 0; i < nl; i++) locals[i] = i < n ? args[i] : NULL;
     cx_value **outer = c->locals;
     cx_value *outer_state = c->estate;
     c->locals = locals;
@@ -1568,6 +1573,121 @@ static cx_value *call_def(ctx *c, cx_value *e) {
     c->locals = outer;
     c->estate = outer_state;
     return v;
+}
+
+/* A call to a `def`. */
+static cx_value *call_def(ctx *c, cx_value *e) {
+    cx_value *def = at(c->x->defs, index_of(e, "def"));
+    if (!def) return fatalf(c, "invalid IR: unknown def");
+    cx_value *args_e = cx_get(e, "args");
+    size_t n = len_of(args_e);
+    cx_value **args = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *args);
+    for (size_t i = 0; i < n; i++) {
+        args[i] = eval(c, at(args_e, i));
+        if (!args[i] || args[i] == PENDING) return args[i];
+    }
+    return apply_def(c, def, args, n);
+}
+
+/* ----- routers (D30) -------------------------------------------------------- */
+
+/*
+ * `router(prompt(args))` with `policy cheapest_that_passes(check)`: the
+ * router's models one at a time, cheapest first, each keyed `scope#id.i`,
+ * until an answer passes `check` (a `def`). A model whose call fails (or
+ * whose answer does not fit the prompt's type) is passed over like an
+ * answer that fails the check. The choice goes to the journal (`scope#id`).
+ * With no answer passing, the call fails (`try` catches it).
+ */
+static cx_value *call_route(ctx *c, cx_value *e) {
+    exec *x = c->x;
+    cx_value *router = at(x->routers, index_of(e, "router"));
+    cx_value *prompt = at(x->prompts, index_of(e, "prompt"));
+    if (!router || !prompt) return fatalf(c, "invalid IR: unknown router or prompt");
+    cx_value *check = at(x->defs, index_of(router, "check"));
+    cx_value *models = cx_get(router, "models");
+    const char *rname = cx_get_str(router, "name", "?");
+    const char *key = call_key(c, e);
+    pthread_mutex_lock(&x->mu);
+    pending *p = ptab_get(x, key);
+    pthread_mutex_unlock(&x->mu);
+    if (p && p->state == P_DONE) return p->value;
+    if (x->journal) {
+        int mismatch = 0;
+        char hash[65];
+        cx_sha256_hex(key, strlen(key), hash);
+        pthread_mutex_lock(&x->jmu);
+        cx_value *hit = cx_journal_lookup(x->journal, key, hash, &mismatch);
+        pthread_mutex_unlock(&x->jmu);
+        if (hit) {
+            cx_value *v = cx_get(hit, "value");
+            pthread_mutex_lock(&x->mu);
+            x->from_journal++;
+            new_pending(x, &c->w->arena, key, P_DONE, v);
+            pthread_mutex_unlock(&x->mu);
+            trace(x, c->label, "route %s  -> %s  from the journal", rname,
+                  cx_get_str(hit, "model", "?"));
+            return v;
+        }
+    }
+    if (!check) return fatalf(c, "invalid IR: router `%s` has no check", rname);
+    cx_value *args_e = cx_get(e, "args");
+    size_t n = len_of(args_e);
+    cx_value **args = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *args);
+    EVAL_ALL(c, args_e, args);
+    cx_buf text = prompt_text(prompt, args, n);
+    const char *outer_failure = c->failure;
+    for (size_t i = 0; i < len_of(models); i++) {
+        cx_value *model = at(x->models, (size_t)at(models, i)->u.num);
+        if (!model) {
+            cx_buf_free(&text);
+            return fatalf(c, "invalid IR: unknown model in router `%s`", rname);
+        }
+        cx_buf req = model_request(model, prompt, &text);
+        c->failure = NULL;
+        cx_value *v = request(c, fmt(&c->w->arena, "%s.%zu", key, i), CALL_MODEL, model, prompt,
+                              &req, NULL);
+        c->failure = outer_failure;
+        if (v == PENDING) {
+            cx_buf_free(&text);
+            return PENDING;
+        }
+        if (!v) {
+            pthread_mutex_lock(&x->mu);
+            int stopping = x->stopping;
+            pthread_mutex_unlock(&x->mu);
+            if (stopping) {
+                cx_buf_free(&text);
+                return NULL;
+            }
+            continue; /* this model failed: try the next */
+        }
+        cx_value *ok = apply_def(c, check, &v, 1);
+        if (!ok || ok == PENDING) {
+            cx_buf_free(&text);
+            return ok;
+        }
+        if (ok->kind != CX_BOOL || !ok->u.b) continue;
+        cx_buf_free(&text);
+        const char *mid = cx_get_str(model, "id", "?");
+        const char *keys[2] = {"model", "value"};
+        cx_value *vals[2] = {cx_cstr(&c->w->arena, mid), v};
+        job j;
+        memset(&j, 0, sizeof j);
+        j.key = key;
+        cx_sha256_hex(key, strlen(key), j.req_hash);
+        if (!journal_record(x, &j, "read", cx_rec(&c->w->arena, keys, vals, 2)))
+            return fatalf(c, "cannot write the journal");
+        pthread_mutex_lock(&x->mu);
+        new_pending(x, &c->w->arena, key, P_DONE, v);
+        pthread_mutex_unlock(&x->mu);
+        trace(x, c->label, "route %s  -> %s%s", rname, mid,
+              i ? "  (the cheaper answers did not pass)" : "");
+        return v;
+    }
+    cx_buf_free(&text);
+    return failf(c, "router `%s`: no model's answer passed `%s`", rname,
+                 cx_get_str(check, "name", "?"));
 }
 
 /* `[body for x in over if cond]` */
@@ -2643,6 +2763,7 @@ static cx_value *eval(ctx *c, cx_value *e) {
         return v ? v : cx_null(&c->w->arena);
     }
     if (strcmp(k, "model") == 0) return call_model(c, e);
+    if (strcmp(k, "route") == 0) return call_route(c, e);
     if (strcmp(k, "tool") == 0) return call_tool(c, e);
     if (strcmp(k, "graph") == 0) return call_graph(c, e);
     return fatalf(c, "invalid IR: unknown expression `%s`", k);
@@ -2836,6 +2957,7 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
     x->graphs = cx_get(ir, "graphs");
     x->entities = cx_get(ir, "entities");
     x->defs = cx_get(ir, "defs");
+    x->routers = cx_get(ir, "routers");
 
     size_t gi = (size_t)-1;
     for (size_t i = 0; i < len_of(x->graphs); i++)

@@ -82,6 +82,14 @@ impl Program {
             o.push_str(s);
             o.push('}');
         });
+        o.push_str(",\"routers\":");
+        list(&mut o, &self.routers, |o, r| {
+            o.push_str("{\"name\":");
+            string(o, &r.name);
+            o.push_str(",\"models\":");
+            list(o, &r.models, |o, m| o.push_str(&m.to_string()));
+            o.push_str(&format!(",\"check\":{}}}", r.check));
+        });
         o.push_str(",\"defs\":");
         list(&mut o, &self.defs, |o, d| {
             o.push_str("{\"name\":");
@@ -339,6 +347,18 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
             o,
             "model",
             &[("model", *model), ("prompt", *prompt)],
+            args,
+            ids,
+        ),
+        // Model `i` of the router is keyed `scope#id.i`; the choice, `scope#id`.
+        Expr::Route {
+            router,
+            prompt,
+            args,
+        } => call(
+            o,
+            "route",
+            &[("router", *router), ("prompt", *prompt)],
             args,
             ids,
         ),
