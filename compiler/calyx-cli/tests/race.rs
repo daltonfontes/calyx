@@ -130,13 +130,13 @@ fn run_id(out: &Output) -> String {
 }
 
 #[test]
-fn the_items_of_a_round_run_at_once() {
+fn each_round_and_each_item_has_its_own_calls() {
     let d = Dir::new("rounds");
     let out = d.run("debate", None);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let err = text(&out.stderr);
+    // How many run at once depends on the machine; how many run does not.
     assert!(err.contains("10 model call(s)"), "{err}");
-    assert!(err.contains("at most 3 at once"), "{err}");
     // One key per round and per item.
     let journal = d.journal(&out);
     for round in 0..2 {
