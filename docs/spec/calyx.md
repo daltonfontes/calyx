@@ -529,7 +529,7 @@ Mensagens de erro estruturadas, com **esperado**, **observado** e **local**, par
 | Comando | Função |
 |---|---|
 | `calyx check` | Verifica o programa (meta: até 1 s), sem gerar código |
-| `calyx build` | Emite um arquivo C (runtime + grafo + efeitos) e compila para um binário nativo |
+| `calyx build` | Gera um executável autocontido para um grafo: `calyx build arquivo.clyx [-o nome] [--graph g]`. É uma cópia do próprio `calyx` com o programa e o `calyx.toml` dentro (D35); não precisa de compilador C, nem de Calyx onde roda. Os parâmetros do grafo viram opções (`./nome --param valor`), e `./nome resume <id>`, `replay` e `runs` funcionam como no `calyx` |
 | `calyx run` | Executa um grafo: `calyx run arquivo.clyx --param valor`. Chamadas independentes rodam em paralelo; `--deterministic` roda uma por vez; `--budget` troca o orçamento |
 | `calyx fmt` | Formata o código |
 | `calyx resume` | Continua uma execução interrompida ou que falhou: `calyx resume <id>`. Chamadas já no diário não são feitas (nem pagas) de novo. `--budget` aumenta um orçamento esgotado |

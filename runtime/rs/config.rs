@@ -99,15 +99,17 @@ impl Config {
     /// Looks for `calyx.toml` in `dir` and its parents. Without one, the
     /// built-in providers are used and no tool has a server.
     pub fn discover(dir: &Path) -> Result<Config, String> {
-        let mut cur = Some(dir);
-        while let Some(d) = cur {
-            let candidate = d.join(FILE_NAME);
-            if candidate.is_file() {
-                return Config::load(&candidate);
-            }
-            cur = d.parent();
+        match Config::find(dir) {
+            Some(path) => Config::load(&path),
+            None => Ok(Config::builtin()),
         }
-        Ok(Config::builtin())
+    }
+
+    /// The `calyx.toml` in `dir` or the nearest of its parents.
+    pub fn find(dir: &Path) -> Option<PathBuf> {
+        dir.ancestors()
+            .map(|d| d.join(FILE_NAME))
+            .find(|candidate| candidate.is_file())
     }
 
     pub fn load(path: &Path) -> Result<Config, String> {

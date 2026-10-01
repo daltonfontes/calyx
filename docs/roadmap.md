@@ -27,7 +27,7 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | **M4** | Workers com roubo de trabalho, limites, prioridade pelo caminho crítico | **Q1:** quanto paralelismo sai sozinho |
 | **M5** | `loop`, `agent`, `match` com variantes, `try` | O ReAct como ciclo funciona |
 | **M6** | `write`, `write once`, `requires`, sandbox, entidades | **Q2:** quantos bugs de estado o compilador pega |
-| **Depois** | Geração de C nativo, várias máquinas, roteador, `rounds`, `race` | Desempenho e cobertura da especificação |
+| **Depois** | Geração de C nativo (como otimização, D35), várias máquinas, roteador, `rounds`, `race` | Desempenho e cobertura da especificação |
 
 ## Estado
 
@@ -39,6 +39,7 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | M3 | ✅ Concluído: diário por execução (`.calyx/runs/<id>/`), uma entrada por chamada com chave estável e hash do pedido, conteúdos grandes por hash, `begin` para `write once`, hash do programa (D23). `calyx resume`, `calyx replay`, `calyx runs`. Quedas simuladas nos testes (`CALYX_CRASH_AFTER`) |
 | M4 | ✅ Concluído: cada passo e cada item de `for each` é uma tarefa; workers com fila de prioridade e roubo de trabalho; chamadas em threads de E/S (nunca bloqueiam um worker), até `limits threads`; prioridade pelo caminho crítico calculado pelo compilador; limites `rate` e `budget` (preços no `calyx.toml`); espera pedida pelo provedor respeitada; `--deterministic` |
 | M5 | ✅ Concluído: `agent` (ciclo ReAct com chamada de tools nativa do provedor, tools em paralelo, `stuck`, `final_answer`), `loop` com `done`/`next`/`on limit`, `match` com cobertura de todas as variantes, `if`, operadores, construção de registros e variantes, `try` com `Result[T]`. Falhas locais (capturáveis) e respostas conferidas contra o tipo do prompt |
+| Distribuição (D35) | ✅ Concluído: binários estáticos (musl) para Linux x86_64 e ARM, e binários para macOS, publicados por tag (`.github/workflows/release.yml`), com teste do binário e de um programa gerado com ele em cada alvo; `install.sh` com conferência de SHA-256; `calyx build` gera um executável autocontido (o próprio `calyx` com o programa e o `calyx.toml` anexados) |
 | M6 | Próximo |
 
 ## Medidas

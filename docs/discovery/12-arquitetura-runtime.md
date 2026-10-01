@@ -21,6 +21,8 @@ Consequências diretas:
 
 O compilador da Calyx emite **um arquivo C por programa**, contendo o runtime, o grafo compilado e o código dos efeitos (clientes de LLM, tools). Um compilador C gera o binário.
 
+> **Revisto pela D35.** Para que quem instala a Calyx não precise de compilador C, `calyx build` não gera C: anexa o programa a uma cópia do binário `calyx`, que já traz o runtime. Gerar C nativo fica como otimização futura.
+
 - Cada nó do grafo vira um **segmento** de uma máquina de estados, **sem usar a pilha de chamadas do C**. O estado de uma execução continua sendo **dado** (nós prontos, nós em andamento, valores, posição no diário), então suspender, retomar e se recuperar continuam sendo a mesma operação.
 - **Afinidade no lugar do coletor de lixo** (D26): valores com um dono são liberados pelo código compilado; só o que o compilador detectar como compartilhado (ex.: a mesma `conversation` em vários ramos) recebe contador de referências.
 - **Dois caminhos de execução:** o código nativo, para os grafos escritos pelo programador, e um **interpretador pequeno**, dentro do runtime, para grafos gerados por LLM em tempo de execução (W7), depois de verificados.

@@ -1,4 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
+/* macOS hides sysconf(_SC_NPROCESSORS_ONLN) and friends under strict POSIX. */
+#define _DARWIN_C_SOURCE
 
 #include "journal.h"
 

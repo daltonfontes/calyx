@@ -15,7 +15,9 @@ jobs:
           components: rustfmt, clippy
 
       - name: Lint
-        run: make lint
+        run: |
+          make lint
+          shellcheck install.sh
 
       - name: Test (Rust compiler + C runtime)
         run: make test
@@ -26,3 +28,8 @@ jobs:
           ./target/release/calyx check examples/research.clyx --ir --time
           ./target/release/calyx run examples/research.clyx --fake-models --topic "energia solar"
           ./target/release/calyx run examples/agent.clyx --fake-models --question "baterias de sódio"
+
+      - name: Build a standalone program and run it from another directory
+        run: |
+          ./target/release/calyx build examples/agent.clyx -o "$RUNNER_TEMP/agent"
+          cd "$RUNNER_TEMP" && ./agent --fake-models --quiet --question "baterias de sódio"

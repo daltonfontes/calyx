@@ -54,11 +54,31 @@ A analogia mais próxima é o **SQL**: você declara o que quer, e o banco decid
 
 ## Estado do projeto
 
-O **discovery** está concluído (34 decisões fechadas). Na implementação, os marcos M0 (estrutura), M1 (`calyx check` para o subconjunto inicial) M2 (`calyx run`: o runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP) M3 (diário: uma execução interrompida continua sem refazer nenhuma chamada concluída), M4 (paralelismo derivado do grafo, com limites e prioridade pelo caminho crítico) e M5 (`agent`, `loop`, `match`, `if`, `try`: o ciclo ReAct funciona com o Gemini) estão concluídos. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
+O **discovery** está concluído (35 decisões fechadas). Na implementação, os marcos M0 (estrutura), M1 (`calyx check` para o subconjunto inicial) M2 (`calyx run`: o runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP) M3 (diário: uma execução interrompida continua sem refazer nenhuma chamada concluída), M4 (paralelismo derivado do grafo, com limites e prioridade pelo caminho crítico) e M5 (`agent`, `loop`, `match`, `if`, `try`: o ciclo ReAct funciona com o Gemini) estão concluídos. A Calyx se instala como um binário só, e `calyx build` gera executáveis autocontidos (D35). O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
+
+## Como instalar
+
+Um binário só, sem dependências: não precisa de Rust, de compilador C nem de bibliotecas (decisão D35). Linux (x86_64 e ARM) e macOS (Intel e Apple Silicon); no Windows, use o WSL.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | sh
+```
+
+O script baixa o binário da última versão em [Releases](https://github.com/daltonfontes/calyx/releases), confere o SHA-256 e instala em `~/.calyx/bin`. `CALYX_VERSION=v0.1.0` escolhe uma versão; `CALYX_INSTALL` troca a pasta.
+
+**Programas como executáveis.** `calyx build` gera um executável que roda um grafo, com o programa e o `calyx.toml` dentro. Quem recebe o arquivo não precisa instalar nada:
+
+```sh
+calyx build examples/research.clyx          # gera ./research (~3 MB)
+./research --topic "energia solar no Brasil"
+./research --help                           # mostra os parâmetros do grafo
+```
+
+Os comandos das tools (servidores MCP) rodam na pasta do executável, então leve junto o que eles usam (no exemplo, a pasta `tools/`).
 
 ## Como compilar e testar
 
-Requisitos: Rust (stable) e um compilador C.
+Só para quem desenvolve a Calyx. Requisitos: Rust (stable) e um compilador C.
 
 ```sh
 make test     # testes do compilador (Rust) e do runtime (C); precisam de python3
