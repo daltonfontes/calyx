@@ -1,0 +1,48 @@
+# Each check of `rounds` and `race` (M9), once.
+model m = "m"
+
+tool search(q: Text) -> Text:
+    effect read
+
+tool pay(amount: Int) -> Text:
+    effect write
+
+prompt p(x: Text) -> Text:
+    """{x}"""
+
+graph g(x: Text) -> Text:
+    a = race first:
+        only: m(p(x))
+        on none: "nada"
+    b = race first:
+        one: m(p(x))
+        one: m(p(x))
+        on none: "nada"
+    c = race first where len(m(p(it))) > 0:
+        one: m(p(x))
+        two: m(p(x))
+        on none: "nada"
+    d = race first:
+        one: m(p(x))
+        two: m(p(x))
+    e = race first:
+        one: m(p(x))
+        two: m(p(x))
+        on none: 3
+    f = race first:
+        one: m(p(x))
+        two: len(x)
+        on none: "nada"
+    h = race first:
+        one: pay(1)
+        two: search(x)
+        on none: fail "nada"
+    i = rounds 2, carry n = 0:
+        done "pronto"
+    j = rounds 2, carry n = 0:
+        next "um"
+    k = rounds 2, carry n = 0:
+        items = for each v in x:
+            m(p(v))
+        next n
+    return x

@@ -8,6 +8,7 @@ Replace it in calyx.toml with a real search server when you have one.
 """
 import json
 import sys
+import time
 
 TOOL = {
     "name": "web_search",
@@ -60,6 +61,10 @@ for line in sys.stdin:
         if "__big__" in query:
             # Large outputs test how the journal stores big answers (by hash, D20).
             answer(msg_id, {"content": [{"type": "text", "text": "x" * 10000}]})
+        elif "__slow__" in query:
+            # A slow source: races test that the other branch wins (D12).
+            time.sleep(1.5)
+            answer(msg_id, {"content": [{"type": "text", "text": search(query)}]})
         elif "__fail__" in query:
             answer(msg_id, {"content": [{"type": "text", "text": "falha simulada"}], "isError": True})
         else:

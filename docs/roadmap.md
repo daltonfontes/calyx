@@ -27,7 +27,7 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | **M4** | Workers com roubo de trabalho, limites, prioridade pelo caminho crítico | **Q1:** quanto paralelismo sai sozinho |
 | **M5** | `loop`, `agent`, `match` com variantes, `try` | O ReAct como ciclo funciona |
 | **M6** | `write`, `write once`, `requires`, sandbox, entidades. Em três partes: **M6a**, escritas externas seguras; **M6b**, sandbox; **M6c**, entidades | **Q2:** quantos bugs de estado o compilador pega |
-| **Depois** | Geração de C nativo (como otimização, D35), várias máquinas, roteador, `rounds`, `race` | Desempenho e cobertura da especificação |
+| **Depois** | Geração de C nativo (como otimização, D35), várias máquinas, roteador | Desempenho e cobertura da especificação |
 
 ## Estado
 
@@ -45,7 +45,8 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | M6c | ✅ Concluído: entidades. `entity` com `state` e handlers puros que respondem ou mudam o estado; `ask` e `send`; estado em `.calyx/entities/`, uma mudança por vez por chave também entre processos (`flock`), cada mensagem aplicada uma vez (ids gravados junto com o estado), ordem entre mensagens à mesma entidade pela ordem do texto, aviso de atualização perdida (`W0603`). Exemplo: `examples/memory.clyx`, memória entre conversas com o Gemini. `receive` e `respond` ficam para depois |
 | M7 | ✅ Concluído: camada pura (D27). `def` com valores novos, `if`/`elif`/`else` e `return`, sem efeitos e sem recursão; `true`/`false`; listas por compreensão (`[x.a for x in xs if ...]`); `in`; funções embutidas (`len`, `take`, `sum`, `join`, `lower`, `upper`, `trim`). Usáveis em grafos, handlers e outros `def`s |
 | M8 | ✅ Concluído: `receive` com espera durável (D21). Tipos `message`; a execução para no estado `waiting` (código 4) e grava o prazo uma vez; `calyx deliver` confere a mensagem contra o tipo e a entrega; `calyx resume` e `calyx tick` (para cron, sem servidor) continuam; `on timeout` quando o prazo vence. Exemplo: `examples/approval.clyx` |
-| M9 | Próximo (a definir) |
+| M9 | ✅ Concluído: `rounds` e `race` (D18, D12). `rounds N, carry x = ...` com passos no corpo (`turn = for each r in roles: ...`) e barreira no fim de cada rodada; corpos de `loop` também aceitam passos. `race first where cond:` com ramos que rodam ao mesmo tempo; o primeiro que passa vence, vai para o diário (a retomada e o `replay` não disputam de novo) e os outros são cancelados entre passos (subgrafos param, chamadas que ainda não começaram não são feitas); `on none` obrigatório; aviso para escritas nos ramos. Exemplos: `examples/debate.clyx` e `examples/race.clyx`, rodados com o Gemini |
+| M10 | Próximo: roteador de modelos (D30) |
 
 ## Medidas
 
@@ -67,7 +68,9 @@ Para repetir: `cargo run --release -p calyx-check --example phases -- arquivo.cl
 
 ### M6 (Q2): quantos bugs de estado o compilador pega
 
-**Com o `receive` (M8), a suíte tem 45 bugs:** o compilador pega 30, 1 não pode acontecer por construção, o runtime pega 8 e 6 escapam; **39 de 45 nunca causam dano**. Os 4 novos: espera sem prazo e espera de um tipo que não é `message` (compilador); resposta entregue duas vezes e prazo que sobrevive a um reinício (runtime).
+**Com `rounds` e `race` (M9), a suíte tem 52 bugs:** o compilador pega 34, 2 não podem acontecer por construção, o runtime pega 10 e 6 escapam; **46 de 52 nunca causam dano**. Os 7 novos: ramo de corrida que cobra o cliente (`W0604`), dois ramos editando o mesmo repositório (`E0645`), corrida sem `on none` (`E0683`) e condição que chama um modelo (`E0682`), pelo compilador; rodada que vê respostas pela metade (por construção: o `next` só existe com todas); corrida decidida de novo na retomada e ramo perdedor que continua gastando (runtime).
+
+**Com o `receive` (M8), a suíte tinha 45 bugs:** o compilador pega 30, 1 não pode acontecer por construção, o runtime pega 8 e 6 escapam; **39 de 45 nunca causam dano**. Os 4 novos: espera sem prazo e espera de um tipo que não é `message` (compilador); resposta entregue duas vezes e prazo que sobrevive a um reinício (runtime).
 
 **Com as entidades (M6c), a suíte tinha 41 bugs:** o compilador pega 28 (68%), 1 não pode acontecer por construção, o runtime pega 6 e 6 escapam. **35 de 41 nunca causam dano.**
 

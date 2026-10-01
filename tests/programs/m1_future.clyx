@@ -2,8 +2,6 @@
 model claude = "m"
 
 graph g(q: Text) -> Text:
-    a = race first where it == q:
-        one: q
-    b = rounds 3, carry t = q:
-        next t
+    respond q
+    state spent: Money = 0 USD, merge sum
     return q

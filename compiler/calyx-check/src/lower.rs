@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 use calyx_ir::{self as ir, Effect, NodeId, Part, PromptPart};
 use calyx_syntax::ast::{
-    Arg, Decl, DefDecl, DefStmt, EntityDecl, Expr, ExprKind, GraphDecl, Ident, OnLimit, Program,
-    Stmt, StrLit, ToolDecl, TypeDecl, TypeExpr, TypeKind,
+    Arg, Decl, DefDecl, DefStmt, EntityDecl, Expr, ExprKind, GraphDecl, Ident, OnLimit, OnNone,
+    Program, Stmt, StrLit, ToolDecl, TypeDecl, TypeExpr, TypeKind,
 };
 
 pub fn lower(program: &Program, out: &mut ir::Program) {
@@ -428,6 +428,7 @@ impl Lower<'_> {
                 max,
                 body,
                 on_limit,
+                rounds,
             } => {
                 let init = self.expr(init, scope);
                 let slot = scope.bind(&var.name);
@@ -443,6 +444,58 @@ impl Lower<'_> {
                         OnLimit::Fail(lit) => Some(plain_text(lit)),
                         _ => Some(format!("the loop reached its limit of {max} turns")),
                     },
+                    rounds: *rounds,
+                }
+            }
+            // Steps become nested `let`s.
+            ExprKind::Block { steps, tail } => {
+                let mut bound = Vec::new();
+                for (name, v) in steps {
+                    let value = self.expr(v, scope);
+                    bound.push((scope.bind(&name.name), value));
+                }
+                let mut e = self.expr(tail, scope);
+                scope.unbind(bound.len());
+                for (slot, value) in bound.into_iter().rev() {
+                    e = ir::Expr::Let {
+                        slot,
+                        value: Box::new(value),
+                        body: Box::new(e),
+                    };
+                }
+                e
+            }
+            ExprKind::Each { var, over, body } => {
+                let over = self.expr(over, scope);
+                let slot = scope.bind(&var.name);
+                let body = self.expr(body, scope);
+                scope.unbind(1);
+                ir::Expr::Each {
+                    slot,
+                    over: Box::new(over),
+                    body: Box::new(body),
+                }
+            }
+            ExprKind::Race(r) => {
+                let branches = r
+                    .branches
+                    .iter()
+                    .map(|(n, b)| (n.name.clone(), self.expr(b, scope)))
+                    .collect();
+                let (on_none, on_none_fail) = match &r.on_none {
+                    Some(OnNone::Value(v)) => (Some(Box::new(self.expr(v, scope))), None),
+                    Some(OnNone::Fail(lit)) => (None, Some(plain_text(lit))),
+                    None => (None, Some("no branch of the race won".into())),
+                };
+                let slot = scope.bind("it");
+                let cond = r.cond.as_ref().map(|c| Box::new(self.expr(c, scope)));
+                scope.unbind(1);
+                ir::Expr::Race {
+                    branches,
+                    slot,
+                    cond,
+                    on_none,
+                    on_none_fail,
                 }
             }
             ExprKind::Done(v) => ir::Expr::Done(Box::new(self.expr(v, scope))),

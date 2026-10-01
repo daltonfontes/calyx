@@ -1,0 +1,12 @@
+# Bug: Nenhum ramo da corrida passa na condição, e o programa não diz o que fazer: a execução segue com um valor que não existe.
+# Pego por: E0683
+model m = "m"
+
+prompt solve(q: Text) -> Text:
+    """{q}"""
+
+graph g(q: Text) -> Text:
+    best = race first where len(it) > 10:
+        a: m(solve(q))
+        b: m(solve("{q}?"))
+    return best

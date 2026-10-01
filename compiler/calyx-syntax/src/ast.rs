@@ -285,13 +285,33 @@ pub enum ExprKind {
         cases: Vec<Case>,
     },
     /// `loop var = init, max N:` body, optional `on limit: ...` (decision D5).
+    /// With `rounds`, `rounds N, carry var = init:` (decision D18): exactly
+    /// N rounds (unless `done`), ending with the value carried.
     Loop {
         var: Ident,
         init: Box<Expr>,
         max: u64,
         body: Box<Expr>,
         on_limit: OnLimit,
+        rounds: bool,
     },
+    /// The body of a loop or of rounds with steps: `name = value` lines,
+    /// each seeing the ones before, then what the turn gives.
+    Block {
+        steps: Vec<(Ident, Expr)>,
+        tail: Box<Expr>,
+    },
+    /// `for each var in list: body` as a step of a block: every item at
+    /// once, giving the list of results.
+    Each {
+        var: Ident,
+        over: Box<Expr>,
+        body: Box<Expr>,
+    },
+    /// `race first where cond:` then `name: value` branches and `on none:`
+    /// (decision D12): the branches run at once; the first whose value
+    /// passes `cond` (`it`) wins and the others are cancelled.
+    Race(Box<RaceExpr>),
     /// `done value`: ends a loop with this value.
     Done(Box<Expr>),
     /// `next value`: the next turn of a loop, carrying this value.
@@ -332,6 +352,24 @@ pub enum ExprKind {
         over: Box<Expr>,
         cond: Option<Box<Expr>>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RaceExpr {
+    /// `where cond`, with `it` for a branch's value; none: the first
+    /// branch that does not fail wins.
+    pub cond: Option<Expr>,
+    pub branches: Vec<(Ident, Expr)>,
+    pub on_none: Option<OnNone>,
+}
+
+/// What a race gives when no branch wins.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OnNone {
+    /// `fail "reason"`
+    Fail(StrLit),
+    /// A value of the branches' type.
+    Value(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq)]

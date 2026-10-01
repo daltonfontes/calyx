@@ -1,0 +1,51 @@
+warning[W0601]: `write` tool without `idempotency_key`
+- expected : `idempotency_key param`, so retries and resumed runs cannot apply it twice
+- observed : no key: the runtime repeats the call after failures, so the tool itself must be idempotent
+Location: m9_errors.clyx:7:6
+
+error[E0680]: a race needs at least two branches
+- expected : two or more `name: value` lines
+Location: m9_errors.clyx:14:9
+
+error[E0681]: two branches of a race with the same name
+- observed : `one`
+Location: m9_errors.clyx:19:9
+
+error[E0682]: a race's condition is pure
+- expected : a condition on `it`, the branch's value, made of operators and `def`s
+- observed : a call with effects in `where`
+Location: m9_errors.clyx:21:30
+
+error[E0683]: a race needs `on none`
+- expected : `on none: fail "reason"` or `on none: value`, for when no branch wins
+Location: m9_errors.clyx:25:9
+
+error[E0684]: `on none` gives a value of another type
+- expected : `Text`, like the branches
+- observed : `Int`
+Location: m9_errors.clyx:31:18
+
+error[E0615]: branches give different types
+- expected : `Text`
+- observed : `Nat`
+Location: m9_errors.clyx:34:14
+
+warning[W0604]: a branch of a race writes outside the run
+- expected : reads, models and sandboxes in the branches; the write after the race, with the winner
+- observed : `one` can lose and still have written: a write in progress finishes when the race is decided
+Location: m9_errors.clyx:37:14
+
+error[E0685]: rounds end with the value they carry: `done` gives a value of its type
+- expected : `Int`
+- observed : `Text`
+Location: m9_errors.clyx:40:9
+
+error[E0622]: `next` gives a value of another type
+- expected : `Int`, like the loop's first value
+- observed : `Text`
+Location: m9_errors.clyx:43:14
+
+error[E0609]: `for each` over a value that is not a list
+- expected : a list
+- observed : `Text`
+Location: m9_errors.clyx:45:31

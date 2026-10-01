@@ -1,0 +1,17 @@
+# Bug: Duas estratégias de cobrança correm; a perdedora também cobra o cliente antes de a corrida ser decidida.
+# Pego por: W0604
+model m = "m"
+
+tool charge(customer: Text, amount: Int) -> Text:
+    effect write
+    idempotency_key customer
+
+prompt quote(customer: Text) -> Text:
+    """Cotação para {customer}"""
+
+graph g(customer: Text) -> Text:
+    paid = race first:
+        card: charge(customer, 100)
+        offer: m(quote(customer))
+        on none: fail "nenhuma"
+    return paid

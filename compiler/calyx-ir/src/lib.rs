@@ -194,6 +194,25 @@ pub enum Expr {
         body: Box<Expr>,
         /// `None`: `on limit: last`; `Some(reason)`: fail.
         on_limit: Option<String>,
+        /// `rounds` (decision D18): runs all its turns.
+        rounds: bool,
+    },
+    /// `for each x in over: body` inside an expression, with `x` in local
+    /// `slot`: every item at once.
+    Each {
+        slot: usize,
+        over: Box<Expr>,
+        body: Box<Expr>,
+    },
+    /// `race` (decision D12): the branches at once; the first whose value
+    /// (in local `slot`) passes `cond` wins. With no winner, `on_none`, or
+    /// failing with `on_none_fail`.
+    Race {
+        branches: Vec<(String, Expr)>,
+        slot: usize,
+        cond: Option<Box<Expr>>,
+        on_none: Option<Box<Expr>>,
+        on_none_fail: Option<String>,
     },
     Done(Box<Expr>),
     Next(Box<Expr>),
@@ -389,7 +408,19 @@ impl Graph {
                     calls(value) + cases.iter().map(|c| calls(&c.body)).fold(0.0, f64::max)
                 }
                 // A loop is expected to turn about twice.
+                Expr::Loop {
+                    init,
+                    body,
+                    max,
+                    rounds: true,
+                    ..
+                } => calls(init) + *max as f64 * calls(body),
                 Expr::Loop { init, body, .. } => calls(init) + 2.0 * calls(body),
+                // Items at once: about as long as one.
+                Expr::Each { over, body, .. } => calls(over) + calls(body),
+                Expr::Race { branches, .. } => {
+                    branches.iter().map(|(_, b)| calls(b)).fold(0.0, f64::max)
+                }
                 // An agent: a few turns of a model call and a tool call each.
                 Expr::Agent(a) => {
                     let turns = a.max_turns.min(3) as f64;

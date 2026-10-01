@@ -186,6 +186,10 @@ struct exec {
     /* `receive`s waiting for a message: the run stops, to be resumed. */
     int waiting;
     const char *wait_desc;
+    /* Branches that lost a race (D12), by key prefix: their subgraphs'
+     * tasks and their calls not started yet are dropped. */
+    const char **cancelled;
+    size_t ncancelled, cancelled_cap;
     int trace;
     double t0;
     cx_buf err;
@@ -490,6 +494,15 @@ static void check_stuck(exec *x) {
         fail_locked(x, NULL, NULL,
                     x->waiting ? x->wait_desc
                                : "internal error: the run stopped with nothing left to do");
+}
+
+/* Is `key` inside a branch that lost a race? (`mu` held) */
+static int is_cancelled(exec *x, const char *key) {
+    for (size_t i = 0; i < x->ncancelled; i++) {
+        size_t n = strlen(x->cancelled[i]);
+        if (strncmp(key, x->cancelled[i], n) == 0 && key[n] == '#') return 1;
+    }
+    return 0;
 }
 
 static void graph_done(exec *x, worker *w, gexec *g) {
@@ -1088,6 +1101,17 @@ static void *io_main(void *arg) {
             break;
         }
         job *j = job_heap_pop(&x->jobs);
+        if (x->ncancelled && is_cancelled(x, j->key)) {
+            /* Its branch lost a race before the call started. */
+            j->p->state = P_FAILED;
+            j->p->error = "cancelled: another branch won the race";
+            wake(x, NULL, j->p);
+            check_stuck(x);
+            pthread_mutex_unlock(&x->mu);
+            free(j->req);
+            free(j);
+            continue;
+        }
         x->inflight++;
         if (x->inflight > x->max_inflight) x->max_inflight = x->inflight;
         pthread_mutex_unlock(&x->mu);
@@ -1107,7 +1131,10 @@ static void *io_main(void *arg) {
         }
         wake(x, NULL, j->p);
         check_stuck(x);
+        int lost = x->ncancelled && is_cancelled(x, j->key);
         pthread_mutex_unlock(&x->mu);
+        /* In progress when its branch lost a race: it finished, unused. */
+        if (lost) trace(x, j->label, "      lost the race: the answer is not used");
         free(j->req);
         free(j);
     }
@@ -1695,6 +1722,13 @@ static cx_value *eval_tail(ctx *c, cx_value *e, int *sig) {
         if (!cond || cond == PENDING) return cond;
         return eval_tail(c, cx_get(e, cond->kind == CX_BOOL && cond->u.b ? "t" : "e"), sig);
     }
+    /* The steps of a turn, before what it gives. */
+    if (strcmp(k, "let") == 0) {
+        cx_value *v = eval(c, cx_get(e, "v"));
+        if (!v || v == PENDING) return v;
+        c->locals[index_of(e, "slot")] = v;
+        return eval_tail(c, cx_get(e, "body"), sig);
+    }
     return fatalf(c, "invalid IR: a loop body without `done` or `next`");
 }
 
@@ -2093,6 +2127,146 @@ static cx_value *call_receive(ctx *c, cx_value *e) {
     return PENDING;
 }
 
+/* ----- for each, inside an expression ------------------------------------- */
+
+/* `for each x in over: body`: every item at once, each keyed by its
+ * position (`scope#id[j]`), so their calls start together. */
+static cx_value *eval_each(ctx *c, cx_value *e) {
+    cx_value *over = eval(c, cx_get(e, "over"));
+    if (!over || over == PENDING) return over;
+    if (over->kind != CX_LIST) return failf(c, "`for each` over a value that is not a list");
+    size_t slot = index_of(e, "slot");
+    size_t id = index_of(e, "id");
+    size_t m = over->u.list.len;
+    cx_value **items = cx_alloc(&c->w->arena, (m ? m : 1) * sizeof *items);
+    const char *outer = c->scope;
+    int waiting = 0;
+    for (size_t j = 0; j < m; j++) {
+        c->locals[slot] = over->u.list.items[j];
+        c->scope = fmt(&c->w->arena, "%s#%zu[%zu]", outer, id, j);
+        cx_value *v = eval(c, cx_get(e, "body"));
+        c->scope = outer;
+        if (!v) return NULL;
+        if (v == PENDING)
+            waiting = 1;
+        else
+            items[j] = v;
+    }
+    return waiting ? PENDING : cx_list(&c->w->arena, items, m);
+}
+
+/* ----- races (D12) ---------------------------------------------------------- */
+
+static void cancel_branch(exec *x, const char *prefix) {
+    if (x->ncancelled == x->cancelled_cap) {
+        x->cancelled_cap = x->cancelled_cap ? 2 * x->cancelled_cap : 8;
+        x->cancelled = realloc(x->cancelled, x->cancelled_cap * sizeof *x->cancelled);
+        if (!x->cancelled) abort();
+    }
+    x->cancelled[x->ncancelled++] = cx_strndup(&x->arena, prefix, strlen(prefix));
+}
+
+/*
+ * `race first where cond:` + `name: value` branches + `on none`. Every
+ * branch runs at once, its calls keyed by it (`scope#id.name`). The first
+ * branch seen with a value that passes `cond` wins: the winner goes to the
+ * journal (the race is decided once, also across resumes) and the other
+ * branches are cancelled between steps: their subgraphs stop and their
+ * calls not started yet are dropped; calls in progress finish, unused. A
+ * branch that fails loses. With every branch finished and no winner,
+ * `on none`.
+ */
+static cx_value *eval_race(ctx *c, cx_value *e) {
+    exec *x = c->x;
+    const char *key = call_key(c, e);
+    pthread_mutex_lock(&x->mu);
+    pending *p = ptab_get(x, key);
+    pthread_mutex_unlock(&x->mu);
+    if (p && p->state == P_DONE) return p->value;
+    if (x->journal) {
+        int mismatch = 0;
+        char hash[65];
+        cx_sha256_hex(key, strlen(key), hash);
+        pthread_mutex_lock(&x->jmu);
+        cx_value *hit = cx_journal_lookup(x->journal, key, hash, &mismatch);
+        pthread_mutex_unlock(&x->jmu);
+        if (hit) {
+            cx_value *v = cx_get(hit, "value");
+            pthread_mutex_lock(&x->mu);
+            x->from_journal++;
+            new_pending(x, &c->w->arena, key, P_DONE, v);
+            pthread_mutex_unlock(&x->mu);
+            trace(x, c->label, "race  won by `%s`  from the journal", cx_get_str(hit, "winner", "?"));
+            return v;
+        }
+    }
+    cx_value *names = cx_get(e, "names");
+    cx_value *branches = cx_get(e, "branches");
+    cx_value *cond = cx_get(e, "cond");
+    size_t n = len_of(branches);
+    size_t slot = index_of(e, "slot");
+    const char *outer_scope = c->scope;
+    const char *outer_failure = c->failure;
+    const char *outer_label = c->label;
+    int open = 0;
+    size_t winner = n;
+    cx_value *won = NULL;
+    for (size_t i = 0; i < n && winner == n; i++) {
+        const char *name = at(names, i)->u.str.s;
+        c->scope = fmt(&c->w->arena, "%s.%s", key, name);
+        c->label = fmt(&c->w->arena, "%s.%s", outer_label, name);
+        c->failure = NULL;
+        cx_value *v = eval(c, at(branches, i));
+        c->scope = outer_scope;
+        c->label = outer_label;
+        c->failure = outer_failure;
+        if (v == PENDING) {
+            open = 1;
+            continue;
+        }
+        if (!v) {
+            /* A failed branch loses; a failure that stopped the run does not. */
+            pthread_mutex_lock(&x->mu);
+            int stopping = x->stopping;
+            pthread_mutex_unlock(&x->mu);
+            if (stopping) return NULL;
+            continue;
+        }
+        if (cond && cond->kind != CX_NULL) {
+            c->locals[slot] = v;
+            cx_value *ok = eval(c, cond);
+            if (!ok) return NULL;
+            if (ok == PENDING || ok->kind != CX_BOOL || !ok->u.b) continue;
+        }
+        winner = i;
+        won = v;
+    }
+    if (winner < n) {
+        const char *name = at(names, winner)->u.str.s;
+        const char *keys[2] = {"winner", "value"};
+        cx_value *vals[2] = {cx_cstr(&c->w->arena, name), won};
+        job j;
+        memset(&j, 0, sizeof j);
+        j.key = key;
+        cx_sha256_hex(key, strlen(key), j.req_hash);
+        if (!journal_record(x, &j, "read", cx_rec(&c->w->arena, keys, vals, 2)))
+            return fatalf(c, "cannot write the journal");
+        pthread_mutex_lock(&x->mu);
+        new_pending(x, &c->w->arena, key, P_DONE, won);
+        for (size_t i = 0; i < n; i++)
+            if (i != winner)
+                cancel_branch(x, fmt(&c->w->arena, "%s.%s", key, at(names, i)->u.str.s));
+        pthread_mutex_unlock(&x->mu);
+        trace(x, c->label, "race  won by `%s`", name);
+        return won;
+    }
+    if (open) return PENDING;
+    trace(x, c->label, "race  no branch won");
+    cx_value *fail = cx_get(e, "on_none_fail");
+    if (fail && fail->kind == CX_STR) return failf(c, "%s", fail->u.str.s);
+    return eval(c, cx_get(e, "on_none"));
+}
+
 /* ----- agents ------------------------------------------------------------- */
 
 /* The tool definitions the model sees (OpenAI "function" format). */
@@ -2453,6 +2627,8 @@ static cx_value *eval(ctx *c, cx_value *e) {
     if (strcmp(k, "ask") == 0 || strcmp(k, "send") == 0) return call_message(c, e);
     if (strcmp(k, "bool") == 0) return cx_get(e, "v");
     if (strcmp(k, "receive") == 0) return call_receive(c, e);
+    if (strcmp(k, "each") == 0) return eval_each(c, e);
+    if (strcmp(k, "race") == 0) return eval_race(c, e);
     if (strcmp(k, "let") == 0) {
         cx_value *v = eval(c, cx_get(e, "v"));
         if (!v || v == PENDING) return v;
@@ -2582,6 +2758,12 @@ static void *worker_main(void *arg) {
         if (x->stopping || x->finished) {
             pthread_mutex_unlock(&x->mu);
             break;
+        }
+        if (t && x->ncancelled && is_cancelled(x, t->g->path)) {
+            /* Its branch lost a race: it stops here. */
+            t->state = T_DONE;
+            pthread_mutex_unlock(&x->mu);
+            continue;
         }
         if (t) {
             t->state = T_RUNNING;
@@ -2807,6 +2989,7 @@ done:
     free(x->io_arenas);
     free(x->io);
     free(x->ptab);
+    free(x->cancelled);
     cx_buf_free(&msg);
     cx_buf_free(&x->err);
     cx_arena_free(&x->arena);

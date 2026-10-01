@@ -288,7 +288,7 @@ final = loop x = valor_inicial, max N:
 
 O limite é obrigatório. `on limit` define o que acontece se ele for atingido; sem ele, o laço falha.
 
-- O corpo é **uma expressão** que termina em `done` ou `next`, diretamente ou em cada ramo de um `match` ou `if` (o compilador confere).
+- O corpo são **passos** (`nome = valor`, cada um vendo os anteriores; `nome = for each x in lista: ...` roda os itens ao mesmo tempo) seguidos de **uma expressão** que termina em `done` ou `next`, diretamente ou em cada ramo de um `match` ou `if` (o compilador confere).
 - `next` precisa ter o tipo do valor inicial; `on limit: last` exige que `done` dê o mesmo tipo.
 - Cada volta é um lugar próprio no grafo realizado: as chamadas da volta `k` têm chaves `passo#laço.k#…` no diário, então um laço interrompido retoma na volta em que estava.
 
@@ -302,6 +302,20 @@ final = rounds N, carry x = valor_inicial:
 ```
 
 Como o `loop`, mas com **barreira** no fim de cada rodada: só ali os resultados de uma rodada ficam visíveis para a próxima.
+
+**Como está implementado (M9):**
+
+```
+final = rounds 2, carry answers = start:
+    turn = for each r in roles:
+        gemini(rebut(r, question, answers))
+    next turn
+```
+
+- **Sempre `N` rodadas**, e o valor é o último carregado; `done valor` (do mesmo tipo, `E0685`) termina antes. Não há `on limit`: chegar a `N` é o fim normal.
+- **A barreira não precisa de mecanismo próprio:** dentro de uma rodada só existe o valor carregado da anterior, e o `next` só tem valor quando todos os itens do `for each` terminaram. Ninguém vê uma resposta pela metade.
+- Os itens de um `for each` dentro do corpo rodam ao mesmo tempo, cada um com a sua chave no diário (`passo#rodadas.k#for[j]#…`): uma execução interrompida continua na rodada e no item em que estava.
+- Uma lista carregada pode mudar de tamanho entre as rodadas (o tipo do valor carregado não guarda o `max` da lista inicial).
 
 ### 5.7 Agente (D5)
 
@@ -339,6 +353,23 @@ vencedor = race first where condição:
 ```
 
 Os ramos rodam em paralelo; vence o primeiro que satisfaz a condição (`it` é o resultado de cada ramo); os outros são cancelados entre passos. O vencedor é gravado no diário. Recursos passados aos ramos são consumidos; só os do vencedor voltam.
+
+**Como está implementado (M9):**
+
+```
+best = race first where it.confident:
+    direct: gemini(direct(question))
+    sources: with_sources(question)
+    on none: Answer(answer="nenhuma estratégia teve certeza", confident=false)
+```
+
+- **Ramos:** dois ou mais (`E0680`), com nomes diferentes (`E0681`) e do mesmo tipo (`E0615`). Cada um é uma expressão, normalmente uma chamada a um subgrafo. `where` é opcional: sem ele, vence o primeiro ramo que não falha.
+- **A condição é pura** (`E0682`): operadores e `def`s sobre `it`. Uma condição que chamasse um modelo pagaria uma chamada por ramo e mudaria a cada execução.
+- **`on none` é obrigatório** (`E0683`): `fail "motivo"` ou um valor do tipo dos ramos (`E0684`). Vale quando todos os ramos terminaram e nenhum passou; um ramo que falha perde.
+- **O vencedor vai para o diário** com o seu valor. A retomada e o `replay` não disputam a corrida de novo, mesmo que outro ramo terminasse primeiro desta vez.
+- **Cancelamento entre passos:** os subgrafos dos ramos perdedores param (as tarefas deles não rodam mais) e as chamadas que ainda esperavam a vez não são feitas. Uma chamada já em andamento termina, e a resposta não é usada (o rastro diz "lost the race"); a execução espera por ela antes de terminar.
+- **Escritas nos ramos:** aviso `W0604`. Um ramo que perde pode já ter escrito, e uma escrita em andamento termina quando a corrida é decidida. Compensação (*saga*) fica para depois; o caminho seguro é escrever depois da corrida, com o vencedor.
+- **Sandboxes:** dois ramos não podem editar a mesma sandbox (`E0645`). `fork` (uma cópia por ramo) fica para depois.
 
 ### 5.9 Falha como valor (D11)
 
@@ -608,6 +639,7 @@ Todas lineares ou composicionais (meta: `calyx check` em até 1 segundo):
 | Teto de custo vs. orçamento (laços multiplicam pelo limite) | D3 |
 | Orçamento de contexto por caminho, com invariante quando há compactação | D3, D5 |
 | Redutor presente para estado escrito em paralelo | D1 |
+| Corridas: dois ou mais ramos do mesmo tipo, condição pura, `on none` presente; escrita num ramo (aviso) | D12 |
 | Ciclos de `ask` | D33 |
 | Regras de `respond` / `return` | D19 |
 

@@ -1,0 +1,57 @@
+# Debate entre agentes, em rodadas (marco M9, decisão D18).
+#
+# Três debatedores abrem posição ao mesmo tempo. Em cada rodada, cada um lê
+# as respostas da rodada anterior e responde, os três em paralelo; a rodada
+# só termina quando os três responderam (a barreira): ninguém vê uma resposta
+# pela metade. Um juiz dá o veredito no fim.
+#
+#   calyx run examples/debate.clyx --fake-models --question "IA vai substituir programadores?"
+#   GEMINI_API_KEY=... calyx run examples/debate.clyx --question "..."
+#
+# Cada chamada vai para o diário com a rodada e o debatedor na chave
+# (`final#...0#...[2]`): uma execução interrompida continua na rodada em que
+# estava, sem refazer as anteriores.
+
+model gemini = "gemini-3.5-flash-lite":
+    max_output 600 tokens
+
+type Verdict:
+    position: Text
+    reasons: List[Text]
+
+prompt opening(role: Text, question: Text) -> Text:
+    """
+    Você é o debatedor {role}, num debate sobre: {question}
+    Dê sua posição inicial em até 3 frases.
+    """
+
+prompt rebut(role: Text, question: Text, answers: List[Text]) -> Text:
+    """
+    Você é o debatedor {role}, num debate sobre: {question}
+    As posições da rodada anterior (a sua inclusive):
+    {answers}
+    Responda aos argumentos dos outros em até 3 frases, mantendo ou ajustando a sua posição.
+    """
+
+prompt judge(question: Text, answers: List[Text]) -> Verdict:
+    """
+    Avalie o debate sobre "{question}" pelas posições finais:
+    {answers}
+    Dê o veredito e as razões principais.
+    """
+
+graph debate(question: Text) -> Verdict:
+    limits threads 3
+
+    roles = ["otimista", "cético", "engenheiro"]
+    start = for each r in roles:
+        gemini(opening(r, question))
+
+    # `rounds`: como um `loop`, mas com o número de rodadas fixo e uma
+    # barreira no fim de cada uma (o `next` precisa de todas as respostas).
+    final = rounds 2, carry answers = start:
+        turn = for each r in roles:
+            gemini(rebut(r, question, answers))
+        next turn
+
+    return gemini(judge(question, final))

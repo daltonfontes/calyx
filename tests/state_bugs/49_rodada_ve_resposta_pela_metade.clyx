@@ -1,0 +1,14 @@
+# Bug: Num debate, um agente lê as respostas da rodada atual enquanto os outros ainda respondem, e cada execução vê um conjunto diferente.
+# Pego por: design
+model m = "m"
+
+prompt rebut(role: Text, answers: List[Text]) -> Text:
+    """{role}: {answers}"""
+
+graph g(q: Text) -> List[Text]:
+    roles = ["a", "b", "c"]
+    final = rounds 3, carry answers = [q]:
+        turn = for each r in roles:
+            m(rebut(r, answers))
+        next turn
+    return final

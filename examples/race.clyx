@@ -1,0 +1,53 @@
+# Corrida entre estratégias (marco M9, decisão D12).
+#
+# Três formas de responder rodam ao mesmo tempo; vence a primeira cuja
+# resposta passa na condição (`it` é o valor de cada ramo). As outras são
+# canceladas entre passos: um subgrafo perdedor para, e as chamadas dele que
+# ainda não começaram não são feitas. O vencedor vai para o diário: na
+# retomada e no replay, a corrida não é disputada de novo.
+#
+#   calyx run examples/race.clyx --fake-models --question "Qual a capital da Austrália?"
+#   GEMINI_API_KEY=... calyx run examples/race.clyx --question "..."
+
+model gemini = "gemini-3.5-flash-lite":
+    max_output 800 tokens
+
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 4000 tokens
+    timeout 30 s
+
+type Answer:
+    answer: Text
+    confident: Bool
+
+prompt direct(question: Text) -> Answer:
+    """
+    Responda em uma frase: {question}
+    Diga se tem certeza da resposta (confident).
+    """
+
+prompt stepwise(question: Text) -> Answer:
+    """
+    Pense passo a passo e responda: {question}
+    Diga se tem certeza da resposta (confident).
+    """
+
+prompt researched(question: Text, sources: Text) -> Answer:
+    """
+    Responda a "{question}" usando só estas fontes:
+    {sources}
+    Diga se as fontes bastam para ter certeza (confident).
+    """
+
+graph with_sources(question: Text) -> Answer:
+    sources = web_search(question)
+    return gemini(researched(question, sources))
+
+graph main(question: Text) -> Text:
+    best = race first where it.confident:
+        direct: gemini(direct(question))
+        stepwise: gemini(stepwise(question))
+        sources: with_sources(question)
+        on none: Answer(answer="nenhuma estratégia teve certeza", confident=false)
+    return best.answer

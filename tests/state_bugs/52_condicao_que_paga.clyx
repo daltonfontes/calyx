@@ -1,0 +1,16 @@
+# Bug: A condição da corrida chama um modelo para julgar cada resposta: cada ramo que termina gera mais uma chamada paga, e o resultado muda a cada execução.
+# Pego por: E0682
+model m = "m"
+
+prompt solve(q: Text) -> Text:
+    """{q}"""
+
+prompt grade(answer: Text) -> Text:
+    """{answer}"""
+
+graph g(q: Text) -> Text:
+    best = race first where m(grade(it)) == "bom":
+        a: m(solve(q))
+        b: m(solve("{q}?"))
+        on none: "nenhuma"
+    return best
