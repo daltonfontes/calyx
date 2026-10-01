@@ -4,7 +4,7 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 
 | # | Decisão | Recomendação preliminar |
 |---|---|---|
-| D1 | Modelo de estado | Dataflow por padrão + estado nomeado com regra de junção obrigatória |
+| D1 | Modelo de estado | ✅ **Decidido:** dataflow + estado nomeado com junção obrigatória; visibilidade por snapshot |
 | D2 | Tipos de efeito | 4 níveis verificados pelo compilador |
 | D3 | O que "thread" significa | Thread = conversa (valor explícito); concorrência é derivada, nunca escrita |
 | D4 | Quanto dinamismo permitir | Dinamismo limitado e verificável |
@@ -29,6 +29,16 @@ A decisão mais importante: sem ela, o runtime não consegue derivar concorrênc
 | (d) Híbrido: dataflow + estado nomeado com junção obrigatória | — | Sim | Mais conceitos na linguagem |
 
 **Recomendação: (d).** Por padrão, um nó recebe valores pelas arestas e produz valores. Quando precisa de estado compartilhado, o estado é nomeado, o nó declara se lê ou escreve, e **todo estado que pode ser escrito por ramos concorrentes tem uma regra de junção obrigatória**. O compilador recusa o programa se faltar a regra.
+
+**Decidido: visibilidade por snapshot.** Ramos paralelos **não** veem as escritas uns dos outros enquanto rodam. Cada ramo vê o estado do momento da bifurcação, e as escritas só se juntam (via redutor) no ponto de junção. Não existe estado compartilhado "ao vivo" (quadro-negro), porque ele tornaria o resultado dependente da ordem de término e impediria o runtime de raciocinar sobre o grafo.
+
+Escopos de estado:
+
+| Escopo | Vive em | Regra |
+|---|---|---|
+| Valor | Arestas | Imutável, flui de um nó para outro |
+| Estado nomeado | Uma execução do grafo | Snapshot na bifurcação + redutor obrigatório na junção |
+| Persistente | Mundo externo | Acesso só via efeitos `read`/`write` (D2) |
 
 ## D2. Tipos de efeito
 
