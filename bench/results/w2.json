@@ -1,0 +1,275 @@
+[
+ {
+  "system": "calyx",
+  "scenario": "after-payment",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 1.04,
+  "resume_tail": [
+   "   1.04s  finished: 1 model call(s) (50 -> 43 tokens), 1 tool call(s), 0 retry(ies), at most 1 at once, 3 taken from the journal"
+  ]
+ },
+ {
+  "system": "langgraph (padrão)",
+  "scenario": "after-payment",
+  "resume_exit": 0,
+  "payments": 2,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 1.75,
+  "resume_tail": [
+   "llm_calls=1"
+  ]
+ },
+ {
+  "system": "langgraph (padrão) + cuidado manual",
+  "scenario": "after-payment",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 1.72,
+  "resume_tail": [
+   "llm_calls=1"
+  ]
+ },
+ {
+  "system": "langgraph durability=sync",
+  "scenario": "after-payment",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 1.67,
+  "resume_tail": [
+   "llm_calls=1"
+  ]
+ },
+ {
+  "system": "langgraph durability=sync + cuidado manual",
+  "scenario": "after-payment",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 1.76,
+  "resume_tail": [
+   "llm_calls=1"
+  ]
+ },
+ {
+  "system": "python sem checkpoint",
+  "scenario": "after-payment",
+  "resume_exit": 0,
+  "payments": 2,
+  "emails": 1,
+  "llm_calls": 3,
+  "llm_calls_redone": 1,
+  "resume_s": 2.11,
+  "resume_tail": [
+   "llm_calls=2"
+  ]
+ },
+ {
+  "system": "python sem checkpoint + cuidado manual",
+  "scenario": "after-payment",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 3,
+  "llm_calls_redone": 1,
+  "resume_s": 2.1,
+  "resume_tail": [
+   "llm_calls=2"
+  ]
+ },
+ {
+  "system": "calyx",
+  "scenario": "payment-in-flight",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 1.01,
+  "resume_tail": [
+   "   1.01s  finished: 1 model call(s) (50 -> 43 tokens), 2 tool call(s), 0 retry(ies), at most 2 at once, 2 taken from the journal"
+  ]
+ },
+ {
+  "system": "langgraph (padrão)",
+  "scenario": "payment-in-flight",
+  "resume_exit": 0,
+  "payments": 2,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 4.9,
+  "resume_tail": [
+   "llm_calls=1"
+  ]
+ },
+ {
+  "system": "langgraph (padrão) + cuidado manual",
+  "scenario": "payment-in-flight",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 1.87,
+  "resume_tail": [
+   "llm_calls=1"
+  ]
+ },
+ {
+  "system": "langgraph durability=sync",
+  "scenario": "payment-in-flight",
+  "resume_exit": 0,
+  "payments": 2,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 4.83,
+  "resume_tail": [
+   "llm_calls=1"
+  ]
+ },
+ {
+  "system": "langgraph durability=sync + cuidado manual",
+  "scenario": "payment-in-flight",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 1.8,
+  "resume_tail": [
+   "llm_calls=1"
+  ]
+ },
+ {
+  "system": "python sem checkpoint",
+  "scenario": "payment-in-flight",
+  "resume_exit": 0,
+  "payments": 2,
+  "emails": 1,
+  "llm_calls": 3,
+  "llm_calls_redone": 1,
+  "resume_s": 5.1,
+  "resume_tail": [
+   "llm_calls=2"
+  ]
+ },
+ {
+  "system": "python sem checkpoint + cuidado manual",
+  "scenario": "payment-in-flight",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 3,
+  "llm_calls_redone": 1,
+  "resume_s": 2.09,
+  "resume_tail": [
+   "llm_calls=2"
+  ]
+ },
+ {
+  "system": "calyx",
+  "scenario": "email-in-flight",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 0.03,
+  "resume_tail": [
+   "   0.02s  finished: 0 model call(s) (54 -> 43 tokens), 0 tool call(s), 0 retry(ies), at most 1 at once, 4 taken from the journal"
+  ]
+ },
+ {
+  "system": "langgraph (padrão)",
+  "scenario": "email-in-flight",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 2,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 3.9,
+  "resume_tail": [
+   "llm_calls=0"
+  ]
+ },
+ {
+  "system": "langgraph (padrão) + cuidado manual",
+  "scenario": "email-in-flight",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 0.84,
+  "resume_tail": [
+   "llm_calls=0"
+  ]
+ },
+ {
+  "system": "langgraph durability=sync",
+  "scenario": "email-in-flight",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 2,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 3.83,
+  "resume_tail": [
+   "llm_calls=0"
+  ]
+ },
+ {
+  "system": "langgraph durability=sync + cuidado manual",
+  "scenario": "email-in-flight",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "resume_s": 0.92,
+  "resume_tail": [
+   "llm_calls=0"
+  ]
+ },
+ {
+  "system": "python sem checkpoint",
+  "scenario": "email-in-flight",
+  "resume_exit": 0,
+  "payments": 2,
+  "emails": 2,
+  "llm_calls": 4,
+  "llm_calls_redone": 2,
+  "resume_s": 5.11,
+  "resume_tail": [
+   "llm_calls=2"
+  ]
+ },
+ {
+  "system": "python sem checkpoint + cuidado manual",
+  "scenario": "email-in-flight",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 4,
+  "llm_calls_redone": 2,
+  "resume_s": 2.1,
+  "resume_tail": [
+   "llm_calls=2"
+  ]
+ }
+]

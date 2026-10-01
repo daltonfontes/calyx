@@ -1,0 +1,2 @@
+[tools.web_search]
+command = ["python3", "../../examples/tools/fake_search.py"]

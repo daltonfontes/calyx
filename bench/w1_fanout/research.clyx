@@ -1,0 +1,20 @@
+# W1: N perguntas -> busca + resumo de cada uma -> relatório.
+# O paralelismo não aparece no programa: sai das dependências.
+model m = "fake-slow-1000"
+
+tool web_search(query: Text) -> Text:
+    effect read
+
+prompt summarize(question: Text, results: Text) -> Text:
+    """Responda {question} usando {results}"""
+
+prompt write_report(findings: List[Text]) -> Text:
+    """Escreva um relatório com {findings}"""
+
+graph research(questions: List[Text]) -> Text:
+    limits threads 8
+
+    answers = for each q in questions:
+        m(summarize(q, web_search(q)))
+
+    return m(write_report(answers))

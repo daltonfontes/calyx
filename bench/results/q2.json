@@ -1,0 +1,204 @@
+[
+ {
+  "program": "b01_ramos_sobrescrevem.py",
+  "bug": "two parallel branches write the same key; the last one to finish wins.",
+  "calyx": "E0501 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 1,
+   "exception": "langgraph.errors.InvalidUpdateError: At key 'summary': Can receive only one value per step. Use an Annotated key to handle multiple values.",
+   "stdout": ""
+  }
+ },
+ {
+  "program": "b02_email_sem_politica.py",
+  "bug": "a non-idempotent e-mail with no plan for a crash in the middle of",
+  "calyx": "E0304 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "{'customer': 'ana@exemplo.org', 'body': '[resposta falsa para: e-mail para ana@exemplo.org]'}"
+  }
+ },
+ {
+  "program": "b03_agente_envia_email.py",
+  "bug": "an agent holds an e-mail tool and may call it again every turn",
+  "calyx": "E0640 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 1,
+   "exception": "langgraph.errors.GraphRecursionError: Recursion limit of 12 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.",
+   "stdout": "e-mails enviados: 6"
+  }
+ },
+ {
+  "program": "b04_aviso_antes_do_pagamento.py",
+  "bug": "the confirmation e-mail may go out before the refund (or without",
+  "calyx": "W0602 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "{'order': 'A100', 'decision': '[resposta falsa para: reembolsar A100?]'}"
+  }
+ },
+ {
+  "program": "b06_precondicao_campo_errado.py",
+  "bug": "a precondition on a field the state does not have (a typo): it",
+  "calyx": "E0603 (compiler)",
+  "pyright": [
+   "18: Could not access item in TypedDict"
+  ],
+  "mypy": [
+   "TypedDict \"Order\" has no key \"refundd\"  [typeddict-item]"
+  ],
+  "run": {
+   "exit": 1,
+   "exception": "KeyError: 'refundd'",
+   "stdout": ""
+  }
+ },
+ {
+  "program": "b13_escrita_sem_chave.py",
+  "bug": "a payment with no idempotency key: a retry after a timeout pays twice.",
+  "calyx": "W0601 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "pagamentos: 2"
+  }
+ },
+ {
+  "program": "b15_ordem_circular.py",
+  "bug": "two writes, each waiting for the other: the run never ends.",
+  "calyx": "E0506 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 1,
+   "exception": "langgraph.errors.GraphRecursionError: Recursion limit of 10 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.",
+   "stdout": "pagamentos: 5, e-mails: 5"
+  }
+ },
+ {
+  "program": "b16_efeito_acima_do_declarado.py",
+  "bug": "a graph meant to be read-only (run without approval) calls a payment.",
+  "calyx": "E0701 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "pagamentos: 1"
+  }
+ },
+ {
+  "program": "b17_falha_tratada_como_sucesso.py",
+  "bug": "the result of a refund that may fail is used as if it succeeded.",
+  "calyx": "E0608 (compiler)",
+  "pyright": [
+   "11: \"id\" is not a known attribute of \"None\"",
+   "11: \"amount\" is not a known attribute of \"None\""
+  ],
+  "mypy": [
+   "Item \"None\" of \"Refund | None\" has no attribute \"id\"  [union-attr]",
+   "Item \"None\" of \"Refund | None\" has no attribute \"amount\"  [union-attr]"
+  ],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "reembolso rf-1 de 50.0"
+  }
+ },
+ {
+  "program": "b20_verificar_e_agir_separados.py",
+  "bug": "the status is checked with a read and the refund comes later, with",
+  "calyx": "none (nobody catches it: `requires` is the fix, and it is optional)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "reembolsado: [resposta falsa para: quanto reembolsar de A100?] status final: Cancelled"
+  }
+ },
+ {
+  "program": "b21_chave_de_idempotencia_errada.py",
+  "bug": "the idempotency key is the order, not the request: a second,",
+  "calyx": "none (nobody catches it: the key is the programmer's choice)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "pagamentos: 1 (esperado 2)"
+  }
+ },
+ {
+  "program": "b23_itens_editam_em_paralelo.py",
+  "bug": "each item of a fan-out edits the same repository at the same time:",
+  "calyx": "E0644 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "x = 1\nx = 2\nx = 3\nx = 4"
+  }
+ },
+ {
+  "program": "b33_atualizacao_perdida.py",
+  "bug": "the run reads the balance, adds and writes the result back: two",
+  "calyx": "W0603 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "saldo: 10.0 (esperado 20.0)"
+  }
+ },
+ {
+  "program": "b36_mensagem_com_nome_errado.py",
+  "bug": "a message the entity does not handle (a typo): the deposit is lost.",
+  "calyx": "E0655 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "saldo: 0.0 (esperado 10.0)"
+  }
+ },
+ {
+  "program": "b42_espera_sem_prazo.py",
+  "bug": "the run waits for an approval with no deadline: if nobody answers,",
+  "calyx": "E0671 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "{'request': 'reembolso', 'approved': False, '__interrupt__': [Interrupt(value={'approve': 'reembolso'}, id='cadaa86d7980125653ee036645ffe9f6', response_schema=None)]}"
+  }
+ },
+ {
+  "program": "b52_condicao_que_paga.py",
+  "bug": "the race's condition calls a model to judge every answer: one more",
+  "calyx": "E0682 (compiler)",
+  "pyright": [],
+  "mypy": [],
+  "run": {
+   "exit": 0,
+   "exception": "",
+   "stdout": "[resposta falsa para: resolva com a estratégia rápida]"
+  }
+ }
+]

@@ -11,7 +11,10 @@ It shows the other side of Calyx's contracts for external writes:
 - `email` is `write once`. Words in the body simulate failures:
   `__lost__` sends the e-mail and then never answers (the caller times out
   not knowing it was sent); `__down__` crashes before sending; `__flaky__`
-  crashes before sending the first time only.
+  crashes before sending the first time only; `__slowmail__` sends it and
+  answers 3 s later. A refund whose request has `__slowpay__` pays and
+  answers 3 s later. The benchmarks (bench/) kill the caller in that window.
+- Every payment made is listed in `payments`, so duplicates can be counted.
 - `email_sent` tells whether an e-mail went out: what `on_uncertain
   verify(...)` asks after such a failure.
 
@@ -132,7 +135,10 @@ def call(name, args, meta):
         order["refunded"] += float(args.get("amount", 0))
         if key is not None:
             db["refund_keys"][key] = args
+        db.setdefault("payments", []).append(args)
         save(db)
+        if "__slowpay__" in str(args.get("request", "")):
+            time.sleep(3)  # paid; the answer is still on its way
         return text("null")
     if name == "email":
         body = args.get("body", "")
@@ -146,6 +152,8 @@ def call(name, args, meta):
         save(db)
         if "__lost__" in body:
             time.sleep(3600)  # sent, but the answer never comes
+        if "__slowmail__" in body:
+            time.sleep(3)  # sent; the answer is still on its way
         return text("null")
     if name == "email_sent":
         sent = any(m["to"] == args.get("to") and m["subject"] == args.get("subject")
