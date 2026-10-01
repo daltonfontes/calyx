@@ -72,6 +72,10 @@ Nós de agentes não são funções puras. O runtime precisa saber o **tipo de e
 - **O runtime deriva:** trace por nó com a tupla *(estado, ação, observação, custo)* do survey de ACG; replay; visualização do grafo realizado; custo por nó e por caminho.
 - **Ganho extra:** ataca o problema em aberto que o survey chama de **atribuição de crédito estrutural**, ou seja, saber quanto cada nó e cada aresta contribuíram para o resultado.
 
+## Garantia de isolamento
+
+Pela lente do controle de concorrência (ver [07-escalonamento-e-concorrencia.md](07-escalonamento-e-concorrencia.md)): **dentro de uma execução, a Calyx garante isolamento por snapshot e ausência de atualizações perdidas.** Invariantes que envolvem vários ramos (ex.: "o gasto total não passa do orçamento") **não** são garantidos automaticamente e exigem validação declarada na junção. Entre execuções, a garantia vem de recursos com dono (D15).
+
 ## O limite: grafos dinâmicos
 
 Tudo acima é fácil com grafo estático. Agentes, porém, precisam de dinamismo. É a tensão que o survey de ACG chama de **expressividade × verificabilidade**.
