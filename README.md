@@ -50,7 +50,7 @@ A analogia mais próxima é o **SQL**: você declara o que quer, e o banco decid
 
 **Por que uma linguagem, e não uma biblioteca:** as garantias dependem de analisar o programa inteiro antes de rodar. Uma biblioteca não consegue impedir que se chame o relógio dentro do workflow ou que se envie um e-mail duas vezes. O preço é a adoção, bem mais difícil que a de uma biblioteca.
 
-**Comparação com Python e LangGraph:** [`docs/evaluation/comparacao.md`](docs/evaluation/comparacao.md). Numa queda com um pagamento em andamento, a Calyx não duplica nada sem código de recuperação; o LangGraph só não duplica com cuidado manual. Dos 14 bugs de estado que a Calyx pega antes de rodar, pyright e mypy pegam 2.
+**Comparação com Python, LangGraph e Temporal:** [`docs/evaluation/comparacao.md`](docs/evaluation/comparacao.md). Em 6 pontos de queda do fluxo de reembolso, a Calyx não duplica nenhum pagamento nem e-mail sem código de recuperação; Temporal e LangGraph chegam ao mesmo resultado só com o cuidado manual que a documentação recomenda (sem ele, erram 2 a 3 dos 6). Dos 14 bugs de estado que a Calyx pega antes de rodar, pyright e mypy pegam 2.
 
 **O que ainda não está provado:** a hipótese central foi testada só no papel ([teste no papel](docs/discovery/04-teste-no-papel.md)). As perguntas de pesquisa da [hipótese](docs/discovery/01-hipotese.md) só se respondem com uma implementação.
 

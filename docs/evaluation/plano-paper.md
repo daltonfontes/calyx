@@ -44,7 +44,7 @@ real.
 | # | Workload | Exercita | Situação |
 |---|---|---|---|
 | W1 | Pesquisa com fan-out (N perguntas → busca + resumo → relatório) | Paralelismo derivado, escala | ✅ feito |
-| W2 | Reembolso com pagamento e e-mail | Efeitos externos, recuperação | ✅ feito (3 pontos de queda) |
+| W2 | Reembolso com pagamento e e-mail | Efeitos externos, recuperação | ✅ feito: 6 pontos de queda × 9 sistemas, com o Temporal |
 | W3 | Aprovação humana com prazo (`receive`) | Espera durável, prazo que sobrevive a reinício | A fazer; baseline: `interrupt()` do LangGraph, signals do Temporal |
 | W4 | Debate em rodadas (`rounds`) | Barreira, paralelismo dentro da rodada | A fazer |
 | W5 | Agente de código numa sandbox (`examples/fix.clyx`) | Empréstimos, snapshots, queda no meio de uma edição | A fazer |
@@ -58,7 +58,7 @@ real.
 | Python sequencial | Piso: o que se escreve sem pensar em paralelismo |
 | Python + asyncio escrito à mão | Teto de paralelismo com esforço manual |
 | LangGraph (padrão e `durability="sync"`, com e sem cuidado manual) | O framework de grafos de agentes mais usado; o mais próximo da proposta |
-| **Temporal (SDK Python)** | **Falta.** É o baseline mais forte para recuperação: execução durável com activities. Sem ele, um revisor dirá que a W2 compara contra o adversário errado |
+| Temporal (SDK Python) | O baseline mais forte para recuperação: execução durável com activities. ✅ Na W2: acerta entre passos sozinho e com efeitos em andamento só com cuidado manual, como o LangGraph `sync` |
 | AgentSPEX | Citado na hipótese; usar se o código estiver disponível |
 
 ## 4. Experimentos
@@ -109,9 +109,12 @@ segundo aparecem atribuídos a um passo no diário.
 
 ## 6. Ordem de trabalho
 
-1. **Temporal na W2** e a **matriz de quedas completa** (E3). É o resultado
-   mais forte e o mais exposto a crítica.
-2. **E4 com um portador externo** dos 52 bugs.
+1. ~~Temporal na W2 e a matriz de quedas da W2.~~ Feito: a recuperação da
+   Calyx empata com a do Temporal e a do LangGraph `sync` com cuidado
+   manual. A tese passa a ser "o compilador exige o contrato do efeito".
+   Falta medir o tempo de retomada contra o Temporal com *heartbeats*.
+2. **E4 com um portador externo** dos 52 bugs: com a recuperação empatada no
+   teto, os bugs que o compilador recusa viram o resultado central.
 3. W3 e W7, que exercitam o que nenhum baseline faz por padrão.
 4. E2 até 10⁵ itens, e a otimização da reavaliação se ela aparecer.
 5. W4 a W6 e o E1 com modelo real.

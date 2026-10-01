@@ -1,16 +1,17 @@
-# Comparação: Calyx × Python × LangGraph
+# Comparação: Calyx × Python × LangGraph × Temporal
 
-Primeira medição contra baselines. Os mesmos workflows, escritos em Calyx e
-em Python (sequencial, asyncio escrito à mão e LangGraph 1.2.12), rodando
-contra o mesmo mundo falso: modelos com latência fixa e as mesmas tools MCP.
-O código, as regras para ser justo e os comandos para repetir estão em
-[`bench/`](../../bench/README.md); os números crus, em `bench/results/`.
+Medição contra baselines. Os mesmos workflows, escritos em Calyx e em Python
+(sequencial, asyncio escrito à mão, LangGraph 1.2.12 e Temporal, SDK Python
+1.34.0 com servidor 1.32.0), rodando contra o mesmo mundo falso: modelos com
+latência fixa e as mesmas tools MCP. O código, as regras para ser justo e os
+comandos para repetir estão em [`bench/`](../../bench/README.md); os números
+crus, em `bench/results/`.
 
 **Resumo.**
 
 | Pergunta | Calyx | Melhor baseline | Conclusão |
 |---|---|---|---|
-| **Q3: recuperação com efeitos externos** (W2) | Certa nos 3 pontos de queda, sem código de recuperação | LangGraph só acerta com cuidado manual; no padrão, paga duas vezes até numa queda **depois** do pagamento | **A diferença mais forte** |
+| **Q3: recuperação com efeitos externos** (W2, 6 pontos de queda) | 6 de 6 certos, sem código de recuperação | Temporal e LangGraph `sync`: 4 de 6; 6 de 6 só com cuidado manual. LangGraph no padrão: 3 de 6 | **A diferença é o padrão, não o teto:** com cuidado manual os baselines empatam; na Calyx o cuidado é obrigatório |
 | **Q2: bugs antes de rodar** (14 bugs que a Calyx pega) | 14 de 14 | pyright + mypy: 2 de 14; LangGraph para 3 ao rodar, 2 depois do dano | Forte, mas o corpus foi escrito por quem fez o compilador |
 | **Q1: paralelismo** (W1) | A 30–50 ms do limite teórico | asyncio à mão: a 80–95 ms; LangGraph: +0,8 s | Empate com asyncio. O ganho é não escrever o paralelismo, não ser mais rápido |
 | **Custo do runtime** (W1 sem latência) | Linear, 0,16 ms por item | asyncio: 0,025 ms; LangGraph: 8,4 ms e crescendo | Desprezível perto de uma chamada de modelo; o LangGraph cresce mais que linearmente |
@@ -19,39 +20,62 @@ O código, as regras para ser justo e os comandos para repetir estão em
 
 O reembolso `pedido → decisão (modelo) → pagamento → resposta (modelo) →
 e-mail`, contra a loja falsa (MCP), que guarda os pagamentos e os e-mails
-num arquivo. O processo morre em três pontos e é retomado do jeito que cada
+num arquivo. O processo morre em **6 pontos** e é retomado do jeito que cada
 sistema oferece:
 
-- **depois do pagamento:** o pagamento terminou e a execução o registrou; o
-  processo morre antes do passo seguinte (o `save_result` da pergunta
-  original);
-- **pagamento em andamento:** a loja pagou, mas a resposta ainda não chegou
-  quando o processo leva `kill -9`;
-- **e-mail em andamento:** o mesmo, com o e-mail.
+- **depois de cada passo registrado** (pedido, decisão, pagamento,
+  resposta): o passo terminou e a execução o registrou; o processo morre
+  antes do seguinte. Na Calyx, `CALYX_CRASH_AFTER=k`; no Python, o processo
+  sai quando o passo seguinte começa;
+- **efeito em andamento** (pagamento, e-mail): a loja pagou ou enviou, mas a
+  resposta ainda não chegou quando o processo leva `kill -9`.
 
-O certo é **1 pagamento, 1 e-mail e 2 chamadas de modelo**.
+O certo é **1 pagamento, 1 e-mail e 2 chamadas de modelo**. "Cuidado manual"
+é o que a documentação dos frameworks recomenda e um programador atento
+escreve: chave de idempotência no pagamento e conferir se o e-mail já saiu
+antes de reenviar. No Temporal, cada passo é uma *activity*; retomar é subir
+um worker novo, e o workflow continua do histórico guardado no servidor.
 
-| Sistema | Depois do pagamento | Pagamento em andamento | E-mail em andamento |
-|---|---|---|---|
-| **Calyx** | ✅ 1 pag., 1 e-mail, 2 chamadas | ✅ 1, 1, 2 | ✅ 1, 1, 2 |
-| LangGraph (padrão, `durability="async"`) | ❌ **2 pagamentos** | ❌ 2 pagamentos | ❌ 2 e-mails |
-| LangGraph `durability="sync"` | ✅ | ❌ 2 pagamentos | ❌ 2 e-mails |
-| LangGraph + cuidado manual (os dois modos) | ✅ | ✅ | ✅ |
-| Python sem checkpoint | ❌ 2 pagamentos, 3 chamadas | ❌ 2 pagamentos, 3 chamadas | ❌ 2 pag., 2 e-mails, 4 chamadas |
-| Python sem checkpoint + cuidado manual | efeitos ✅, 3 chamadas | efeitos ✅, 3 chamadas | efeitos ✅, 4 chamadas |
+| Sistema | Efeitos certos | Pagamentos duplicados | E-mails duplicados | Chamadas de modelo refeitas | Tempo da retomada |
+|---|---|---|---|---|---|
+| **Calyx** | **6 de 6** | 0 | 0 | 0 | 0,03–2,0 s |
+| Temporal | 4 de 6 | 1 | 1 | 0 | 11–15 s |
+| Temporal + cuidado manual | 6 de 6 | 0 | 0 | 0 | 11–13 s |
+| LangGraph `durability="sync"` | 4 de 6 | 1 | 1 | 0 | 0,9–4,8 s |
+| LangGraph `sync` + cuidado manual | 6 de 6 | 0 | 0 | 0 | 0,8–2,9 s |
+| LangGraph padrão (`durability="async"`) | 3 de 6 | 2 | 1 | 2 | 1,8–4,9 s |
+| LangGraph padrão + cuidado manual | 6 de 6 | 0 | 0 | 2 | 0,8–2,8 s |
+| Python sem checkpoint | 2 de 6 | 4 | 1 | 7 | 2,1–5,1 s |
+| Python sem checkpoint + cuidado manual | 6 de 6 | 0 | 0 | 7 | 2,1 s |
+
+Por ponto de queda (✅ = 1 pagamento e 1 e-mail):
+
+| Sistema | Depois do pedido | Depois da decisão | Depois do pagamento | Depois da resposta | Pagamento em andamento | E-mail em andamento |
+|---|---|---|---|---|---|---|
+| **Calyx** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Temporal | ✅ | ✅ | ✅ | ✅ | ❌ 2 pagamentos | ❌ 2 e-mails |
+| LangGraph `sync` | ✅ | ✅ | ✅ | ✅ | ❌ 2 pagamentos | ❌ 2 e-mails |
+| LangGraph padrão | ✅ | ✅ (modelo refeito) | ❌ 2 pagamentos | ✅ (modelo refeito) | ❌ 2 pagamentos | ❌ 2 e-mails |
+| Python sem checkpoint | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Qualquer um + cuidado manual | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 **O que explica cada linha:**
 
-- **LangGraph no padrão paga duas vezes mesmo quando o processo morre
-  _depois_ do pagamento.** Desde a 1.x, o padrão é `durability="async"`: o
-  checkpoint de um passo é gravado enquanto o passo seguinte já roda. Se o
-  processo morre nesse intervalo, o último checkpoint se perde e o pagamento
-  é refeito. Com `durability="sync"`, esse caso fica certo.
-- **Com a chamada em andamento, nenhum checkpoint por passo resolve.** O
-  efeito aconteceu e a resposta não voltou. Só duas coisas evitam a
-  duplicata: uma chave de idempotência que o provedor respeite (pagamento) e
-  conferir antes de repetir (e-mail). No LangGraph, as duas são código que o
-  programador precisa lembrar de escrever, e nada avisa quando ele esquece.
+- **Entre passos, Temporal e LangGraph `sync` acertam sozinhos, como a
+  Calyx.** O histórico (Temporal) e o checkpoint síncrono (LangGraph)
+  guardam cada passo antes do seguinte.
+- **LangGraph no padrão perde o último checkpoint.** Desde a 1.x, o padrão é
+  `durability="async"`: o checkpoint de um passo é gravado enquanto o passo
+  seguinte já roda. Se o processo morre nesse intervalo, o passo é refeito:
+  duas chamadas de modelo refeitas e um pagamento duplicado numa queda
+  *depois* do pagamento.
+- **Com o efeito em andamento, nenhum registro por passo resolve, nem o
+  histórico do Temporal.** O efeito aconteceu e a resposta não voltou; o
+  Temporal repete a activity depois do timeout, como deve. Só evitam a
+  duplicata uma chave de idempotência que o provedor respeite (pagamento) e
+  conferir antes de repetir (e-mail). Nos três baselines, as duas são código
+  que o programador precisa lembrar de escrever, e nada avisa quando ele
+  esquece.
 - **Na Calyx, as duas vêm do contrato da tool:**
   - `refund` declara `idempotency_key request`; a chave vai para a loja e a
     retomada repete com a mesma chave.
@@ -61,14 +85,26 @@ O certo é **1 pagamento, 1 e-mail e 2 chamadas de modelo**.
 
   O compilador recusa um `write once` sem política (`E0304`) e avisa sobre
   uma escrita sem chave (`W0601`, um aviso, não um erro).
+- **Tempo da retomada:** o Temporal leva 11–15 s porque uma activity que
+  estava rodando quando o worker morreu só é repetida depois do seu
+  `start_to_close_timeout` (10 s aqui). *Heartbeats* encurtariam isso; a
+  comparação justa de tempo de retomada fica para o plano. A Calyx retoma na
+  hora porque a queda é do processo inteiro: não há worker para esperar.
 - **Sem checkpoint, o cuidado manual protege os efeitos, mas tudo é
-  refeito:** 3 a 4 chamadas de modelo em vez de 2.
+  refeito:** 7 chamadas de modelo refeitas nos 6 pontos.
+
+**Leitura honesta:** a recuperação da Calyx não é melhor que a do Temporal
+ou a do LangGraph `sync` com cuidado manual: os três chegam a 6 de 6. A
+diferença é que **na Calyx o cuidado manual não é opcional**. O contrato do
+efeito é parte da declaração da tool, e o compilador recusa (ou avisa sobre)
+a tool que não o tem. Nos baselines, a versão sem cuidado é a que roda por
+padrão e erra 2 a 3 de 6 pontos, em silêncio.
 
 **Custo de escrever:** a versão em Calyx tem 42 linhas efetivas, já com os
 tipos e os contratos das tools. A versão em LangGraph tem 69 (fluxo + grafo),
-das quais o "cuidado manual" são 3. Linhas de código são uma métrica fraca
-aqui. O ponto é outro: as 3 linhas são **opcionais** no Python e
-**obrigatórias** na Calyx.
+a do Temporal, 101 (41 do fluxo + 60 do workflow e do worker); o "cuidado manual" são 3
+linhas em cada. Linhas de código são uma métrica fraca aqui. O ponto é
+outro: as 3 linhas são **opcionais** no Python e **obrigatórias** na Calyx.
 
 ## Q2: bugs de estado antes de rodar
 
@@ -156,10 +192,12 @@ inteiro (com a inicialização), mediana de 3 repetições.
 
 **Mostra:**
 
-1. **Recuperação com efeitos externos:** é onde a diferença é maior e mais
-   fácil de defender. Nenhum checkpoint por passo, síncrono ou não, resolve a
-   queda com a chamada em andamento. Isso exige um contrato do efeito, e na
-   Calyx ele é obrigatório.
+1. **Recuperação com efeitos externos:** entre passos, Temporal e LangGraph
+   `sync` acertam como a Calyx. Com o efeito em andamento, nenhum registro
+   por passo resolve, nem o histórico do Temporal: é preciso um contrato do
+   efeito. Os baselines chegam a 6 de 6 com cuidado manual; a Calyx chega lá
+   **por padrão**, porque o contrato é obrigatório. A tese defensável é
+   "o compilador exige o contrato", não "a Calyx recupera melhor".
 2. **Bugs de efeito, ordem e concorrência:** checadores de tipo não os veem,
    e o LangGraph, quando os vê, é ao rodar, às vezes depois do dano.
 3. **Paralelismo:** sai sozinho e tão bem quanto à mão. Não é uma vantagem de
@@ -168,9 +206,10 @@ inteiro (com a inicialização), mediana de 3 repetições.
 **Não mostra:**
 
 - **Resultados com modelos reais.** Os modelos são falsos, com latência fixa.
-- **Comparação com o Temporal**, o baseline mais forte para recuperação.
-- **Versões escritas por outras pessoas.** O mesmo autor escreveu as duas
-  linguagens e o corpus de bugs.
-- **Todos os pontos de queda:** foram 3 de muitos.
+- **Versões escritas por outras pessoas.** O mesmo autor escreveu todas as
+  versões e o corpus de bugs.
+- **Tempo de retomada justo contra o Temporal** (com *heartbeats* e timeouts
+  ajustados).
+- **Outras workloads com efeitos** (W3, W5, W7) na matriz de quedas.
 
 O [plano de avaliação](plano-paper.md) diz como cobrir cada um desses pontos.
