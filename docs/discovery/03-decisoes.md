@@ -14,17 +14,21 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D8 | Template / realized graph / trace | Os três são conceitos de primeira classe |
 | D9 | Superfície da linguagem | Linguagem textual, com visualização derivada |
 | D10 | Plataforma (C# ou C) | Adiada; critérios listados abaixo |
-| D11 | Falha parcial em fan-out | Falhas são valores (`ok` / `falha`); o compilador obriga a tratar |
-| D12 | Corrida e cancelamento | Construção `corrida` explícita; vencedor no diário; cancelamento só entre nós |
+| D11 | Falha parcial em fan-out | Falhas são valores (`ok` / `falha`); o compilador obriga a tratar; tools declaram erros não retentáveis |
+| D12 | Corrida e cancelamento | Construção `corrida` explícita; vencedor no diário; cancelamento cooperativo entre nós; `llm`/`read` abandonáveis, `write` protegidos; nós de compensação |
 | D13 | Ambiente da execução (sandbox) | Efeitos na sandbox recuperáveis por snapshot, restaurado junto com o diário |
-| D14 | Tempo e execuções longas | Timers no diário; runtime durável; diário ligado à versão do template |
-| D15 | Concorrência entre execuções | Fora do escopo inicial; limite declarado da hipótese |
+| D14 | Tempo e execuções longas | Timers no diário; runtime durável e orientado a eventos; diário ligado à versão do template |
+| D15 | Concorrência entre execuções | Chave de negócio (no máximo uma execução aberta por chave); recurso compartilhado tem uma execução dona, e as outras enviam mensagens a ela |
 | D16 | Tamanho máximo da saída das tools | Tools declaram o máximo, ou o runtime trunca |
 | D17 | Recursão de subgrafos | Permitida com parâmetro que decresce a cada chamada |
 | D18 | Rodadas (barreira) | Construção explícita para ramos que trocam informação |
 | D19 | Resultado antecipado | O grafo entrega a saída antes de terminar os nós restantes |
+| D20 | Tamanho do diário | Subgrafos com diário próprio; conteúdos grandes fora do diário, referenciados por hash |
+| D21 | Mensagens para uma execução em andamento | Mensagens tipadas e consultas de estado; mensagens recebidas vão para o diário |
+| D22 | Timeouts | Timeout por tentativa obrigatório em nós com efeito externo; padrão por tipo de efeito |
+| D23 | Versionamento de templates | Execuções fixadas na versão; migração quando o compilador provar compatibilidade |
 
-As decisões D11 a D19 surgiram no [teste no papel](04-teste-no-papel.md), onde estão descritas com os workflows que as motivaram.
+As decisões D11 a D19 surgiram no [teste no papel](04-teste-no-papel.md), onde estão descritas com os workflows que as motivaram. As propostas de D11, D12, D14 e D15 foram revisadas, e D20 a D23 surgiram, na leitura do [Temporal](05-temporal.md).
 
 ---
 
@@ -203,6 +207,7 @@ Adiada por decisão do projeto. Critérios a considerar:
 | Embutir o runtime em outras aplicações | C é mais fácil de embutir; C# depende do .NET |
 | Verificador embutido no runtime | Grafos gerados por LLM precisam ser verificados em tempo de execução (W7) |
 | Execução durável | O runtime precisa persistir e retomar execuções que esperam dias (W3) |
+| Runtime orientado a eventos | Execuções esperando não podem ocupar threads; vivem só no armazenamento (Temporal) |
 
 ---
 
