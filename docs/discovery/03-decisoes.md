@@ -14,6 +14,17 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D8 | Template / realized graph / trace | Os três são conceitos de primeira classe |
 | D9 | Superfície da linguagem | Linguagem textual, com visualização derivada |
 | D10 | Plataforma (C# ou C) | Adiada; critérios listados abaixo |
+| D11 | Falha parcial em fan-out | Falhas são valores (`ok` / `falha`); o compilador obriga a tratar |
+| D12 | Corrida e cancelamento | Construção `corrida` explícita; vencedor no diário; cancelamento só entre nós |
+| D13 | Ambiente da execução (sandbox) | Efeitos na sandbox recuperáveis por snapshot, restaurado junto com o diário |
+| D14 | Tempo e execuções longas | Timers no diário; runtime durável; diário ligado à versão do template |
+| D15 | Concorrência entre execuções | Fora do escopo inicial; limite declarado da hipótese |
+| D16 | Tamanho máximo da saída das tools | Tools declaram o máximo, ou o runtime trunca |
+| D17 | Recursão de subgrafos | Permitida com parâmetro que decresce a cada chamada |
+| D18 | Rodadas (barreira) | Construção explícita para ramos que trocam informação |
+| D19 | Resultado antecipado | O grafo entrega a saída antes de terminar os nós restantes |
+
+As decisões D11 a D19 surgiram no [teste no papel](04-teste-no-papel.md), onde estão descritas com os workflows que as motivaram.
 
 ---
 
@@ -190,6 +201,8 @@ Adiada por decisão do projeto. Critérios a considerar:
 | Custo de escrever compilador e verificador | Parser, sistema de tipos, verificação de efeitos |
 | Performance e controle de memória | Relevante se o runtime for gerenciar cache e estado em escala (lição do GraphFlow) |
 | Embutir o runtime em outras aplicações | C é mais fácil de embutir; C# depende do .NET |
+| Verificador embutido no runtime | Grafos gerados por LLM precisam ser verificados em tempo de execução (W7) |
+| Execução durável | O runtime precisa persistir e retomar execuções que esperam dias (W3) |
 
 ---
 
@@ -230,5 +243,5 @@ A partir só disso, o runtime e o compilador saberiam:
    - LLMCompiler (Kim et al., ICML 2024): paralelismo derivado de DAG de chamadas de função.
    - Temporal / execução durável (base da D6).
    - Sistemas de efeitos (Koka, efeitos algébricos), como base da D2.
-3. **Validar a hipótese no papel:** escrever 5–10 workflows reais (dos benchmarks do AgentSPEX, por exemplo) na notação ilustrativa e checar se as quatro propriedades saem sem anotação extra.
+3. ✅ Feito, ver [04-teste-no-papel.md](04-teste-no-papel.md). **Validar a hipótese no papel:** escrever 5–10 workflows reais (dos benchmarks do AgentSPEX, por exemplo) na notação ilustrativa e checar se as quatro propriedades saem sem anotação extra.
 4. **Só então:** sintaxe concreta e escolha entre C# e C.
