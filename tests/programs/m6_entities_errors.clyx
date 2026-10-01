@@ -1,0 +1,41 @@
+# Each entity check of milestone M6, once.
+model m = "m"
+
+prompt p(x: Text) -> Text:
+    """{x}"""
+
+entity Counter(key name: Text):
+    state count: Nat = 0
+    state count: Nat = 1
+    state label: Text = m(p("x"))
+    state size: Nat = "grande"
+
+    on Get() -> Nat:
+        return count
+
+    on Get() -> Nat:
+        return 0
+
+    on Bad(name: Text) -> Text:
+        return m(p(name))
+
+    on Both() -> Nat:
+        next count = 1
+        return count
+
+    on Add(n: Nat):
+        next cuont = count + n
+        next count = count + n
+        next count = 0
+
+    on Wrong():
+        next count = "muitos"
+
+graph g(name: Text) -> Nat:
+    a = ask Counter(name).Add(1)
+    send Counter(name).Get()
+    send Nothing(name).Add(1)
+    send Counter(name).Sub(1)
+    n = ask Counter(name).Get()
+    send Counter(name).Add(n + 1)
+    return n

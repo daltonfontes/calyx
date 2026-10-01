@@ -20,6 +20,7 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
         tools: HashMap::new(),
         prompts: HashMap::new(),
         graphs: HashMap::new(),
+        entities: HashMap::new(),
         types: HashMap::new(),
         unit_variants: HashMap::new(),
         variant_owners: HashMap::new(),
@@ -72,6 +73,16 @@ enum Policy {
     },
 }
 
+/// A handler: its name, parameters, and the answer's type (`None` for a
+/// handler that changes the state and answers nothing).
+type HandlerSig = (String, Vec<(String, Ty)>, Option<Ty>);
+
+/// An entity (decision D15): its key and its handlers.
+struct EntitySig {
+    key: Ty,
+    handlers: Vec<HandlerSig>,
+}
+
 struct PromptSig {
     params: Vec<(String, Ty)>,
     ret: Ty,
@@ -98,6 +109,7 @@ struct Cx<'a, 'p> {
     tools: HashMap<&'p str, ToolSig>,
     prompts: HashMap<&'p str, PromptSig>,
     graphs: HashMap<&'p str, (&'p GraphDecl, GraphSig)>,
+    entities: HashMap<&'p str, EntitySig>,
     types: HashMap<&'p str, UserType>,
     /// Variants without fields, usable as values: `Optimist` is a `Role`.
     unit_variants: HashMap<&'p str, &'p str>,
@@ -223,10 +235,19 @@ impl<'p> Cx<'_, 'p> {
                     self.graphs
                         .insert(&g.name.name, (g, GraphSig { params, ret }));
                 }
+                Decl::Entity(e) => {
+                    let sig = self.entity_sig(e);
+                    self.entities.insert(&e.name.name, sig);
+                }
                 Decl::Model(_) | Decl::Type(_) => {}
             }
         }
         self.check_write_contracts(program);
+        for d in &program.decls {
+            if let Decl::Entity(e) = d {
+                self.check_entity(e);
+            }
+        }
     }
 
     fn fields(&mut self, fields: &[Field]) -> Vec<(String, Ty)> {
@@ -484,6 +505,263 @@ impl<'p> Cx<'_, 'p> {
             policy,
             checks,
             keyed,
+        }
+    }
+
+    fn entity_sig(&mut self, e: &EntityDecl) -> EntitySig {
+        let key = self.ty(&e.key.ty);
+        let mut handlers: Vec<HandlerSig> = Vec::new();
+        for h in &e.handlers {
+            self.no_borrows(&h.params);
+            let params = self.params(&h.params);
+            let ret = h.ret.as_ref().map(|t| self.ty(t));
+            if handlers.iter().any(|(n, _, _)| *n == h.name.name) {
+                self.push(
+                    err("E0650", "message handled twice", h.name.span)
+                        .expected("one `on` per message")
+                        .observed(format!("`on {}`", h.name.name)),
+                );
+                continue;
+            }
+            handlers.push((h.name.name.clone(), params, ret));
+        }
+        EntitySig { key, handlers }
+    }
+
+    /// An entity's state and handlers. Handlers are pure: they compute
+    /// with the state and the message only, so a handler never waits on
+    /// anything, and `ask` cannot form cycles (decision D33).
+    fn check_entity(&mut self, e: &EntityDecl) {
+        let mut gc = GraphCx::default();
+        let key_ty = self.entities[e.name.name.as_str()].key.clone();
+        let mut names: HashSet<&str> = HashSet::new();
+        names.insert(e.key.name.name.as_str());
+        let mut fields: Vec<(String, Ty)> = Vec::new();
+        for f in &e.state {
+            let ty = self.ty(&f.ty);
+            if !names.insert(f.name.name.as_str()) {
+                self.push(
+                    err("E0650", "name used twice in the entity", f.name.span)
+                        .observed(format!("`{}`", f.name.name)),
+                );
+            }
+            if let Some(span) = self.impure(&f.init) {
+                self.push(
+                    err(
+                        "E0651",
+                        "a state's initial value must be a plain value",
+                        span,
+                    )
+                    .expected("a value written in the program, e.g. `[]`, `0` or `\"\"`")
+                    .observed("a call"),
+                );
+            } else {
+                let t = self.expr(&f.init, &GraphCx::default());
+                if !assignable(&t.ty, &ty) && !is_empty_list(&f.init) {
+                    self.push(
+                        err("E0651", "initial value of the wrong type", f.init.span)
+                            .expected(format!("`{ty}` for `{}`", f.name.name))
+                            .observed(format!("`{}`", t.ty)),
+                    );
+                }
+            }
+            fields.push((f.name.name.clone(), ty));
+        }
+        gc.scope.insert(e.key.name.name.clone(), key_ty);
+        for (n, t) in &fields {
+            gc.scope.insert(n.clone(), t.clone());
+        }
+        for h in &e.handlers {
+            let mut hc = gc.clone();
+            for p in &h.params {
+                if names.contains(p.name.name.as_str()) {
+                    self.push(
+                        err("E0650", "parameter hides a name of the entity", p.name.span)
+                            .expected("a name different from the key and the state fields")
+                            .observed(format!("`{}`", p.name.name)),
+                    );
+                }
+                let t = self.ty(&p.ty);
+                hc.scope.insert(p.name.name.clone(), t);
+            }
+            let body: Vec<&Expr> = h
+                .returns
+                .iter()
+                .chain(h.updates.iter().map(|(_, v)| v))
+                .collect();
+            for b in &body {
+                if let Some(span) = self.impure(b) {
+                    self.push(
+                        err("E0654", "a handler cannot call models, tools, graphs or entities", span)
+                            .expected("a value computed from the state and the message; do the calls in a graph and send the result")
+                            .observed("a call with effects"),
+                    );
+                }
+            }
+            match (&h.ret, &h.returns, h.updates.is_empty()) {
+                (Some(rt), Some(r), true) => {
+                    let want = self.ty(rt);
+                    let t = self.expr(r, &hc);
+                    if !assignable(&t.ty, &want) {
+                        self.push(
+                            err("E0610", "returned value has the wrong type", r.span)
+                                .expected(format!("`{want}`"))
+                                .observed(format!("`{}`", t.ty)),
+                        );
+                    }
+                }
+                (None, None, false) => {
+                    let mut seen = HashSet::new();
+                    for (f, v) in &h.updates {
+                        let t = self.expr(v, &hc);
+                        match fields.iter().find(|(n, _)| *n == f.name) {
+                            None => self.push(
+                                err("E0653", "`next` names something that is not a state field", f.span)
+                                    .expected("a `state` field of the entity")
+                                    .observed(format!("`{}`", f.name)),
+                            ),
+                            Some(_) if !seen.insert(f.name.as_str()) => self.push(
+                                err("E0653", "a state field changed twice in one handler", f.span)
+                                    .observed(format!("`next {}` twice", f.name)),
+                            ),
+                            Some((_, ty)) if !assignable(&t.ty, ty) && !is_empty_list(v) => self.push(
+                                err("E0653", "new value of the wrong type", v.span)
+                                    .expected(format!("`{ty}` for `{}`", f.name))
+                                    .observed(format!("`{}`", t.ty)),
+                            ),
+                            Some(_) => {}
+                        }
+                    }
+                }
+                _ => self.push(
+                    err("E0652", "a handler either answers or changes the state", h.name.span)
+                        .expected("`on M(...) -> T:` with one `return`, or `on M(...):` with `next field = ...` lines")
+                        .observed(match (&h.ret, &h.returns) {
+                            (Some(_), None) => "`-> T` without `return`".to_owned(),
+                            (None, Some(_)) => "`return` without `-> T`".to_owned(),
+                            _ if !h.updates.is_empty() && h.returns.is_some() => "both `return` and `next`".to_owned(),
+                            _ => "neither `return` nor `next`".to_owned(),
+                        }),
+                ),
+            }
+        }
+    }
+
+    /// The first call with effects inside `e`, if any.
+    fn impure(&self, e: &Expr) -> Option<Span> {
+        let mut found = None;
+        visit(e, &mut |x| {
+            if found.is_some() {
+                return;
+            }
+            match &x.kind {
+                ExprKind::Call { callee, .. } => {
+                    if let ExprKind::Ident(n) = &callee.kind
+                        && (self.models.contains_key(n.as_str())
+                            || self.tools.contains_key(n.as_str())
+                            || self.graphs.contains_key(n.as_str()))
+                    {
+                        found = Some(x.span);
+                    }
+                }
+                ExprKind::Agent(_) | ExprKind::Message(_) | ExprKind::Borrow { .. } => {
+                    found = Some(x.span)
+                }
+                _ => {}
+            }
+        });
+        found
+    }
+
+    /// `ask Entity(key).Handler(args)` / `send ...` (decisions D15, D21).
+    fn message(&mut self, m: &MessageExpr, gc: &GraphCx) -> Typed {
+        let key = self.expr(&m.key, gc);
+        let verb = if m.send { "send" } else { "ask" };
+        let Some(sig) = self.entities.get(m.entity.name.as_str()) else {
+            self.push(
+                err("E0655", format!("`{verb}` needs an entity"), m.entity.span)
+                    .expected("an entity declared with `entity`")
+                    .observed(format!("`{}`", m.entity.name)),
+            );
+            return Typed::pure(Ty::Error);
+        };
+        let key_ty = sig.key.clone();
+        let Some((_, params, ret)) = sig
+            .handlers
+            .iter()
+            .find(|(n, _, _)| *n == m.handler.name)
+            .cloned()
+        else {
+            let known: Vec<String> = sig
+                .handlers
+                .iter()
+                .map(|(n, _, _)| format!("`{n}`"))
+                .collect();
+            self.push(
+                err(
+                    "E0655",
+                    "the entity does not handle this message",
+                    m.handler.span,
+                )
+                .expected(format!("one of {}", known.join(", ")))
+                .observed(format!("`{}`", m.handler.name)),
+            );
+            return Typed::pure(Ty::Error);
+        };
+        if !assignable(&key.ty, &key_ty) {
+            self.push(
+                err("E0608", "the entity's key has the wrong type", m.key.span)
+                    .expected(format!("`{key_ty}`"))
+                    .observed(format!("`{}`", key.ty)),
+            );
+        }
+        let callee = format!("{}.{}", m.entity.name, m.handler.name);
+        let inner = self.args(&callee, &params, &m.args, m.handler.span, gc);
+        let effect = key.effect.join(inner);
+        match (m.send, ret) {
+            (false, Some(t)) => Typed {
+                ty: t,
+                kind: NodeKind::Other(format!("ask {callee}")),
+                effect: effect.join(Effect::Read),
+            },
+            (true, None) => Typed {
+                ty: Ty::Unit,
+                kind: NodeKind::Other(format!("send {callee}")),
+                effect: effect.join(Effect::Write),
+            },
+            (false, None) => {
+                self.push(
+                    err(
+                        "E0656",
+                        "`ask` waits for an answer this message does not give",
+                        m.handler.span,
+                    )
+                    .expected(format!(
+                        "`send {}(...).{}(...)`: it changes the state and answers nothing",
+                        m.entity.name, m.handler.name
+                    ))
+                    .observed(format!(
+                        "`ask` of `on {}(...)` without `-> T`",
+                        m.handler.name
+                    )),
+                );
+                Typed::pure(Ty::Error)
+            }
+            (true, Some(_)) => {
+                self.push(
+                    err(
+                        "E0656",
+                        "`send` to a message that only answers",
+                        m.handler.span,
+                    )
+                    .expected(format!(
+                        "`ask {}(...).{}(...)`, to use the answer",
+                        m.entity.name, m.handler.name
+                    ))
+                    .observed(format!("`send` to `on {}(...) -> T`", m.handler.name)),
+                );
+                Typed::pure(Ty::Error)
+            }
         }
     }
 
@@ -862,6 +1140,8 @@ impl<'p> Cx<'_, 'p> {
                 out
             })
             .collect();
+        // What each step reads, before ordering edges are added.
+        let data_deps = deps.clone();
         // `a after b`: an ordering edge without data (decision D2).
         for (node, after) in &afters {
             let step = |cx: &mut Self, id: &Ident| match index.get(id.name.as_str()) {
@@ -901,16 +1181,19 @@ impl<'p> Cx<'_, 'p> {
             .filter(|(_, t)| *t == Ty::Sandbox)
             .map(|(n, _)| n.as_str())
             .collect();
+        // Messages to an entity follow the same rule, as `@Entity`: a `send`
+        // after every earlier message to it, an `ask` after every earlier
+        // `send` (the run sees its own changes).
         let mut lent: Vec<Vec<(String, bool)>> = Vec::with_capacity(locals.len());
         for l in &locals {
             let mut out = Vec::new();
-            if !sandboxes.is_empty() {
+            {
                 if let Some((_, over)) = l.fan_out {
                     self.borrows(over, &sandboxes, &mut out);
                 }
                 self.borrows(l.value, &sandboxes, &mut out);
                 if let Some((var, _)) = l.fan_out
-                    && let Some((s, _)) = out.iter().find(|(_, e)| *e)
+                    && let Some((s, _)) = out.iter().find(|(s, e)| *e && !s.starts_with('@'))
                 {
                     self.push(
                         err(
@@ -1076,6 +1359,7 @@ impl<'p> Cx<'_, 'p> {
         }
 
         self.unordered_writes(&locals, &deps, &ids, &nodes);
+        self.lost_updates(&locals, &data_deps);
 
         // Results nobody uses: wasted money for `llm` and `read` nodes.
         for (i, l) in locals.iter().enumerate() {
@@ -1164,6 +1448,14 @@ impl<'p> Cx<'_, 'p> {
             ExprKind::Borrow { mode, target } if sandboxes.contains(target.name.as_str()) => {
                 return one(&target.name, mode.name == "edits");
             }
+            ExprKind::Message(m) => {
+                let mut v = vec![(format!("@{}", m.entity.name), m.send)];
+                v.extend(self.borrows_in(&m.key, sandboxes));
+                for a in &m.args {
+                    v.extend(self.borrows_in(&a.value, sandboxes));
+                }
+                return v;
+            }
             ExprKind::Call { callee, args } => {
                 let to_graph = matches!(&callee.kind, ExprKind::Ident(n) if self.graphs.contains_key(n.as_str()));
                 let mut kids = Vec::new();
@@ -1246,9 +1538,12 @@ impl<'p> Cx<'_, 'p> {
         let mut reported = HashSet::new();
         for (k, g) in groups.iter().enumerate() {
             for (s, edits) in g {
-                let clash = groups[..k]
-                    .iter()
-                    .any(|h| h.iter().any(|(t, e2)| t == s && (*edits || *e2)));
+                // Messages to one entity in one expression: the runtime
+                // applies them one at a time, in either order.
+                let clash = !s.starts_with('@')
+                    && groups[..k]
+                        .iter()
+                        .any(|h| h.iter().any(|(t, e2)| t == s && (*edits || *e2)));
                 if clash && reported.insert(s.clone()) {
                     self.push(
                         err(
@@ -1320,8 +1615,58 @@ impl<'p> Cx<'_, 'p> {
         }
     }
 
+    /// `send E(k).M(f(ask E(k).N()))`: the run reads the entity, computes
+    /// and sends the result back. Another run can change the entity in
+    /// between, and one of the two updates is lost. The computation belongs
+    /// in a handler, which sees the current state (decision D15).
+    fn lost_updates(&mut self, locals: &[Local], deps: &[Vec<usize>]) {
+        let messages = |e: &Expr, send: bool| {
+            let mut out: Vec<(String, Span)> = Vec::new();
+            visit(e, &mut |x| {
+                if let ExprKind::Message(m) = &x.kind
+                    && m.send == send
+                {
+                    out.push((m.entity.name.clone(), x.span));
+                }
+            });
+            out
+        };
+        let asks: Vec<Vec<(String, Span)>> =
+            locals.iter().map(|l| messages(l.value, false)).collect();
+        for (i, l) in locals.iter().enumerate() {
+            let sends = messages(l.value, true);
+            if sends.is_empty() {
+                continue;
+            }
+            // Everything this step's value comes from, itself included.
+            let mut seen = HashSet::from([i]);
+            let mut stack = deps[i].clone();
+            while let Some(d) = stack.pop() {
+                if seen.insert(d) {
+                    stack.extend(deps[d].iter().copied());
+                }
+            }
+            for (entity, span) in &sends {
+                let read = seen.iter().find_map(|&j| {
+                    asks[j]
+                        .iter()
+                        .find(|(e, _)| e == entity)
+                        .map(|_| locals[j].name.name.clone())
+                });
+                if let Some(from) = read {
+                    self.push(
+                        warn("W0603", "the run reads an entity and sends back a value computed from it", *span)
+                            .expected(format!("a handler of `{entity}` that computes the new value from its current state, e.g. `next count = count + 1`"))
+                            .observed(format!("`{from}` asks `{entity}`, and this `send` depends on it: another run can change `{entity}` in between, and one update is lost")),
+                    );
+                }
+            }
+        }
+    }
+
     fn is_global(&self, n: &str) -> bool {
-        self.models.contains_key(n)
+        self.entities.contains_key(n)
+            || self.models.contains_key(n)
             || self.tools.contains_key(n)
             || self.prompts.contains_key(n)
             || self.graphs.contains_key(n)
@@ -1423,6 +1768,7 @@ impl<'p> Cx<'_, 'p> {
     fn expr(&mut self, e: &Expr, gc: &GraphCx) -> Typed {
         match &e.kind {
             ExprKind::Guarded { call, requires } => self.guarded(call, requires, gc),
+            ExprKind::Message(m) => self.message(m, gc),
             ExprKind::Borrow { mode, target } => match gc.scope.get(&target.name) {
                 Some(Ty::Sandbox) => Typed::pure(Ty::Lent(mode.name == "edits")),
                 Some(Ty::Error) => Typed::pure(Ty::Error),
@@ -2461,6 +2807,10 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
                 walk(call, f);
                 requires.iter().for_each(|r| walk(r, f));
             }
+            ExprKind::Message(m) => {
+                walk(&m.key, f);
+                m.args.iter().for_each(|a| walk(&a.value, f));
+            }
             _ => {}
         }
     }
@@ -2474,6 +2824,43 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
         }
         Stmt::Return(e) => walk(e, f),
         Stmt::After { .. } => {}
+    }
+}
+
+/// `[]`: fits any list type.
+fn is_empty_list(e: &Expr) -> bool {
+    matches!(&e.kind, ExprKind::List(items) if items.is_empty())
+}
+
+/// Calls `f` on `e` and every expression inside it.
+fn visit(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    f(e);
+    let kids: Vec<&Expr> = match &e.kind {
+        ExprKind::List(items) => items.iter().collect(),
+        ExprKind::Field { base, .. } => vec![base],
+        ExprKind::Call { callee, args } => std::iter::once(callee.as_ref())
+            .chain(args.iter().map(|a| &a.value))
+            .collect(),
+        ExprKind::Binary { left, right, .. } => vec![left, right],
+        ExprKind::Unary { value, .. }
+        | ExprKind::Done(value)
+        | ExprKind::Next(value)
+        | ExprKind::Try(value) => vec![value],
+        ExprKind::If { cond, then, els } => vec![cond, then, els],
+        ExprKind::Match { value, cases } => std::iter::once(value.as_ref())
+            .chain(cases.iter().map(|c| &c.body))
+            .collect(),
+        ExprKind::Loop { init, body, .. } => vec![init, body],
+        ExprKind::Guarded { call, requires } => std::iter::once(call.as_ref())
+            .chain(requires.iter())
+            .collect(),
+        ExprKind::Message(m) => std::iter::once(&m.key)
+            .chain(m.args.iter().map(|a| &a.value))
+            .collect(),
+        _ => Vec::new(),
+    };
+    for k in kids {
+        visit(k, f);
     }
 }
 
@@ -2615,6 +3002,12 @@ fn collect_refs(e: &Expr, bound: Option<&str>, index: &HashMap<&str, usize>, out
             collect_refs(call, bound, index, out);
             for r in requires {
                 collect_refs(r, bound, index, out);
+            }
+        }
+        ExprKind::Message(m) => {
+            collect_refs(&m.key, bound, index, out);
+            for a in &m.args {
+                collect_refs(&a.value, bound, index, out);
             }
         }
         // Only graph parameters are lent: no step to depend on.

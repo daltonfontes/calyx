@@ -1,0 +1,24 @@
+# Bug: Duas execuções diferentes registram o mesmo depósito (o usuário clicou duas vezes): são mensagens diferentes, e as duas são aplicadas.
+# Pego por: none
+model m = "m"
+
+entity Account(key id: Text):
+    state balance: Int = 0
+    state history: List[Text] = []
+
+    on Balance() -> Int:
+        return balance
+
+    on Deposit(amount: Int, note: Text):
+        next balance = balance + amount
+        next history = history + [note]
+
+    on Set(amount: Int):
+        next balance = amount
+
+prompt why(x: Text) -> Text:
+    """{x}"""
+
+graph g(id: Text, note: Text) -> Text:
+    send Account(id).Deposit(10, note)
+    return "ok"

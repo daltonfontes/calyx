@@ -1,0 +1,72 @@
+error[E0650]: name used twice in the entity
+- observed : `count`
+Location: m6_entities_errors.clyx:9:11
+
+error[E0651]: a state's initial value must be a plain value
+- expected : a value written in the program, e.g. `[]`, `0` or `""`
+- observed : a call
+Location: m6_entities_errors.clyx:10:25
+
+error[E0651]: initial value of the wrong type
+- expected : `Nat` for `size`
+- observed : `Text`
+Location: m6_entities_errors.clyx:11:23
+
+error[E0650]: message handled twice
+- expected : one `on` per message
+- observed : `on Get`
+Location: m6_entities_errors.clyx:16:8
+
+error[E0650]: parameter hides a name of the entity
+- expected : a name different from the key and the state fields
+- observed : `name`
+Location: m6_entities_errors.clyx:19:12
+
+error[E0654]: a handler cannot call models, tools, graphs or entities
+- expected : a value computed from the state and the message; do the calls in a graph and send the result
+- observed : a call with effects
+Location: m6_entities_errors.clyx:20:16
+
+error[E0652]: a handler either answers or changes the state
+- expected : `on M(...) -> T:` with one `return`, or `on M(...):` with `next field = ...` lines
+- observed : both `return` and `next`
+Location: m6_entities_errors.clyx:22:8
+
+error[E0653]: `next` names something that is not a state field
+- expected : a `state` field of the entity
+- observed : `cuont`
+Location: m6_entities_errors.clyx:27:14
+
+error[E0653]: a state field changed twice in one handler
+- observed : `next count` twice
+Location: m6_entities_errors.clyx:29:14
+
+error[E0653]: new value of the wrong type
+- expected : `Nat` for `count`
+- observed : `Text`
+Location: m6_entities_errors.clyx:32:22
+
+error[E0656]: `ask` waits for an answer this message does not give
+- expected : `send Counter(...).Add(...)`: it changes the state and answers nothing
+- observed : `ask` of `on Add(...)` without `-> T`
+Location: m6_entities_errors.clyx:35:27
+
+error[E0656]: `send` to a message that only answers
+- expected : `ask Counter(...).Get(...)`, to use the answer
+- observed : `send` to `on Get(...) -> T`
+Location: m6_entities_errors.clyx:36:24
+
+error[E0655]: `send` needs an entity
+- expected : an entity declared with `entity`
+- observed : `Nothing`
+Location: m6_entities_errors.clyx:37:10
+
+error[E0655]: the entity does not handle this message
+- expected : one of `Get`, `Bad`, `Both`, `Add`, `Wrong`
+- observed : `Sub`
+Location: m6_entities_errors.clyx:38:24
+
+warning[W0603]: the run reads an entity and sends back a value computed from it
+- expected : a handler of `Counter` that computes the new value from its current state, e.g. `next count = count + 1`
+- observed : `n` asks `Counter`, and this `send` depends on it: another run can change `Counter` in between, and one update is lost
+Location: m6_entities_errors.clyx:40:5

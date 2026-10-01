@@ -1,0 +1,25 @@
+# Bug: A execução lê o saldo, soma e grava o resultado: duas execuções ao mesmo tempo perdem um depósito.
+# Pego por: W0603
+model m = "m"
+
+entity Account(key id: Text):
+    state balance: Int = 0
+    state history: List[Text] = []
+
+    on Balance() -> Int:
+        return balance
+
+    on Deposit(amount: Int, note: Text):
+        next balance = balance + amount
+        next history = history + [note]
+
+    on Set(amount: Int):
+        next balance = amount
+
+prompt why(x: Text) -> Text:
+    """{x}"""
+
+graph g(id: Text, amount: Int) -> Text:
+    now = ask Account(id).Balance()
+    send Account(id).Set(now + amount)
+    return "ok"

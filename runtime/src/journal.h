@@ -60,6 +60,9 @@ cx_value *cx_journal_lookup(cx_journal *j, const char *key, const char *req_hash
 /* A `write once` call started and never finished: its outcome is unknown. */
 int cx_journal_uncertain(const cx_journal *j, const char *key);
 
+/* Creates `dir` and its parents; 0 on success. */
+int cx_mkdirs(const char *dir);
+
 /* Records that a `write once` call is about to start (synced to disk). */
 int cx_journal_begin(cx_journal *j, const char *key, const char *req_hash);
 

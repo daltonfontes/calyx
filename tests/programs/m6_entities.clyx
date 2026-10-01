@@ -1,0 +1,24 @@
+# Entities (M6): state between runs, `ask` and `send`.
+type Note:
+    text: Text
+    votes: Nat
+
+entity Board(key id: Text):
+    state notes: List[Note] = []
+    state posts: Nat = 0
+
+    on Notes() -> List[Note]:
+        return notes
+
+    on Count() -> Nat:
+        return posts
+
+    on Post(text: Text):
+        next notes = notes + [Note(text=text, votes=0)]
+        next posts = posts + 1
+
+graph post(board: Text, text: Text) -> Text:
+    before = ask Board(board).Count()
+    send Board(board).Post(text)
+    seen = ask Board(board).Notes()
+    return "{before} {seen}"

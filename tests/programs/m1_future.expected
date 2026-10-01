@@ -10,6 +10,6 @@ error[E0101]: `rounds` is not supported yet (planned for a later milestone)
 - observed : `rounds`
 Location: m1_future.clyx:10:9
 
-error[E0101]: `send` is not supported yet (planned for M6)
-- observed : `send`
-Location: m1_future.clyx:12:5
+error[E0101]: `receive` is not supported yet (planned for a later milestone)
+- observed : `receive`
+Location: m1_future.clyx:12:9

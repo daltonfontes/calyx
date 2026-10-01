@@ -50,7 +50,9 @@
 #include "json.h"
 #include "sha256.h"
 
+#include <fcntl.h>
 #include <pthread.h>
+#include <sys/file.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -140,7 +142,7 @@ struct worker {
 };
 
 /* Kinds of call. */
-enum { CALL_TOOL, CALL_MODEL, CALL_CHAT };
+enum { CALL_TOOL, CALL_MODEL, CALL_CHAT, CALL_ENTITY };
 
 /* A call handed to an I/O thread. */
 struct job {
@@ -159,6 +161,9 @@ struct job {
     /* `write once` begun in an earlier run, with no answer in the journal:
      * it may or may not have happened (D2). */
     int uncertain;
+    /* A message to an entity (D15): `spec` is the entity, `prompt` the
+     * handler; `send` if it changes the state. */
+    int entity, send;
 };
 
 typedef struct {
@@ -170,7 +175,10 @@ struct exec {
     pthread_mutex_t mu, jmu;
     pthread_cond_t work_cv, io_cv;
     cx_arena arena; /* the main thread's */
-    cx_value *models, *tools, *prompts, *graphs;
+    cx_value *models, *tools, *prompts, *graphs, *entities;
+    /* Identifies this run in entities' records of applied messages: the
+     * run's directory name, the same when it is resumed. */
+    const char *run_id;
     int trace;
     double t0;
     cx_buf err;
@@ -220,6 +228,7 @@ typedef struct {
     const char *node;  /* node name, for errors */
     const char *label; /* `node` or `node[j]`, for the trace */
     cx_value **locals; /* loop values and `case` fields */
+    cx_value *estate;  /* in an entity's handler: the state */
     const char *failure; /* a failure not reported yet; `try` may catch it */
 } ctx;
 
@@ -893,7 +902,10 @@ static cx_value *taken_as_done(exec *x, cx_arena *a, job *j, const char *how, ch
  * Runs one call, with its retries, in an I/O thread. Returns the decoded
  * value, or NULL with the reason in `why` ("stopped" if the run stopped).
  */
+static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len);
+
 static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len) {
+    if (j->entity) return entity_job(x, a, j, why, why_len);
     const char *name = cx_get_str(j->spec, j->is_model ? "id" : "name", "?");
     const char *effect = j->is_model ? "llm" : cx_get_str(j->spec, "effect", "read");
     const char *prompt_name = j->is_model ? cx_get_str(j->prompt, "name", "?") : "";
@@ -1101,11 +1113,15 @@ static void *io_main(void *arg) {
 static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_value *prompt,
                          cx_buf *req, const char *note) {
     exec *x = c->x;
-    int is_model = kind != CALL_TOOL;
+    int is_model = kind == CALL_MODEL || kind == CALL_CHAT;
     char hash[65];
     cx_sha256_hex(req->data, req->len, hash);
     const char *name = cx_get_str(spec, is_model ? "id" : "name", "?");
-    const char *effect = is_model ? "llm" : cx_get_str(spec, "effect", "read");
+    /* For an entity, `note` says `send` or `ask`. */
+    int send = kind == CALL_ENTITY && note && strcmp(note, "send") == 0;
+    const char *effect = is_model                ? "llm"
+                         : kind == CALL_ENTITY ? (send ? "write" : "read")
+                                               : cx_get_str(spec, "effect", "read");
     const char *graph = cx_get_str(c->g->graph, "name", "?");
     cx_value *result = NULL;
 
@@ -1150,14 +1166,16 @@ static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_v
         }
         if (hit) {
             const char *why = NULL;
-            cx_value *v = kind == CALL_CHAT ? hit
-                          : is_model        ? decode_model(&c->w->arena, prompt, hit, &why)
-                                            : decode_tool(&c->w->arena, spec, hit);
+            cx_value *v = kind == CALL_CHAT     ? hit
+                          : kind == CALL_ENTITY ? cx_get(hit, "value")
+                          : is_model            ? decode_model(&c->w->arena, prompt, hit, &why)
+                                                : decode_tool(&c->w->arena, spec, hit);
             if (!v) {
                 fail_locked(x, graph, c->node, "the journal's answer does not decode");
             } else {
                 x->from_journal++;
                 if (is_model) account(x, name, hit);
+                if (kind == CALL_ENTITY) is_model = 0;
                 new_pending(x, &c->w->arena, key, P_DONE, v);
                 trace(x, c->label, "%-5s %s%s%s%s  from the journal", effect, name,
                       is_model ? "(" : "", is_model ? cx_get_str(prompt, "name", "?") : "",
@@ -1188,6 +1206,8 @@ static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_v
     j->rank = c->t->rank;
     j->seq = x->seq++;
     j->uncertain = uncertain;
+    j->entity = kind == CALL_ENTITY;
+    j->send = send;
     job_heap_push(&x->jobs, j);
     pthread_cond_signal(&x->io_cv);
     pthread_mutex_unlock(&x->mu);
@@ -1577,6 +1597,224 @@ static cx_value *eval_try(ctx *c, cx_value *e) {
     return tagged(&c->w->arena, "Failed", "error", cx_cstr(&c->w->arena, inner ? inner : "failed"));
 }
 
+/* ----- entities (D15) ----------------------------------------------------- */
+
+/* `ask Entity(key).Handler(args)` / `send ...`: like other effects, the
+ * answer comes from the journal if the call finished, else an I/O thread
+ * does it. The request carries the computed key and arguments. */
+static cx_value *call_message(ctx *c, cx_value *e) {
+    exec *x = c->x;
+    cx_value *entity = at(x->entities, index_of(e, "entity"));
+    cx_value *handler = at(cx_get(entity, "handlers"), index_of(e, "handler"));
+    if (!entity || !handler) return fatalf(c, "invalid IR: unknown entity or message");
+    cx_value *args_e = cx_get(e, "args");
+    size_t n = len_of(args_e);
+    cx_value **args = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *args);
+    EVAL_ALL(c, args_e, args);
+    cx_buf req = {0};
+    const char *ename = cx_get_str(entity, "name", "?");
+    const char *hname = cx_get_str(handler, "name", "?");
+    cx_buf_puts(&req, "{\"entity\":");
+    cx_buf_json_str(&req, ename, strlen(ename));
+    cx_buf_puts(&req, ",\"handler\":");
+    cx_buf_json_str(&req, hname, strlen(hname));
+    cx_buf_puts(&req, ",\"key\":");
+    cx_write(&req, args[0]);
+    cx_buf_puts(&req, ",\"args\":[");
+    for (size_t i = 1; i < n; i++) {
+        if (i > 1) cx_buf_putc(&req, ',');
+        cx_write(&req, args[i]);
+    }
+    cx_buf_puts(&req, "]}");
+    int send = strcmp(cx_get_str(e, "k", ""), "send") == 0;
+    return request(c, call_key(c, e), CALL_ENTITY, entity, handler, &req, send ? "send" : "ask");
+}
+
+/* Reads a whole file into the arena, NUL-terminated; NULL if it is missing. */
+static char *slurp(cx_arena *a, const char *path, size_t *len) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    cx_buf b = {0};
+    char chunk[4096];
+    size_t got;
+    while ((got = fread(chunk, 1, sizeof chunk, f)) > 0) cx_buf_put(&b, chunk, got);
+    fclose(f);
+    char *s = cx_alloc(a, b.len + 1);
+    if (b.len) memcpy(s, b.data, b.len);
+    s[b.len] = '\0';
+    *len = b.len;
+    cx_buf_free(&b);
+    return s;
+}
+
+/* Writes `data` to `path` atomically and durably. 0 on success. */
+static int write_durable(const char *path, const char *data, size_t len) {
+    char tmp[4200];
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return -1;
+    int ok = write(fd, data, len) == (ssize_t)len && fsync(fd) == 0;
+    ok = close(fd) == 0 && ok;
+    return ok && rename(tmp, path) == 0 ? 0 : -1;
+}
+
+/*
+ * One message to an entity, in an I/O thread. The entity lives in
+ * `.calyx/entities/<Entity>/<first 16 hex digits of SHA-256(key)>/`:
+ * `entity.json` holds the state and the ids of the messages applied to it,
+ * replaced atomically together, so a message is applied exactly once even
+ * if a run that sent it is resumed and sends it again. `flock` on `lock`
+ * gives one owner per key across processes: shared for `ask`, exclusive
+ * for `send`.
+ */
+static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len) {
+    cx_value *entity = j->spec, *handler = j->prompt;
+    const char *ename = cx_get_str(entity, "name", "?");
+    const char *hname = cx_get_str(handler, "name", "?");
+    cx_value *req = cx_parse(a, j->req, strlen(j->req), NULL);
+    cx_value *key = cx_get(req, "key");
+    cx_value *args = cx_get(req, "args");
+    cx_buf kb = {0};
+    cx_write(&kb, key);
+    char khash[65];
+    cx_sha256_hex(kb.data, kb.len, khash);
+    khash[16] = '\0';
+    char dir[2048], path[2200];
+    snprintf(dir, sizeof dir, ".calyx/entities/%s/%s", ename, khash);
+    cx_value *result = NULL;
+    int lockfd = -1;
+    if (cx_mkdirs(dir) != 0) {
+        snprintf(why, why_len, "entity `%s`: cannot create %.300s", ename, dir);
+        goto out;
+    }
+    snprintf(path, sizeof path, "%s/key.json", dir);
+    if (access(path, F_OK) != 0) write_durable(path, kb.data, kb.len);
+    snprintf(path, sizeof path, "%s/lock", dir);
+    lockfd = open(path, O_RDWR | O_CREAT, 0644);
+    if (lockfd < 0 || flock(lockfd, j->send ? LOCK_EX : LOCK_SH) != 0) {
+        snprintf(why, why_len, "entity `%s`: cannot lock %.300s", ename, path);
+        goto out;
+    }
+    /* The handler runs with its own context: the key and the message's
+     * arguments in local slots, the state for `state` expressions. */
+    worker w;
+    memset(&w, 0, sizeof w);
+    w.x = x;
+    static gexec none;
+    ctx hc;
+    memset(&hc, 0, sizeof hc);
+    hc.x = x;
+    hc.w = &w;
+    hc.g = &none;
+    hc.node = j->node;
+    size_t nl = (size_t)cx_get_num(handler, "nlocals", 1);
+    hc.locals = cx_alloc(&w.arena, (nl ? nl : 1) * sizeof *hc.locals);
+    hc.locals[0] = key;
+    for (size_t i = 0; i < len_of(args) && i + 1 < nl; i++) hc.locals[i + 1] = at(args, i);
+
+    size_t len = 0;
+    snprintf(path, sizeof path, "%s/entity.json", dir);
+    char *text = slurp(&w.arena, path, &len);
+    cx_value *doc = text ? cx_parse(&w.arena, text, len, NULL) : NULL;
+    cx_value *state = cx_get(doc, "state");
+    cx_value *applied = cx_get(doc, "applied");
+    cx_value *fields = cx_get(entity, "state");
+    if (!state) { /* a new entity: the initial values */
+        size_t nf = len_of(fields);
+        const char **keys = cx_alloc(&w.arena, (nf ? nf : 1) * sizeof *keys);
+        cx_value **vals = cx_alloc(&w.arena, (nf ? nf : 1) * sizeof *vals);
+        for (size_t i = 0; i < nf; i++) {
+            keys[i] = cx_get_str(at(fields, i), "name", "");
+            vals[i] = eval(&hc, cx_get(at(fields, i), "init"));
+            if (!vals[i]) vals[i] = cx_null(&w.arena);
+        }
+        state = cx_rec(&w.arena, keys, vals, nf);
+    }
+    hc.estate = state;
+    if (!j->send) {
+        cx_value *v = eval(&hc, cx_get(handler, "answer"));
+        if (!v) {
+            snprintf(why, why_len, "entity `%s`, message `%s`: %s", ename, hname,
+                     hc.failure ? hc.failure : "failed");
+        } else {
+            cx_buf vb = {0};
+            cx_write(&vb, v);
+            result = cx_parse(a, vb.data, vb.len, NULL);
+            cx_buf_free(&vb);
+        }
+        trace(x, j->label, "ask   %s(%s).%s", ename, kb.data, hname);
+    } else {
+        /* The message's id: this run and the call's place in it. */
+        char id[1024];
+        snprintf(id, sizeof id, "%s %s", x->run_id, j->key);
+        int seen = 0;
+        for (size_t i = 0; i < len_of(applied) && !seen; i++)
+            seen = at(applied, i)->kind == CX_STR && strcmp(at(applied, i)->u.str.s, id) == 0;
+        if (seen) {
+            trace(x, j->label, "send  %s(%s).%s  already applied", ename, kb.data, hname);
+            result = cx_null(a);
+        } else {
+            /* Every update sees the state before the message. */
+            size_t nf = state->kind == CX_REC ? state->u.rec.len : 0;
+            const char **keys = cx_alloc(&w.arena, (nf ? nf : 1) * sizeof *keys);
+            cx_value **vals = cx_alloc(&w.arena, (nf ? nf : 1) * sizeof *vals);
+            for (size_t i = 0; i < nf; i++) {
+                keys[i] = state->u.rec.keys[i];
+                vals[i] = state->u.rec.vals[i];
+            }
+            cx_value *updates = cx_get(handler, "updates");
+            int failed = 0;
+            for (size_t u = 0; u < len_of(updates) && !failed; u++) {
+                const char *f = cx_get_str(at(updates, u), "field", "");
+                cx_value *v = eval(&hc, cx_get(at(updates, u), "v"));
+                if (!v) {
+                    failed = 1;
+                    break;
+                }
+                for (size_t i = 0; i < nf; i++)
+                    if (strcmp(keys[i], f) == 0) vals[i] = v;
+            }
+            if (failed) {
+                snprintf(why, why_len, "entity `%s`, message `%s`: %s", ename, hname,
+                         hc.failure ? hc.failure : "failed");
+            } else {
+                cx_buf db = {0};
+                cx_buf_puts(&db, "{\"state\":");
+                cx_write(&db, cx_rec(&w.arena, keys, vals, nf));
+                cx_buf_puts(&db, ",\"applied\":[");
+                for (size_t i = 0; i < len_of(applied); i++) {
+                    cx_write(&db, at(applied, i));
+                    cx_buf_putc(&db, ',');
+                }
+                cx_buf_json_str(&db, id, strlen(id));
+                cx_buf_puts(&db, "]}");
+                if (write_durable(path, db.data, db.len) != 0)
+                    snprintf(why, why_len, "entity `%s`: cannot write %.300s", ename, path);
+                else
+                    result = cx_null(a);
+                cx_buf_free(&db);
+            }
+            trace(x, j->label, "send  %s(%s).%s", ename, kb.data, hname);
+        }
+    }
+    cx_arena_free(&w.arena);
+out:
+    if (lockfd >= 0) {
+        flock(lockfd, LOCK_UN);
+        close(lockfd);
+    }
+    cx_buf_free(&kb);
+    if (result) {
+        const char *keys[1] = {"value"};
+        cx_value *vals[1] = {result};
+        if (!journal_record(x, j, j->send ? "write" : "read", cx_rec(a, keys, vals, 1))) {
+            snprintf(why, why_len, "cannot write the journal");
+            return NULL;
+        }
+    }
+    return result;
+}
+
 /* ----- agents ------------------------------------------------------------- */
 
 /* The tool definitions the model sees (OpenAI "function" format). */
@@ -1934,6 +2172,11 @@ static cx_value *eval(ctx *c, cx_value *e) {
     if (strcmp(k, "loop") == 0) return eval_loop(c, e);
     if (strcmp(k, "try") == 0) return eval_try(c, e);
     if (strcmp(k, "agent") == 0) return call_agent(c, e);
+    if (strcmp(k, "ask") == 0 || strcmp(k, "send") == 0) return call_message(c, e);
+    if (strcmp(k, "state") == 0 && c->estate) {
+        cx_value *v = cx_get(c->estate, cx_get_str(e, "field", ""));
+        return v ? v : cx_null(&c->w->arena);
+    }
     if (strcmp(k, "model") == 0) return call_model(c, e);
     if (strcmp(k, "tool") == 0) return call_tool(c, e);
     if (strcmp(k, "graph") == 0) return call_graph(c, e);
@@ -1957,7 +2200,7 @@ static void run_task(worker *w, task *t) {
     gexec *g = t->g;
     cx_value *node = at(g->nodes_ir, t->node);
     const char *name = cx_get_str(node, "name", "?");
-    ctx c = {x, w, t, g, NULL, NULL, NULL, name, name, NULL, NULL};
+    ctx c = {x, w, t, g, NULL, NULL, NULL, name, name, NULL, NULL, NULL};
     if (t->item < 0) {
         c.instance = fmt(&w->arena, "%s/%s", g->path, name);
     } else {
@@ -2120,6 +2363,7 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
     x->tools = cx_get(ir, "tools");
     x->prompts = cx_get(ir, "prompts");
     x->graphs = cx_get(ir, "graphs");
+    x->entities = cx_get(ir, "entities");
 
     size_t gi = (size_t)-1;
     for (size_t i = 0; i < len_of(x->graphs); i++)
@@ -2164,6 +2408,14 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
 
     /* The journal: the program is identified by the hash of its IR (D23). */
     const char *dir = cx_get_str(options, "journal", NULL);
+    /* The run's id for entities: its directory's name (the same when
+     * resumed); without a journal, unique to this process. */
+    if (dir) {
+        const char *slash = strrchr(dir, '/');
+        x->run_id = slash ? slash + 1 : dir;
+    } else {
+        x->run_id = fmt(&x->arena, "pid%ld-%ld", (long)getpid(), (long)time(NULL));
+    }
     if (dir) {
         const char *mode_s = cx_get_str(options, "mode", "new");
         cx_journal_mode mode = strcmp(mode_s, "resume") == 0   ? CX_JOURNAL_RESUME

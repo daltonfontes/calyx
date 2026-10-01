@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 use calyx_ir::{self as ir, Effect, NodeId, Part, PromptPart};
 use calyx_syntax::ast::{
-    Arg, Decl, Expr, ExprKind, GraphDecl, Ident, OnLimit, Program, Stmt, StrLit, ToolDecl,
-    TypeDecl, TypeExpr, TypeKind,
+    Arg, Decl, EntityDecl, Expr, ExprKind, GraphDecl, Ident, OnLimit, Program, Stmt, StrLit,
+    ToolDecl, TypeDecl, TypeExpr, TypeKind,
 };
 
 pub fn lower(program: &Program, out: &mut ir::Program) {
@@ -21,6 +21,7 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
         prompts: HashMap::new(),
         types: HashMap::new(),
         variants: HashMap::new(),
+        entities: HashMap::new(),
         graphs: out
             .graphs
             .iter()
@@ -49,6 +50,9 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
                         cx.variants.insert(&v.name.name, enum_like);
                     }
                 }
+            }
+            Decl::Entity(e) => {
+                cx.entities.insert(&e.name.name, (cx.entities.len(), e));
             }
             Decl::Tool(_) | Decl::Prompt(_) | Decl::Graph(_) => {}
         }
@@ -137,6 +141,11 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
             cx.graph(decl, g);
         }
     }
+    for d in &program.decls {
+        if let Decl::Entity(e) = d {
+            out.entities.push(cx.entity(e));
+        }
+    }
 }
 
 struct Lower<'p> {
@@ -150,6 +159,8 @@ struct Lower<'p> {
     variants: HashMap<&'p str, bool>,
     /// Index in the IR and parameter names.
     graphs: HashMap<String, (usize, Vec<String>)>,
+    /// Index in the IR and declaration.
+    entities: HashMap<&'p str, (usize, &'p EntityDecl)>,
 }
 
 /// `for each var in list` of a statement, if it has one.
@@ -164,6 +175,8 @@ struct Scope<'a> {
     locals: RefCell<Vec<(String, usize)>>,
     /// Slots used so far by the current node.
     slots: Cell<usize>,
+    /// In an entity's handler: the state's fields.
+    state: Vec<String>,
 }
 
 impl Scope<'_> {
@@ -194,6 +207,7 @@ impl Lower<'_> {
             item: None,
             locals: RefCell::new(Vec::new()),
             slots: Cell::new(0),
+            state: Vec::new(),
         };
         let mut stmts: HashMap<&str, (&FanOut, &Expr)> = HashMap::new();
         let mut ret = None;
@@ -250,6 +264,32 @@ impl Lower<'_> {
             }
             ExprKind::Call { callee, args } => self.call(callee, args, scope),
             ExprKind::Borrow { target, .. } => self.name(&target.name, scope),
+            ExprKind::Message(m) => {
+                // The checker guarantees the entity and the handler exist.
+                let (entity, handler, params) = match self.entities.get(m.entity.name.as_str()) {
+                    Some((i, decl)) => {
+                        let h = decl
+                            .handlers
+                            .iter()
+                            .position(|h| h.name.name == m.handler.name)
+                            .unwrap_or(0);
+                        let params: Vec<String> = decl
+                            .handlers
+                            .get(h)
+                            .map(|h| h.params.iter().map(|p| p.name.name.clone()).collect())
+                            .unwrap_or_default();
+                        (*i, h, params)
+                    }
+                    None => (0, 0, Vec::new()),
+                };
+                ir::Expr::Message {
+                    send: m.send,
+                    entity,
+                    handler,
+                    key: Box::new(self.expr(&m.key, scope)),
+                    args: self.ordered(params.iter().map(String::as_str), &m.args, scope),
+                }
+            }
             ExprKind::Guarded { call, requires } => {
                 let mut e = self.expr(call, scope);
                 if let ir::Expr::Tool { requires: r, .. } = &mut e {
@@ -385,6 +425,60 @@ impl Lower<'_> {
         }
     }
 
+    fn entity(&self, e: &EntityDecl) -> ir::Entity {
+        let fields: Vec<String> = e.state.iter().map(|f| f.name.name.clone()).collect();
+        let empty = Scope {
+            params: Vec::new(),
+            nodes: HashMap::new(),
+            item: None,
+            locals: RefCell::new(Vec::new()),
+            slots: Cell::new(0),
+            state: Vec::new(),
+        };
+        let state = e
+            .state
+            .iter()
+            .map(|f| (f.name.name.clone(), self.expr(&f.init, &empty)))
+            .collect();
+        let handlers = e
+            .handlers
+            .iter()
+            .map(|h| {
+                let scope = Scope {
+                    params: Vec::new(),
+                    nodes: HashMap::new(),
+                    item: None,
+                    locals: RefCell::new(Vec::new()),
+                    slots: Cell::new(0),
+                    state: fields.clone(),
+                };
+                // Slot 0: the key; then the message's parameters.
+                scope.bind(&e.key.name.name);
+                for p in &h.params {
+                    scope.bind(&p.name.name);
+                }
+                let answer = h.returns.as_ref().map(|r| self.expr(r, &scope));
+                let updates = h
+                    .updates
+                    .iter()
+                    .map(|(f, v)| (f.name.clone(), self.expr(v, &scope)))
+                    .collect();
+                ir::Handler {
+                    name: h.name.name.clone(),
+                    params: h.params.iter().map(|p| p.name.name.clone()).collect(),
+                    answer,
+                    updates,
+                    nlocals: scope.slots.get(),
+                }
+            })
+            .collect();
+        ir::Entity {
+            name: e.name.name.clone(),
+            state,
+            handlers,
+        }
+    }
+
     /// The `on_uncertain` policy of a tool, if it has one.
     fn uncertain(&self, t: &ToolDecl) -> Option<ir::Uncertain> {
         let p = t.props.iter().find(|p| p.key.name == "on_uncertain")?;
@@ -507,6 +601,9 @@ impl Lower<'_> {
         }
         if let Some(id) = scope.nodes.get(n) {
             return ir::Expr::Node(*id);
+        }
+        if scope.state.iter().any(|f| f == n) {
+            return ir::Expr::State(n.to_owned());
         }
         match self.variants.get(n) {
             Some(true) => return ir::Expr::Text(n.to_owned()),

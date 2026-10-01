@@ -1,0 +1,30 @@
+# Bug: Um handler muda um campo que não existe: a mudança se perderia.
+# Pego por: E0653
+model m = "m"
+
+entity Account(key id: Text):
+    state balance: Int = 0
+    state history: List[Text] = []
+
+    on Balance() -> Int:
+        return balance
+
+    on Deposit(amount: Int, note: Text):
+        next balance = balance + amount
+        next history = history + [note]
+
+    on Set(amount: Int):
+        next balance = amount
+
+prompt why(x: Text) -> Text:
+    """{x}"""
+
+entity Wallet(key id: Text):
+    state balance: Int = 0
+
+    on Add(n: Int):
+        next balnce = balance + n
+
+graph g(id: Text) -> Text:
+    send Wallet(id).Add(1)
+    return "ok"

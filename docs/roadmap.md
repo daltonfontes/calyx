@@ -42,7 +42,8 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | Distribuição (D35) | ✅ Concluído: binários estáticos (musl) para Linux x86_64 e ARM, e binários para macOS, publicados por tag (`.github/workflows/release.yml`), com teste do binário e de um programa gerado com ele em cada alvo; `install.sh` com conferência de SHA-256; `calyx build` gera um executável autocontido (o próprio `calyx` com o programa e o `calyx.toml` anexados) |
 | M6a | ✅ Concluído: escritas externas seguras. `write` com `idempotency_key` (a chave vai para a tool, e a escrita pode ser repetida em erros temporários); `write once` com `on_uncertain pause`, `accept_loss` e `verify(tool(...))`, aplicadas tanto quando a resposta se perde (timeout, servidor caiu) quanto na retomada; `calyx resume --uncertain done\|retry\|failed` para a decisão de uma pessoa; precondições `requires` conferidas pela tool sobre o estado atual (`checks`), com falha local `PreconditionFailed` que o `try` captura; `after` e aviso de escritas sem ordem; agentes não usam tools `write once`. Exemplo: `examples/refund.clyx` com a loja falsa `examples/tools/fake_store.py` |
 | M6b | ✅ Concluído: sandboxes. Parâmetros `Sandbox` (a execução trabalha numa cópia do diretório), tools com `reads Sandbox` / `edits Sandbox`, empréstimos `reads repo` / `edits repo` nas chamadas e nas tools de agentes; a ordem entre passos sai dos empréstimos; erros para edições em paralelo e para a sandbox usada como valor. No runtime, travas (edições uma por vez), snapshots por conteúdo, chamada que falha desfeita antes de repetir, sandbox restaurada do diário na retomada. Exemplo: `examples/fix.clyx`, um agente de código que corrigiu um bug com o Gemini. `fork`/`share` ficam para depois |
-| M6c | Próximo: entidades (`entity`, `ask`, `send`, `receive`) |
+| M6c | ✅ Concluído: entidades. `entity` com `state` e handlers puros que respondem ou mudam o estado; `ask` e `send`; estado em `.calyx/entities/`, uma mudança por vez por chave também entre processos (`flock`), cada mensagem aplicada uma vez (ids gravados junto com o estado), ordem entre mensagens à mesma entidade pela ordem do texto, aviso de atualização perdida (`W0603`). Exemplo: `examples/memory.clyx`, memória entre conversas com o Gemini. `receive` e `respond` ficam para depois |
+| M7 | Próximo (a definir) |
 
 ## Medidas
 
@@ -64,7 +65,18 @@ Para repetir: `cargo run --release -p calyx-check --example phases -- arquivo.cl
 
 ### M6 (Q2): quantos bugs de estado o compilador pega
 
-**Com as sandboxes (M6b), a suíte tem 32 bugs:** o compilador pega 23 (72%), o runtime 4, ninguém 5. Os 10 novos:
+**Com as entidades (M6c), a suíte tem 41 bugs:** o compilador pega 28 (68%), 1 não pode acontecer por construção, o runtime pega 6 e 6 escapam. **35 de 41 nunca causam dano.**
+
+| Quem pega | Bugs de entidade (9) |
+|---|---|
+| Compilador (5) | atualização perdida (ler, somar, gravar); handler que chama modelo; `ask` a quem não responde; mensagem com nome errado; campo de estado errado |
+| Por construção (1) | consultar logo depois de gravar, na mesma execução (a ordem sai do texto) |
+| Runtime (2) | várias execuções do mesmo usuário ao mesmo tempo (`flock`: 50 de 50 aplicadas); retomada que manda de novo (aplicada uma vez) |
+| Ninguém (1) | o mesmo depósito registrado por duas execuções diferentes (clique duplo): são mensagens diferentes |
+
+**Memória com o Gemini** (`examples/memory.clyx`): a primeira conversa ("moro em Recife e tenho uma gata chamada Pipoca") gravou dois fatos; a segunda, numa execução nova, respondeu "Sua gata se chama Pipoca e você mora em Recife!"; outro usuário não viu nada disso.
+
+**Com as sandboxes (M6b), a suíte tinha 32 bugs:** o compilador pegava 23 (72%), o runtime 4, ninguém 5. Os 10 de sandbox:
 
 | Quem pega | Bugs de sandbox |
 |---|---|
