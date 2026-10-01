@@ -5,6 +5,7 @@ members = [
     "compiler/calyx-check",
     "compiler/calyx-ir",
     "compiler/calyx-cli",
+    "runtime",
 ]
 
 [workspace.package]

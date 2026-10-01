@@ -7,9 +7,12 @@
 //! and interpreted (decision D4).
 //!
 //! M1 records the structure (nodes, kinds, types, effects, dependencies).
-//! M2 adds the expressions the interpreter evaluates.
+//! M2 adds the expressions the interpreter evaluates, and the models, tools
+//! and prompts they call. [`Program::to_json`] is the form the C runtime loads.
 
 use std::fmt;
+
+mod json;
 
 /// Effects, ordered from least to most dangerous (decision D2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -79,7 +82,90 @@ impl fmt::Display for NodeKind {
     }
 }
 
+/// An expression the runtime evaluates. Names are already resolved to
+/// indices: parameters, nodes, models, tools, prompts and graphs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    Text(String),
+    Int(u64),
+    Float(f64),
+    /// A parameter of the enclosing graph, by position.
+    Param(usize),
+    /// The value of an earlier node of the same graph.
+    Node(NodeId),
+    /// The current item of a fan-out (`for each item in ...`).
+    Item,
+    Field(Box<Expr>, String),
+    List(Vec<Expr>),
+    /// Text with `{...}` interpolations.
+    Interp(Vec<Part>),
+    /// `model(prompt(args))`. Arguments follow the prompt's parameters.
+    Model {
+        model: usize,
+        prompt: usize,
+        args: Vec<Expr>,
+    },
+    /// Arguments follow the tool's parameters.
+    Tool {
+        tool: usize,
+        args: Vec<Expr>,
+    },
+    /// Arguments follow the graph's parameters.
+    Graph {
+        graph: usize,
+        args: Vec<Expr>,
+    },
+}
+
+/// A piece of an interpolated text.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Part {
+    Lit(String),
+    Expr(Expr),
+}
+
+/// A piece of a prompt template: `{a.b}` becomes `Path(["a", "b"])`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptPart {
+    Lit(String),
+    Path(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Model {
+    pub name: String,
+    /// The provider's model identifier, e.g. `gemini-3.5-flash-lite`.
+    pub id: String,
+    pub max_output: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tool {
+    pub name: String,
+    pub params: Vec<String>,
+    pub effect: Effect,
+    /// In tokens (decision D16).
+    pub max_output: Option<u64>,
+    /// Per attempt; the default depends on the effect (decision D22).
+    pub timeout_ms: u64,
+    /// Error kinds the runtime retries.
+    pub retry_on: Vec<String>,
+    /// The tool returns `Text`; otherwise its output is decoded as JSON.
+    pub returns_text: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prompt {
+    pub name: String,
+    pub params: Vec<String>,
+    pub parts: Vec<PromptPart>,
+    /// JSON Schema of the answer, or `None` when the prompt returns `Text`.
+    pub schema: Option<String>,
+    /// The schema wraps a non-object answer as `{"value": ...}`.
+    pub wrapped: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     pub id: NodeId,
     pub name: String,
@@ -91,10 +177,14 @@ pub struct Node {
     pub effect: Effect,
     /// Data dependencies: nodes whose values this node reads.
     pub inputs: Vec<NodeId>,
+    /// The list a fan-out iterates over.
+    pub over: Option<Expr>,
+    /// What the node computes (for a fan-out: for each item).
+    pub value: Option<Expr>,
 }
 
 /// A compiled graph: the template the runtime unfolds.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Graph {
     pub name: String,
     /// Parameters as `(name, type)`.
@@ -107,10 +197,19 @@ pub struct Graph {
     pub output: Option<NodeId>,
 }
 
-/// All graphs of a program.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// A whole program.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Program {
+    pub models: Vec<Model>,
+    pub tools: Vec<Tool>,
+    pub prompts: Vec<Prompt>,
     pub graphs: Vec<Graph>,
+}
+
+impl Program {
+    pub fn graph_index(&self, name: &str) -> Option<usize> {
+        self.graphs.iter().position(|g| g.name == name)
+    }
 }
 
 impl fmt::Display for Program {
@@ -191,6 +290,8 @@ mod tests {
                 fan_out: None,
                 effect: Effect::Llm,
                 inputs: vec![],
+                over: None,
+                value: None,
             }],
             output: Some(NodeId(0)),
         };

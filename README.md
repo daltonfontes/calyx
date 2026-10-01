@@ -54,27 +54,50 @@ A analogia mais próxima é o **SQL**: você declara o que quer, e o banco decid
 
 ## Estado do projeto
 
-O **discovery** está concluído (34 decisões fechadas). A implementação começou: os marcos M0 (estrutura) e M1 (`calyx check` para o subconjunto inicial) estão concluídos. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
+O **discovery** está concluído (34 decisões fechadas). Na implementação, os marcos M0 (estrutura), M1 (`calyx check` para o subconjunto inicial) e M2 (`calyx run`: o runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP) estão concluídos. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
 
 ## Como compilar e testar
 
 Requisitos: Rust (stable) e um compilador C.
 
 ```sh
-make test     # testes do compilador (Rust) e do runtime (C)
+make test     # testes do compilador (Rust) e do runtime (C); precisam de python3
 make lint     # rustfmt + clippy
 cargo run -p calyx-cli -- check examples/research.clyx --ir --time
+```
+
+## Como rodar um programa
+
+```sh
+# Sem rede e sem chave: os modelos devolvem respostas falsas no formato do tipo do prompt.
+cargo run -p calyx-cli -- run examples/research.clyx --fake-models --topic "energia solar no Brasil"
+
+# Com um modelo de verdade (o exemplo usa gemini-3.5-flash-lite):
+export GEMINI_API_KEY=...      # nunca no código nem no calyx.toml
+cargo run -p calyx-cli -- run examples/research.clyx --topic "energia solar no Brasil"
+```
+
+Cada parâmetro do grafo vira uma opção (`--topic`). O resultado vai para a saída padrão; o rastro (uma linha por passo e por chamada, com tempo e tokens) vai para a saída de erro, e some com `--quiet`.
+
+**Modelos.** O runtime fala o formato de API da OpenAI, aceito por Gemini, NVIDIA, OpenAI, OpenRouter, Groq e Ollama. Identificadores `gemini-*`, `gpt-*` e `nvidia/*` já têm provedor embutido; outros se configuram no `calyx.toml`.
+
+**Tools.** Cada tool roda num servidor MCP (decisão D34), declarado no `calyx.toml` ao lado do programa. O exemplo usa uma busca falsa ([`examples/tools/fake_search.py`](examples/tools/fake_search.py)); para usar uma busca real, troque o comando:
+
+```toml
+[tools.web_search]
+command = ["python3", "tools/fake_search.py"]   # relativo ao calyx.toml
 ```
 
 | Pasta | Conteúdo |
 |---|---|
 | `compiler/calyx-syntax` | Fonte, diagnósticos estruturados, lexer e parser |
-| `compiler/calyx-check` | O verificador; também compilado como biblioteca estática para o runtime |
+| `compiler/calyx-check` | O verificador e a geração da representação intermediária |
 | `compiler/calyx-ir` | Representação intermediária (o template do grafo) |
 | `compiler/calyx-cli` | O comando `calyx` |
-| `runtime/` | Runtime em C, que liga o verificador em Rust |
+| `runtime/src` | O interpretador em C: valores, execução do grafo, novas tentativas, rastro |
+| `runtime/rs` | A camada de E/S em Rust que o interpretador chama: modelos por HTTPS, tools por MCP, `calyx.toml`; e o verificador exposto ao C. Tudo sai numa biblioteca estática só |
 | `tests/programs/` | Programas de teste com os diagnósticos esperados (`.expected`) e a representação intermediária esperada (`.ir`) |
-| `examples/` | Programas de exemplo. `research.clyx` passa na verificação completa; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente |
+| `examples/` | Programas de exemplo. `research.clyx` passa na verificação e roda; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
 
 ## Plano de implementação
 

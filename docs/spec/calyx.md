@@ -102,7 +102,7 @@ tool NOME(parametros) -> Tipo:
     repeatable                           # repetir com os mesmos argumentos é legítimo (D5)
 ```
 
-**Implementação (D34):** a tool roda num servidor **MCP** separado, escrito em qualquer linguagem. A declaração `tool` é o **contrato** que a Calyx verifica e que o runtime aplica (efeito, limites, timeout, retentativa, idempotência, precondições). O nome da tool e o servidor que a implementa são ligados na configuração do projeto *(formato a definir no M2)*.
+**Implementação (D34):** a tool roda num servidor **MCP** separado, escrito em qualquer linguagem. A declaração `tool` é o **contrato** que a Calyx verifica e que o runtime aplica (efeito, limites, timeout, retentativa, idempotência, precondições). O nome da tool e o servidor que a implementa são ligados no `calyx.toml` (seção 11.1).
 
 ### 4.4 Tipos
 
@@ -472,10 +472,34 @@ Mensagens de erro estruturadas, com **esperado**, **observado** e **local**, par
 |---|---|
 | `calyx check` | Verifica o programa (meta: até 1 s), sem gerar código |
 | `calyx build` | Emite um arquivo C (runtime + grafo + efeitos) e compila para um binário nativo |
-| `calyx run` | Executa; modos: `--deterministic` (uma thread), `--threads N` |
+| `calyx run` | Executa um grafo: `calyx run arquivo.clyx --param valor`. Hoje roda numa thread; depois, `--deterministic` (uma thread) e `--threads N` |
 | `calyx fmt` | Formata o código |
 | `calyx replay` | Reexecuta a partir de um diário, sem chamar modelos nem tools |
 | `calyx trace` | Mostra o grafo realizado, custos e latências por nó |
+
+### 11.1 Configuração do projeto (`calyx.toml`)
+
+Procurado no diretório do programa e nos diretórios acima. O programa fixa o identificador do modelo (D23); a configuração só diz **para onde** mandar cada chamada.
+
+```toml
+[providers.nvidia]                       # API no formato da OpenAI
+url = "https://integrate.api.nvidia.com/v1"
+key_env = "NVIDIA_API_KEY"               # a chave vem do ambiente, nunca do arquivo
+models = ["meta/", "nvidia/"]            # prefixos dos identificadores que este provedor atende
+
+[tools.web_search]                       # servidor MCP que implementa a tool
+command = ["python3", "tools/search.py"] # relativo ao calyx.toml
+name = "search"                          # opcional: nome da tool no servidor
+```
+
+Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*` / `o3*` / `o4*` (`OPENAI_API_KEY`), `nvidia/*` (`NVIDIA_API_KEY`). Identificadores que começam com `fake` (e a opção `--fake-models`) usam um modelo falso, sem rede, que responde no formato do tipo do prompt.
+
+### 11.2 Como o runtime chama modelos e tools
+
+- **Modelo:** o prompt é preenchido com os argumentos (texto como está; listas, um item por linha; registros, em JSON). Se o prompt não devolve `Text`, o tipo de saída vira um **JSON Schema** enviado junto, e a resposta é decodificada nesse tipo; uma resposta que não decodifica conta como erro temporário.
+- **Novas tentativas:** erros temporários (`Timeout`, `RateLimit`, `Unavailable`, `Network`) de modelos são repetidos até 4 tentativas, esperando 1 s, 2 s e 4 s (o dobro para `RateLimit`). Tools repetem só os erros listados em `retry_on`; `write once` nunca repete (D2).
+- **Saída de tools:** cortada em `max_output` (D16).
+- **Falha:** se um passo falha depois das tentativas, a execução para com o grafo, o passo e o motivo. Falha como valor (`try`, D11) chega no M5.
 
 ## 12. Implementação (D10)
 
@@ -483,7 +507,8 @@ Mensagens de erro estruturadas, com **esperado**, **observado** e **local**, par
 - **Runtime em C**, emitido junto com o programa num único arquivo C.
 - Nós compilados como segmentos de uma máquina de estados, **sem pilha de chamadas do C**.
 - Afinidade no lugar de coletor de lixo; contador de referências só no que é compartilhado.
-- Um interpretador pequeno no runtime executa grafos gerados por LLM depois de verificados.
+- Um interpretador pequeno no runtime executa grafos gerados por LLM depois de verificados. Ele já existe (M2): hoje executa todos os programas, a partir da representação intermediária em JSON (`calyx check --ir-json`).
+- O que C faz mal fica numa camada em Rust ligada ao runtime: HTTPS, JSON das APIs de modelo e o cliente MCP. O interpretador continua dono das políticas (novas tentativas, timeouts por efeito, decodificação das respostas).
 - O mesmo binário roda em uma thread (determinístico), várias threads, ou várias máquinas, sempre com o mesmo resultado.
 
 ## 13. Fora da v1

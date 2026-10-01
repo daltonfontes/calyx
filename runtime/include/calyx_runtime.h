@@ -1,8 +1,8 @@
 /*
  * calyx_runtime.h - public interface of the Calyx runtime.
  *
- * M0 only exposes version information and a helper that runs the shared
- * verifier on a source buffer. The interpreter arrives in M2.
+ * The interpreter runs a compiled program (its IR, in JSON, as printed by
+ * `calyx check --ir-json`), and a helper runs the shared verifier on source.
  */
 #ifndef CALYX_RUNTIME_H
 #define CALYX_RUNTIME_H
@@ -23,6 +23,18 @@ const char *calyx_runtime_version(void);
  * to be released with calyx_string_free().
  */
 int calyx_runtime_verify(const char *src, size_t len, char **diagnostics_json);
+
+/* Flag for calyx_run(): one line per node and effect on stderr. */
+#define CALYX_RUN_TRACE 1
+
+/*
+ * Runs `graph` of a compiled program. `args_json` is a JSON object mapping
+ * each parameter to its value. Returns {"ok": value} or {"error": message}
+ * as JSON, to be released with calyx_run_free(). Effects go through the
+ * I/O layer (calyx_io.h), configured by calyx.toml.
+ */
+char *calyx_run(const char *ir_json, const char *graph, const char *args_json, int flags);
+void calyx_run_free(char *s);
 
 #ifdef __cplusplus
 }

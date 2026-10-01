@@ -22,7 +22,7 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 |---|---|---|
 | **M0** | Estrutura do repositório: compilador em Rust (sintaxe, verificação, representação intermediária, CLI), runtime em C, verificador ligado ao runtime como biblioteca estática, testes com programas `.clyx` de referência, CI | O verificador em Rust é chamado de dentro do runtime em C |
 | **M1** | `calyx check` para o subconjunto inicial: `model`, `prompt`, `tool` de leitura, `type` (registros), `graph` com `node`, fan-out e `return`. Tipos, variáveis dos prompts, inferência de efeitos, erros estruturados | Tempo do `check` (meta: até 1 s) |
-| **M2** | Runtime em C interpretando o grafo numa thread, com chamadas reais de LLM e tools via MCP | O exemplo do README roda de ponta a ponta |
+| **M2** | Runtime em C interpretando o grafo numa thread, com chamadas reais de LLM e tools via MCP | O `examples/research.clyx` roda de ponta a ponta |
 | **M3** | Diário, retomada após queda, `calyx replay` | **Q3:** quanto trabalho é refeito depois de uma falha |
 | **M4** | Workers com roubo de trabalho, limites, prioridade pelo caminho crítico | **Q1:** quanto paralelismo sai sozinho |
 | **M5** | `loop`, `agent`, `match` com variantes, `try` | O ReAct como ciclo funciona |
@@ -35,8 +35,9 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 |---|---|
 | M0 | ✅ Concluído: workspace Rust (`calyx-syntax`, `calyx-check`, `calyx-ir`, `calyx-cli`), lexer completo com diagnósticos estruturados, verificador ligado ao runtime em C como biblioteca estática, testes de referência, CI |
 | M1 | ✅ Concluído: parser com recuperação de erros; verificação de nomes, tipos, variáveis dos prompts, contratos das tools, limites, estrutura do grafo (ciclos, `return`) e efeitos (inferência e limite declarado); geração da representação intermediária (`calyx check --ir`); construções de marcos futuros reportadas com o marco em que chegam |
-| M2 | Próximo |
-| M3–M6 | Não iniciados |
+| M2 | ✅ Concluído: `calyx run`. A IR passou a levar as expressões, os modelos, as tools e os prompts (com o JSON Schema da resposta), e sai em JSON (`calyx check --ir-json`). Interpretador em C (valores imutáveis numa arena, fan-out na ordem da lista, novas tentativas por efeito, rastro). Camada de E/S em Rust: modelos pela API no formato da OpenAI (Gemini, NVIDIA, OpenAI e outros), tools por MCP via stdio, `calyx.toml`, modelos falsos para testes. Tudo numa biblioteca estática só |
+| M3 | Próximo |
+| M4–M6 | Não iniciados |
 
 ## Medidas
 
@@ -55,6 +56,24 @@ Programas sintéticos (grafos de 21 nós com fan-out), binário de release, máq
 - **Otimizações possíveis, ainda não necessárias:** cerca de 20% das instruções são alocação (`malloc`/`free`) e 5% são o hash padrão de `HashMap`. Trocar o hash por um mais rápido e reduzir cópias de texto deve reduzir o tempo do arquivo grande.
 
 Para repetir: `cargo run --release -p calyx-check --example phases -- arquivo.clyx`.
+
+### M2: primeira execução de ponta a ponta
+
+`examples/research.clyx` com `gemini-3.5-flash-lite` e a busca falsa (MCP), tema "energia solar no Brasil":
+
+| Medida | Valor |
+|---|---|
+| Chamadas | 7 de modelo, 5 de tool, 0 novas tentativas |
+| Tokens | 2241 de entrada, 1560 de saída |
+| Tempo total | 8,7 s, quase todo esperando o modelo (as 5 perguntas rodam **uma depois da outra**: o paralelismo é o M4) |
+| Custo do runtime | ~30 ms por execução com modelos falsos, a maior parte para iniciar o servidor MCP em Python |
+
+O que a primeira execução real ensinou:
+
+- **Erros temporários são comuns:** no primeiro teste, um modelo do Gemini respondeu 503 (demanda alta). A política de novas tentativas (1 s, 2 s, 4 s; o dobro para limite de requisições) não é detalhe: sem ela o programa falha à toa.
+- **Identificadores de modelo envelhecem rápido:** dois modelos usados poucos meses antes já não existiam para contas novas (404). Fixar a versão no programa (D23) é certo, mas o erro precisa dizer claramente qual modelo sumiu.
+- **A conversa não é só texto:** o Gemini devolve uma assinatura do raciocínio (`thought_signature`) que precisa voltar nas chamadas seguintes de uma conversa. O diário (M3) e o `continue=` (M5) precisam guardar a mensagem inteira.
+- **O tipo do prompt vira JSON Schema:** `Plan` (registro com `List[Text] max 5`) chegou do modelo já no formato certo, sem texto de instrução extra no prompt.
 
 ### M1: erros encontrados pelo próprio verificador
 

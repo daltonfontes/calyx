@@ -39,7 +39,10 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
         .map(|(i, d)| (d.name().name.as_str(), i))
         .collect();
     graphs.sort_by_key(|g: &ir::Graph| position.get(g.name.as_str()).copied().unwrap_or(0));
-    ir::Program { graphs }
+    ir::Program {
+        graphs,
+        ..Default::default()
+    }
 }
 
 // ----- declarations ---------------------------------------------------------
@@ -668,6 +671,8 @@ impl<'p> Cx<'_, 'p> {
                 fan_out: l.fan_out.map(|(v, _)| v.name.clone()),
                 effect,
                 inputs: deps[i].iter().filter_map(|d| ids.get(d).copied()).collect(),
+                over: None,
+                value: None,
             });
         }
 
@@ -712,6 +717,8 @@ impl<'p> Cx<'_, 'p> {
                         fan_out: None,
                         effect: t.effect,
                         inputs: refs.iter().filter_map(|d| ids.get(d).copied()).collect(),
+                        over: None,
+                        value: None,
                     });
                     output = Some(id);
                 }

@@ -20,7 +20,8 @@ jobs:
       - name: Test (Rust compiler + C runtime)
         run: make test
 
-      - name: Check the M1 example with the CLI
+      - name: Check and run the example with the CLI (fake models, fake MCP search)
         run: |
           cargo build --release
           ./target/release/calyx check examples/research.clyx --ir --time
+          ./target/release/calyx run examples/research.clyx --fake-models --topic "energia solar"

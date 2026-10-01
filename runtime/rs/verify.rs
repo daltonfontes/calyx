@@ -23,7 +23,7 @@ pub unsafe extern "C" fn calyx_verify(src: *const u8, len: usize) -> *mut c_char
     let Ok(text) = std::str::from_utf8(bytes) else {
         return std::ptr::null_mut();
     };
-    let json = crate::check("<runtime>", text).to_json();
+    let json = calyx_check::check("<runtime>", text).to_json();
     // JSON output escapes control characters, so it never contains NUL.
     CString::new(json).map_or(std::ptr::null_mut(), CString::into_raw)
 }

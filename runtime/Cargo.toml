@@ -1,0 +1,23 @@
+[package]
+name = "calyx-runtime"
+description = "The Calyx runtime: the C interpreter plus its Rust I/O layer (models, MCP tools) and the shared verifier"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[lib]
+path = "rs/lib.rs"
+# rlib for the CLI; staticlib so C programs link one library with the
+# interpreter, the verifier and the I/O layer (decision D10).
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+calyx-check = { path = "../compiler/calyx-check" }
+serde_json = "1.0.151"
+toml = "1.1.6"
+ureq = { version = "3", features = ["platform-verifier"] }
+
+[build-dependencies]
+cc = "1.5.1"

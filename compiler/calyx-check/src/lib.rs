@@ -1,13 +1,13 @@
 //! The Calyx verifier.
 //!
 //! There is exactly one verifier (decision D10): the CLI uses it as a Rust
-//! library, and the C runtime links it as a static library through the C ABI
-//! in [`ffi`], to check graphs generated at run time before running them.
+//! library, and the C runtime links it through the C ABI in `calyx-runtime`,
+//! to check graphs generated at run time before running them.
 //!
 //! Every analysis is linear or compositional, so `calyx check` stays under
 //! one second.
 
-pub mod ffi;
+mod lower;
 mod sema;
 mod types;
 
@@ -49,10 +49,12 @@ impl Report {
 pub fn check(name: &str, text: &str) -> Report {
     let source = Source::new(name, text);
     let (program, mut diagnostics) = parse(&source.text);
-    let ir = sema::check_program(&program, &mut diagnostics);
+    let mut ir = sema::check_program(&program, &mut diagnostics);
     // "Value is never used" is noise while the program still has errors.
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {
         diagnostics.retain(|d| d.code != "W0801");
+    } else {
+        lower::lower(&program, &mut ir);
     }
     diagnostics.sort_by_key(|d| (d.span.start, d.span.end));
     Report {

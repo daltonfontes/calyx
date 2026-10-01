@@ -1,32 +1,37 @@
-# Calyx runtime (C). Links the Rust verifier as a static library.
+# Calyx runtime (C). Cargo builds everything into one static library
+# (target/release/libcalyx_runtime.a): the C interpreter, the Rust I/O
+# layer and the shared verifier. C programs link only that archive.
 
 CC      ?= cc
 CFLAGS  ?= -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror
 BUILD   := build
 ROOT    := ..
-VERIFY  := $(ROOT)/target/release/libcalyx_check.a
+LIB     := $(ROOT)/target/release/libcalyx_runtime.a
 LDLIBS  := -lpthread -ldl -lm
 
-.PHONY: all test clean verifier
+.PHONY: all test clean lib
 
-all: $(BUILD)/libcalyx_runtime.a
+all: lib
 
-verifier:
-	cargo build --release -p calyx-check --manifest-path $(ROOT)/Cargo.toml
+lib:
+	cargo build --release -p calyx-runtime --manifest-path $(ROOT)/Cargo.toml
 
-$(VERIFY): verifier
+$(LIB): lib
 
-$(BUILD)/runtime.o: src/runtime.c include/calyx_runtime.h include/calyx_verify.h | $(BUILD)
-	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
+# The values module has no dependencies: test it on its own.
+$(BUILD)/test_json: tests/test_json.c src/json.c src/json.h | $(BUILD)
+	$(CC) $(CFLAGS) -Isrc tests/test_json.c src/json.c -lm -o $@
 
-$(BUILD)/libcalyx_runtime.a: $(BUILD)/runtime.o
-	ar rcs $@ $^
+$(BUILD)/test_verify: tests/test_verify.c $(LIB) | $(BUILD)
+	$(CC) $(CFLAGS) -Iinclude $< $(LIB) $(LDLIBS) -o $@
 
-$(BUILD)/test_verify: tests/test_verify.c $(BUILD)/libcalyx_runtime.a $(VERIFY)
-	$(CC) $(CFLAGS) -Iinclude $< $(BUILD)/libcalyx_runtime.a $(VERIFY) $(LDLIBS) -o $@
+$(BUILD)/test_run: tests/test_run.c $(LIB) | $(BUILD)
+	$(CC) $(CFLAGS) -Iinclude $< $(LIB) $(LDLIBS) -o $@
 
-test: verifier $(BUILD)/test_verify
+test: lib $(BUILD)/test_json $(BUILD)/test_verify $(BUILD)/test_run
+	$(BUILD)/test_json
 	$(BUILD)/test_verify
+	$(BUILD)/test_run
 
 $(BUILD):
 	mkdir -p $@

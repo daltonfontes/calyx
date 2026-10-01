@@ -1,0 +1,14 @@
+# Configuração dos exemplos: onde rodam as tools e (se preciso) os modelos.
+#
+# Modelos gemini-*, gpt-* e nvidia/* já têm provedor embutido; a chave vem
+# de uma variável de ambiente (GEMINI_API_KEY, OPENAI_API_KEY, NVIDIA_API_KEY).
+# Outro provedor compatível com a API da OpenAI entra assim:
+#
+#   [providers.local]
+#   url = "http://localhost:11434/v1"
+#   key_env = "OLLAMA_KEY"
+#   models = ["llama"]
+
+# Cada tool roda num servidor MCP (decisão D34). Caminhos relativos a este arquivo.
+[tools.web_search]
+command = ["python3", "tools/fake_search.py"]
