@@ -76,6 +76,10 @@ Nós de agentes não são funções puras. O runtime precisa saber o **tipo de e
 
 Pela lente do controle de concorrência (ver [07-escalonamento-e-concorrencia.md](07-escalonamento-e-concorrencia.md)): **dentro de uma execução, a Calyx garante isolamento por snapshot e ausência de atualizações perdidas.** Invariantes que envolvem vários ramos (ex.: "o gasto total não passa do orçamento") **não** são garantidos automaticamente e exigem validação declarada na junção. Entre execuções, a garantia vem de recursos com dono (D15).
 
+### Princípio de concorrência
+
+**Nunca segurar trava durante a inferência; validar no momento do efeito.** Medido no SVBE (ver [10-svbe.md](10-svbe.md)): travas seguradas durante o raciocínio levam o P95 de 5 s para 29 s, enquanto a validação no momento do efeito fica praticamente no tempo do próprio raciocínio. A Calyx aplica o princípio em três níveis: estado da execução (snapshot + junção), sandbox (conjunto de leitura) e sistemas externos (precondições semânticas).
+
 ## O limite: grafos dinâmicos
 
 Tudo acima é fácil com grafo estático. Agentes, porém, precisam de dinamismo. É a tensão que o survey de ACG chama de **expressividade × verificabilidade**.

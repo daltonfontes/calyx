@@ -16,7 +16,7 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D10 | Plataforma (C# ou C) | Adiada; critérios listados abaixo |
 | D11 | Falha parcial em fan-out | Falhas são valores (`ok` / `falha`); o compilador obriga a tratar; tools declaram erros não retentáveis |
 | D12 | Corrida e cancelamento | Construção `corrida` explícita; vencedor no diário; cancelamento cooperativo entre nós; `llm`/`read` abandonáveis, `write` protegidos; nós de compensação |
-| D13 | Ambiente da execução (sandbox) | Efeitos na sandbox recuperáveis por snapshot, restaurado junto com o diário; isolamento entre ramos por cópia + merge ou por validação de conjunto de leitura (ver [escalonamento e concorrência](07-escalonamento-e-concorrencia.md)) |
+| D13 | Ambiente da execução (sandbox) | Efeitos na sandbox recuperáveis por snapshot, restaurado junto com o diário; isolamento entre ramos por validação do conjunto de leitura a cada escrita (STORM), preferida a cópia + merge |
 | D14 | Tempo e execuções longas | Timers no diário; runtime durável e orientado a eventos; diário ligado à versão do template |
 | D15 | Concorrência entre execuções | Chave de negócio (no máximo uma execução aberta por chave); recurso compartilhado tem uma execução dona, e as outras enviam mensagens a ela |
 | D16 | Tamanho máximo da saída das tools | Tools declaram o máximo, ou o runtime trunca |
@@ -32,6 +32,8 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D26 | Recursos afins | Sandbox, orçamento e capacidades `write once` têm um dono por vez; dividir entre ramos é explícito e verificado (ver [Bend](08-bend.md)) |
 | D27 | Camadas da linguagem | Camada de grafo (`node`, efeitos, diário) + camada pura pequena (`let`, `fn`), recalculável; ver [sintaxe](09-sintaxe.md) |
 | D28 | Chamada ao modelo | Forma única `modelo(prompt, continue: conversa?)`, saída tipada pelo prompt |
+| D29 | Precondições no efeito | `requires { ... }` na chamada de um efeito, na camada pura; a tool valida sobre o estado atual na mesma transação; falha vira valor (ver [SVBE](10-svbe.md)) |
+| D30 | Roteamento de modelo | Construção `router` que escolhe entre modelos por política, usando orçamento e histórico do diário; escolha gravada no diário (ver [mapa da orquestração](11-mapa-orquestracao.md)) |
 
 As decisões D11 a D19 surgiram no [teste no papel](04-teste-no-papel.md), onde estão descritas com os workflows que as motivaram. As propostas de D11, D12, D14 e D15 foram revisadas, e D20 a D23 surgiram, na leitura do [Temporal](05-temporal.md).
 

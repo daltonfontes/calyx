@@ -17,3 +17,5 @@ O projeto está na fase de **discovery**: ainda não há implementação. O obje
 | [Escalonamento e concorrência](docs/discovery/07-escalonamento-e-concorrencia.md) | Controle de concorrência entre agentes e escalonamento de grafos de tarefas |
 | [Bend](docs/discovery/08-bend.md) | Runtime paralelo e tipos afins do Bend, e o que se transfere para a Calyx |
 | [Sintaxe](docs/discovery/09-sintaxe.md) | Proposta de sintaxe testada com 9 programas em `examples/` |
+| [SVBE](docs/discovery/10-svbe.md) | Consistência de estado entre agentes concorrentes: validação semântica no momento do efeito |
+| [Mapa da orquestração](docs/discovery/11-mapa-orquestracao.md) | Onde a Calyx está na pilha de orquestração de agentes, e o que falta |

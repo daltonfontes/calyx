@@ -1,6 +1,6 @@
 // W3. Reembolso com aprovação humana
 // Força: espera longa, tempo como efeito (D14), mensagens para a execução (D21),
-//        efeitos externos em ordem, write once com política.
+//        efeitos externos em ordem, write once com política, precondições no efeito (D29).
 
 model claude = llm("claude-sonnet-5-5", max_output: 1_000 tokens)
 
@@ -17,6 +17,7 @@ tool get_customer(id: CustomerId) -> Customer {
 tool refund(order: OrderId, amount: Money) -> Unit {
   effect          write
   idempotency_key order                 // o gateway de pagamento aceita chave
+  checks          OrderState            // estado que a tool valida no momento do efeito (D29)
 }
 
 tool email(to: Email, body: Text) -> Unit {
@@ -79,7 +80,13 @@ graph handle_refund(text: Text, customer_id: CustomerId, policy: Text) -> Text {
       match approval {
         Denied { reason } => return "recusado: {reason}"
         Approved => {
-          node paid   = refund(order, p.amount)
+          // Precondições semânticas (SVBE, D29): verificadas pela tool sobre o estado ATUAL,
+          // na mesma transação do reembolso. A aprovação pode ter levado dias; se o pedido
+          // mudou mas as condições continuam válidas, o reembolso segue.
+          node paid = refund(order, p.amount) requires {
+            state.status == Delivered
+            state.refunded + p.amount <= state.total
+          }
           node notice = email(c.email, claude(reply(c, p.amount)))
           notice after paid
           return "reembolsado"
