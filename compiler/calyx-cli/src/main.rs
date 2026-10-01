@@ -20,7 +20,7 @@ commands:
       --ir prints the compiled graph template when there are no errors;
       --ir-json prints it in the JSON form the runtime loads.
   run <file.clyx> [--graph NAME] [--fake-models] [--quiet] [--config FILE]
-                 [--no-journal] [--PARAM VALUE ...]
+                 [--no-journal] [--deterministic] [--budget USD] [--PARAM VALUE ...]
       Check and run a graph. Each parameter of the graph is passed as
       `--name value` (e.g. --topic \"energia solar\"). Every call is
       recorded in the run's journal, in .calyx/runs/<id>/.
@@ -31,9 +31,14 @@ commands:
       --config uses this calyx.toml instead of looking for one next to the
       program and in its parent directories.
       --no-journal runs without a journal (nothing can be resumed).
-  resume <run> [--fake-models] [--quiet] [--config FILE]
+      --deterministic runs one call at a time, always in the same order.
+      --budget replaces the program's budget (in USD).
+      Independent calls run in parallel, up to the graph's `limits threads`
+      (8 by default).
+  resume <run> [--fake-models] [--quiet] [--config FILE] [--budget USD]
       Continue an interrupted or failed run. Calls already in its journal
-      are taken from it, not made (or paid for) again.
+      are taken from it, not made (or paid for) again. --budget raises the
+      budget of a run that used it up.
   replay <run> [--quiet]
       Run again using only the journal: no model or tool is called.
   runs
@@ -130,6 +135,8 @@ fn run(args: &[String]) -> ExitCode {
     let mut fake_models = false;
     let mut quiet = false;
     let mut journal = true;
+    let mut deterministic = false;
+    let mut budget_usd = None;
     let mut values: Vec<(String, String)> = Vec::new();
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -145,6 +152,12 @@ fn run(args: &[String]) -> ExitCode {
             "--fake-models" => fake_models = true,
             "--quiet" => quiet = true,
             "--no-journal" => journal = false,
+            "--deterministic" => deterministic = true,
+            "--budget" => match it.next().map(|b| parse_budget(b)) {
+                Some(Ok(b)) => budget_usd = Some(b),
+                Some(Err(e)) => return usage_error(&e),
+                None => return usage_error("--budget expects an amount in USD"),
+            },
             a if a.starts_with("--") => match it.next() {
                 Some(v) => values.push((a[2..].to_owned(), v.clone())),
                 None => return usage_error(&format!("`{a}` expects a value")),
@@ -212,6 +225,8 @@ fn run(args: &[String]) -> ExitCode {
         journal: id.as_deref().map(runs::dir),
         mode: Mode::New,
         program: Some(std::fs::canonicalize(&file).unwrap_or(file)),
+        deterministic,
+        budget_usd,
     };
     if let Some(id) = &id {
         eprintln!("calyx: run {id}");
@@ -231,6 +246,8 @@ fn rerun(args: &[String], mode: Mode) -> ExitCode {
     let mut config_path = None;
     let mut fake_models = false;
     let mut quiet = false;
+    let mut deterministic = false;
+    let mut budget_usd = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -240,6 +257,12 @@ fn rerun(args: &[String], mode: Mode) -> ExitCode {
             },
             "--fake-models" => fake_models = true,
             "--quiet" => quiet = true,
+            "--deterministic" => deterministic = true,
+            "--budget" => match it.next().map(|b| parse_budget(b)) {
+                Some(Ok(b)) => budget_usd = Some(b),
+                Some(Err(e)) => return usage_error(&e),
+                None => return usage_error("--budget expects an amount in USD"),
+            },
             a if a.starts_with('-') => return usage_error(&format!("unknown option `{a}`")),
             a if id.is_none() => id = Some(a.to_owned()),
             _ => return usage_error("give a single run id"),
@@ -276,6 +299,8 @@ fn rerun(args: &[String], mode: Mode) -> ExitCode {
         journal: Some(runs::dir(&id)),
         mode,
         program: Some(header.program.clone()),
+        deterministic,
+        budget_usd,
     };
     execute(&program, &header.graph, header.args, opts, Some(&id))
 }
@@ -363,6 +388,17 @@ fn execute(
             ExitCode::from(3)
         }
     }
+}
+
+/// `--budget 5` or `--budget 5USD`: an amount in USD.
+fn parse_budget(raw: &str) -> Result<f64, String> {
+    raw.trim()
+        .trim_end_matches("USD")
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|b| *b > 0.0)
+        .ok_or_else(|| format!("--budget expects a positive amount in USD, got `{raw}`"))
 }
 
 /// Converts a command-line text into a value of a parameter's type.

@@ -54,7 +54,7 @@ A analogia mais próxima é o **SQL**: você declara o que quer, e o banco decid
 
 ## Estado do projeto
 
-O **discovery** está concluído (34 decisões fechadas). Na implementação, os marcos M0 (estrutura), M1 (`calyx check` para o subconjunto inicial) M2 (`calyx run`: o runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP) e M3 (diário: uma execução interrompida continua sem refazer nenhuma chamada concluída) estão concluídos. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
+O **discovery** está concluído (34 decisões fechadas). Na implementação, os marcos M0 (estrutura), M1 (`calyx check` para o subconjunto inicial) M2 (`calyx run`: o runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP) M3 (diário: uma execução interrompida continua sem refazer nenhuma chamada concluída) e M4 (paralelismo derivado do grafo, com limites e prioridade pelo caminho crítico) estão concluídos. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
 
 ## Como compilar e testar
 
@@ -76,6 +76,8 @@ cargo run -p calyx-cli -- run examples/research.clyx --fake-models --topic "ener
 export GEMINI_API_KEY=...      # nunca no código nem no calyx.toml
 cargo run -p calyx-cli -- run examples/research.clyx --topic "energia solar no Brasil"
 ```
+
+**Paralelismo sem escrever paralelismo.** Chamadas que não dependem umas das outras rodam ao mesmo tempo, até o limite `limits threads N` do grafo (8 por padrão), e as do caminho crítico saem primeiro. `--deterministic` roda uma por vez, sempre na mesma ordem; o resultado é o mesmo nos dois modos.
 
 Cada parâmetro do grafo vira uma opção (`--topic`). O resultado vai para a saída padrão; o rastro (uma linha por passo e por chamada, com tempo e tokens) vai para a saída de erro, e some com `--quiet`.
 

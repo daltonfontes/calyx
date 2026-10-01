@@ -37,8 +37,9 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | M1 | ✅ Concluído: parser com recuperação de erros; verificação de nomes, tipos, variáveis dos prompts, contratos das tools, limites, estrutura do grafo (ciclos, `return`) e efeitos (inferência e limite declarado); geração da representação intermediária (`calyx check --ir`); construções de marcos futuros reportadas com o marco em que chegam |
 | M2 | ✅ Concluído: `calyx run`. A IR passou a levar as expressões, os modelos, as tools e os prompts (com o JSON Schema da resposta), e sai em JSON (`calyx check --ir-json`). Interpretador em C (valores imutáveis numa arena, fan-out na ordem da lista, novas tentativas por efeito, rastro). Camada de E/S em Rust: modelos pela API no formato da OpenAI (Gemini, NVIDIA, OpenAI e outros), tools por MCP via stdio, `calyx.toml`, modelos falsos para testes. Tudo numa biblioteca estática só |
 | M3 | ✅ Concluído: diário por execução (`.calyx/runs/<id>/`), uma entrada por chamada com chave estável e hash do pedido, conteúdos grandes por hash, `begin` para `write once`, hash do programa (D23). `calyx resume`, `calyx replay`, `calyx runs`. Quedas simuladas nos testes (`CALYX_CRASH_AFTER`) |
-| M4 | Próximo |
-| M5–M6 | Não iniciados |
+| M4 | ✅ Concluído: cada passo e cada item de `for each` é uma tarefa; workers com fila de prioridade e roubo de trabalho; chamadas em threads de E/S (nunca bloqueiam um worker), até `limits threads`; prioridade pelo caminho crítico calculado pelo compilador; limites `rate` e `budget` (preços no `calyx.toml`); espera pedida pelo provedor respeitada; `--deterministic` |
+| M5 | Próximo |
+| M6 | Não iniciado |
 
 ## Medidas
 
@@ -57,6 +58,25 @@ Programas sintéticos (grafos de 21 nós com fan-out), binário de release, máq
 - **Otimizações possíveis, ainda não necessárias:** cerca de 20% das instruções são alocação (`malloc`/`free`) e 5% são o hash padrão de `HashMap`. Trocar o hash por um mais rápido e reduzir cópias de texto deve reduzir o tempo do arquivo grande.
 
 Para repetir: `cargo run --release -p calyx-check --example phases -- arquivo.clyx`.
+
+### M4 (Q1): quanto paralelismo sai sozinho
+
+`examples/research.clyx`, **sem mudar uma linha**, com `gemini-3.5-flash-lite` e a busca falsa (MCP). Duas execuções em cada modo, com pausas para respeitar a cota do plano gratuito:
+
+| | Sequencial (`--deterministic`) | Paralelo (padrão) |
+|---|---|---|
+| Tempo total | 7,18 s e 8,36 s | 4,84 s e 4,63 s |
+| Fan-out (5 buscas + 5 resumos) | 4,13 s e 4,76 s | 1,64 s e 1,62 s |
+| Chamadas ao mesmo tempo | 1 | 5 |
+
+Com modelos falsos de 1 s por chamada (sem variação de rede): sequencial 5,30 s, paralelo 3,03 s, e o caminho crítico do grafo é de 3 chamadas (plano → resumo → relatório).
+
+- **Resposta à Q1: todo o paralelismo que o grafo permite sai sozinho.** As 5 perguntas rodaram juntas sem nenhuma palavra de paralelismo no programa, e com latência fixa o tempo fica a 30 ms do caminho crítico.
+- **O ganho total é limitado pela forma do grafo, não pelo runtime:** 1,6× no total (7,8 s → 4,7 s em média), 2,5 a 2,9× no trecho em paralelo. O plano e o relatório são sequenciais por natureza (cada um depende do anterior), e o fan-out leva o tempo do resumo **mais lento**, não a média.
+- **O que a medição ensinou:**
+  - **Cota antes de velocidade.** No plano gratuito do Gemini (15 requisições por minuto), a 3ª execução seguida já recebeu 429. O provedor dizia quanto esperar ("retry in 21 s"), mas o runtime tentava de novo em 2, 4 e 8 s e desistia. Agora ele espera o que o provedor pede (até 60 s), e `limits rate 15/min` evita o problema de antemão.
+  - **"Determinístico" precisava ser exato.** Com uma thread só, a ordem das chamadas ainda podia variar se a thread de E/S pegasse uma chamada antes de outra mais prioritária entrar na fila. No modo determinístico, a próxima chamada agora só é escolhida quando nenhum passo pode rodar, e a ordem se repete sempre (há teste para isso).
+  - **A prioridade pelo caminho crítico só pesa quando as vagas são poucas.** Com `threads 8` e 5 chamadas, tudo cabe e a ordem não importa; com `threads 1`, a cadeia mais longa sai primeiro (há teste para isso).
 
 ### M3 (Q3): quanto trabalho é refeito depois de uma falha
 

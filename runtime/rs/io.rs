@@ -9,7 +9,7 @@
 //!     -> {"ok": {"text": t, "input_tokens": n, "output_tokens": n, "ms": n}}
 //! tool:  {"tool": name, "args": {...}, "max_output": n | null, "timeout_ms": n}
 //!     -> {"ok": {"text": t, "json": v | null, "truncated": b, "ms": n}}
-//! both:  -> {"error": {"kind": k, "message": m}}
+//! both:  -> {"error": {"kind": k, "message": m, "retry_after_ms": n | null}}
 //! ```
 //!
 //! Error kinds: `Timeout`, `RateLimit`, `Unavailable`, `Network` (temporary)
@@ -30,6 +30,8 @@ use crate::{llm, mcp};
 pub struct IoError {
     pub kind: &'static str,
     pub message: String,
+    /// How long the provider asked to wait before trying again.
+    pub retry_after_ms: Option<u64>,
 }
 
 impl IoError {
@@ -37,11 +39,16 @@ impl IoError {
         IoError {
             kind,
             message: message.into(),
+            retry_after_ms: None,
         }
     }
 
     fn to_json(&self) -> Value {
-        json!({"error": {"kind": self.kind, "message": self.message}})
+        json!({"error": {
+            "kind": self.kind,
+            "message": self.message,
+            "retry_after_ms": self.retry_after_ms,
+        }})
     }
 }
 
@@ -118,10 +125,15 @@ fn model_call(req: &Value) -> Result<Value, IoError> {
         },
         Some((provider, agent)) => llm::call(&agent, &provider, &r)?,
     };
+    // Cost for `budget`: null when calyx.toml has no price for the model.
+    let cost = with_state(|st| st.config.prices.get(&r.model).copied()).map(|(i, o)| {
+        (answer.input_tokens as f64 * i + answer.output_tokens as f64 * o) / 1_000_000.0
+    });
     Ok(json!({"ok": {
         "text": answer.text,
         "input_tokens": answer.input_tokens,
         "output_tokens": answer.output_tokens,
+        "cost_usd": cost,
         "ms": answer.ms,
     }}))
 }
