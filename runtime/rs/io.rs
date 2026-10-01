@@ -7,13 +7,20 @@
 //! model: {"model": id, "prompt": text, "schema": {...} | null,
 //!         "max_output": n | null, "timeout_ms": n}
 //!     -> {"ok": {"text": t, "input_tokens": n, "output_tokens": n, "ms": n}}
-//! tool:  {"tool": name, "args": {...}, "max_output": n | null, "timeout_ms": n}
+//! tool:  {"tool": name, "args": {...}, "max_output": n | null, "timeout_ms": n,
+//!         "idempotency_key": k?, "requires": [...]?}
 //!     -> {"ok": {"text": t, "json": v | null, "truncated": b, "ms": n}}
 //! both:  -> {"error": {"kind": k, "message": m, "retry_after_ms": n | null}}
 //! ```
 //!
 //! Error kinds: `Timeout`, `RateLimit`, `Unavailable`, `Network` (temporary)
-//! and `Auth`, `BadRequest`, `Decode`, `ToolError`, `Config`.
+//! and `Auth`, `BadRequest`, `Decode`, `ToolError`, `PreconditionFailed`,
+//! `Config`.
+//!
+//! The idempotency key and the preconditions reach the MCP server in the
+//! call's `_meta`, as `calyx/idempotency_key` and `calyx/requires`. A tool
+//! whose preconditions do not hold answers with an error whose text starts
+//! with `PreconditionFailed:`, having done nothing.
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char};
@@ -147,6 +154,13 @@ fn tool_call(req: &Value) -> Result<Value, IoError> {
     let args = req.get("args").cloned().unwrap_or(json!({}));
     let timeout = Duration::from_millis(req["timeout_ms"].as_u64().unwrap_or(30_000));
     let max_output = req["max_output"].as_u64();
+    let mut meta = serde_json::Map::new();
+    if let Some(k) = req.get("idempotency_key") {
+        meta.insert("calyx/idempotency_key".into(), k.clone());
+    }
+    if let Some(r) = req.get("requires") {
+        meta.insert("calyx/requires".into(), r.clone());
+    }
     let answer = with_state(|st| {
         let server_cfg = st.config.tools.get(&tool).cloned().ok_or_else(|| {
             let place = st
@@ -168,7 +182,7 @@ fn tool_call(req: &Value) -> Result<Value, IoError> {
         }
         let server = st.servers.get_mut(&key).expect("just inserted");
         let remote = server_cfg.remote_name.as_deref().unwrap_or(&tool);
-        let result = server.call(remote, args, timeout);
+        let result = server.call(remote, args, meta, timeout);
         if let Err(e) = &result
             && matches!(e.kind, "Timeout" | "Unavailable")
         {

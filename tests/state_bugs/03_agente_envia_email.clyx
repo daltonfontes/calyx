@@ -1,0 +1,40 @@
+# Bug: Um agente com uma tool de e-mail pode chamá-la de novo a cada volta (e-mails duplicados).
+# Pego por: E0640
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt decide(o: Order) -> Float:
+    """Quanto reembolsar de {o}?"""
+
+tool email(to: Text, text: Text) -> Text:
+    effect write once
+    on_uncertain pause
+    max_output 100 tokens
+
+prompt task(o: Order) -> Text:
+    """Resolva o pedido {o} e avise o cliente."""
+
+graph g(id: Text) -> Text:
+    o = get_order(id)
+    done = agent m:
+        tools [email]
+        max_turns 5
+        task task(o)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return done

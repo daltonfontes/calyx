@@ -22,3 +22,16 @@ command = ["python3", "tools/fake_search.py"]
 #
 # Plano gratuito com limite de requisições? Limite o ritmo no grafo:
 #   limits rate 15/min
+
+# A loja falsa do examples/refund.clyx: pedidos, reembolsos e e-mail.
+[tools.get_order]
+command = ["python3", "tools/fake_store.py"]
+
+[tools.refund]
+command = ["python3", "tools/fake_store.py"]
+
+[tools.email]
+command = ["python3", "tools/fake_store.py"]
+
+[tools.email_sent]
+command = ["python3", "tools/fake_store.py"]

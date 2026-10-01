@@ -1,0 +1,30 @@
+# Bug: Itens de um `for each` gravam o mesmo arquivo em paralelo; o resultado depende da ordem.
+# Pego por: none
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt decide(o: Order) -> Float:
+    """Quanto reembolsar de {o}?"""
+
+tool save(path: Text, text: Text) -> Unit:
+    effect write
+    idempotency_key path
+
+graph g(ids: List[Text]) -> Text:
+    saved = for each id in ids: save("relatorio.txt", id)
+    return "ok"

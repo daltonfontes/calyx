@@ -1,0 +1,103 @@
+warning[W0601]: `write` tool without `idempotency_key`
+- expected : `idempotency_key param`, so retries and resumed runs cannot apply it twice
+- observed : no key: the runtime repeats the call after failures, so the tool itself must be idempotent
+Location: m6_errors.clyx:9:6
+
+warning[W0601]: `write` tool without `idempotency_key`
+- expected : `idempotency_key param`, so retries and resumed runs cannot apply it twice
+- observed : no key: the runtime repeats the call after failures, so the tool itself must be idempotent
+Location: m6_errors.clyx:15:6
+
+error[E0633]: `verify` tool must return `Bool`
+- expected : `-> Bool`: whether the call happened
+- observed : `-> Text`
+Location: m6_errors.clyx:20:25
+
+error[E0631]: `verify` must call a `read` tool
+- expected : `effect read`: checking must not change anything
+- observed : `deleter` is `write`
+Location: m6_errors.clyx:24:25
+
+error[E0632]: wrong number of arguments for the `verify` tool
+- expected : 1
+- observed : 2
+Location: m6_errors.clyx:24:25
+
+error[E0631]: `verify` must call a tool
+- expected : a `read` tool that tells whether the call happened
+- observed : `nothing`
+Location: m6_errors.clyx:28:25
+
+error[E0634]: this policy needs a tool that returns `Unit`
+- expected : `-> Unit`: the run goes on as if the call happened, with no answer to use
+- observed : `-> Text`; use `on_uncertain pause`
+Location: m6_errors.clyx:32:5
+
+error[E0641]: `on_uncertain` is only for `write once` tools
+- expected : `effect write once`, or no `on_uncertain`
+- observed : `effect read`
+Location: m6_errors.clyx:36:5
+
+error[E0635]: `checks` must name a record type
+- expected : a `type` with fields: the state the tool validates
+- observed : `Kind`
+Location: m6_errors.clyx:41:12
+
+warning[W0602]: external writes without a defined order
+- expected : `b after a` (or `a after b`), or a value one passes to the other
+- observed : `a` and `b` both write outside the run and may run at the same time
+Location: m6_errors.clyx:58:5
+
+warning[W0602]: external writes without a defined order
+- expected : `c after a` (or `a after c`), or a value one passes to the other
+- observed : `a` and `c` both write outside the run and may run at the same time
+Location: m6_errors.clyx:59:5
+
+error[E0636]: `requires` needs a write tool that declares `checks`
+- expected : a `write` or `write once` tool with `checks StateType`: the tool validates the conditions
+- observed : `save` has no `checks`
+Location: m6_errors.clyx:59:9
+
+warning[W0602]: external writes without a defined order
+- expected : `d after a` (or `a after d`), or a value one passes to the other
+- observed : `a` and `d` both write outside the run and may run at the same time
+Location: m6_errors.clyx:61:5
+
+error[E0603]: unknown field
+- expected : a field of `Account`
+- observed : `owner`
+Location: m6_errors.clyx:62:52
+
+error[E0638]: `requires` may only use operators and values
+- expected : comparisons, `+ - * /`, `and`, `or`, `not`, `state.field` and values of the graph
+- observed : a call or another construct the tool cannot evaluate
+Location: m6_errors.clyx:63:18
+
+error[E0614]: condition is not a `Bool`
+- expected : `Bool`
+- observed : `Float`
+Location: m6_errors.clyx:64:18
+
+error[E0636]: `requires` needs a write tool that declares `checks`
+- expected : a `write` or `write once` tool with `checks StateType`: the tool validates the conditions
+- observed : `lookup` is `read`: preconditions guard writes
+Location: m6_errors.clyx:65:9
+
+warning[W0602]: external writes without a defined order
+- expected : `f after a` (or `a after f`), or a value one passes to the other
+- observed : `a` and `f` both write outside the run and may run at the same time
+Location: m6_errors.clyx:67:5
+
+error[E0640]: an agent cannot use a `write once` tool
+- expected : `write once` calls as steps of the graph, e.g. after the agent, with its answer
+- observed : `mail` is `write once`
+Location: m6_errors.clyx:68:16
+
+error[E0639]: `after` names something that is not a step
+- expected : a step of this graph (`name = ...`)
+- observed : `nowhere`
+Location: m6_errors.clyx:73:13
+
+error[E0639]: a step cannot come after itself
+- observed : `b after b`
+Location: m6_errors.clyx:74:13

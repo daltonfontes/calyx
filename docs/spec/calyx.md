@@ -103,6 +103,16 @@ tool NOME(parametros) -> Tipo:
     description "texto"                  # o que a tool faz, para modelos que a chamam (agentes)
 ```
 
+**Contratos de escrita (implementados no M6a):**
+
+- `idempotency_key param`: o valor desse parâmetro vai para a tool como chave; a mesma chave nunca pode ser aplicada duas vezes. Com a chave, o runtime repete a escrita em erros temporários e na retomada. Uma tool `write` sem chave recebe o aviso `W0601`.
+- `on_uncertain`: obrigatório para `write once` (`E0304`) e só para elas (`E0641`). Vale quando a chamada **pode ter acontecido** sem que a resposta chegasse: timeout, servidor que caiu, ou a execução que caiu entre o início e o fim da chamada.
+  - `pause`: a execução para; uma pessoa confere e retoma com `calyx resume <id> --uncertain done|retry|failed`.
+  - `accept_loss`: segue como se a chamada tivesse acontecido.
+  - `verify(f(a, b))`: chama a tool `f` (`effect read`, devolve `Bool`, `E0631`/`E0633`), com parâmetros da própria tool (`E0632`). `true`: segue; `false`: faz a chamada de novo; se a verificação falha, para como `pause`.
+  - `accept_loss`, `verify` e `--uncertain done` seguem sem a resposta da tool, então exigem uma tool que devolve `Unit` (`E0634`).
+- `checks Tipo`: o registro com o estado que a tool valida nas precondições (`E0635`).
+
 **Implementação (D34):** a tool roda num servidor **MCP** separado, escrito em qualquer linguagem. A declaração `tool` é o **contrato** que a Calyx verifica e que o runtime aplica (efeito, limites, timeout, retentativa, idempotência, precondições). O nome da tool e o servidor que a implementa são ligados no `calyx.toml` (seção 11.1).
 
 ### 4.4 Tipos
@@ -319,9 +329,10 @@ O compilador obriga a tratar `Failed` antes de usar o valor.
 
 ```
 notificar after salvar
+notificar after salvar, cobrar
 ```
 
-Aresta de ordem, sem dados. O compilador avisa quando dois passos com efeito de escrita externa não têm ordem definida. Recursos com dono (seção 7) já geram ordem sozinhos.
+Aresta de ordem, sem dados: `notificar` só começa depois que os passos listados terminaram. O compilador avisa (`W0602`) quando dois passos com efeito de escrita externa (`write`, `write once`) não têm ordem definida, nem por dados nem por `after`. Nomes que não são passos e um passo depois de si mesmo são erros (`E0639`); ordens circulares, `E0506`. Recursos com dono (seção 7) já geram ordem sozinhos (M6b).
 
 ### 5.11 Precondições e invariantes (D29, D25)
 
@@ -335,6 +346,9 @@ ensures sum(gastos) <= limite
 ```
 
 - `requires`: avaliado **pela tool**, sobre o estado atual, na mesma transação do efeito. Só operadores permitidos (comparação, aritmética, pertencimento). Pode ser escrito pelo programador ou vir de um LLM como saída tipada.
+  - **Como está implementado (M6a):** a tool precisa ser de escrita e declarar `checks Tipo` (`E0636`); `state.campo` são os campos desse tipo; o resto são valores do grafo, calculados antes da chamada. Só valores, campos, comparações, `+ - * /`, `and`, `or` e `not` (`E0638`); cada condição é `Bool`. Também na forma `r = try tool(...):` com as linhas `requires`.
+  - A tool recebe as condições como árvore (seção 11.2). Se uma não vale, ela não faz nada e responde `PreconditionFailed`: uma falha local, que o `try` captura e que nunca é repetida.
+  - Pertencimento (`in`) e precondições vindas de um LLM ainda não estão implementados.
 - `ensures`: avaliado na junção; se falhar, produz um valor de conflito.
 
 ### 5.12 Mensagens (D21)
@@ -484,7 +498,7 @@ O efeito de um nó é **inferido**: o maior efeito de tudo o que ele chama. Orde
 - O diário guarda o **hash do programa compilado**. Uma execução só continua com o mesmo programa (D23); se o código mudou, a retomada é recusada.
 - Só respostas aceitas entram no diário (uma resposta que não decodifica no tipo do prompt é pedida de novo e não é gravada).
 - **Durabilidade:** cada entrada chega ao sistema operacional antes da próxima chamada começar, então uma queda do processo não perde nada já concluído. O `fsync` (que protege também de queda de energia) roda no máximo uma vez por segundo, e sempre antes de escritas externas e no fim.
-- **`write once`:** uma entrada `begin` é gravada (com `fsync`) antes da chamada. Se a execução cai entre o `begin` e o fim da chamada, o resultado é desconhecido: a retomada **não repete** a chamada e para, à espera das políticas `on_uncertain` (M6).
+- **`write once`:** uma entrada `begin` é gravada (com `fsync`) antes da chamada. Se a execução cai entre o `begin` e o fim da chamada, o resultado é desconhecido: a retomada **não repete** a chamada por conta própria, e aplica a política `on_uncertain` da tool (ou a decisão `--uncertain` dada na retomada). Uma chamada tomada como feita entra no diário, então o replay não precisa de decisão.
 - Uma linha cortada no meio por uma queda é descartada na retomada.
 
 ### 9.4 Atores do runtime (D10)
@@ -510,7 +524,9 @@ Todas lineares ou composicionais (meta: `calyx check` em até 1 segundo):
 | Verificação | Decisão |
 |---|---|
 | Tipos, variáveis dos prompts, variantes cobertas | D5, D11 |
-| Inferência e restrição de efeitos; política de `write once` presente | D2 |
+| Inferência e restrição de efeitos; política de `write once` presente e coerente (`verify` com tool de leitura, `Unit` quando segue sem resposta) | D2 |
+| Escrita sem chave de idempotência (aviso); agente sem tools `write once` | D2 |
+| Precondições: tool com `checks`, campos e tipos do estado, só operadores | D29 |
 | Uso de recursos afins e suas visões | D26 |
 | Escritas externas sem ordem definida (aviso) | D2 |
 | Terminação: limite em laços e rodadas, `decreases` em recursão | D5, D17 |
@@ -532,7 +548,7 @@ Mensagens de erro estruturadas, com **esperado**, **observado** e **local**, par
 | `calyx build` | Gera um executável autocontido para um grafo: `calyx build arquivo.clyx [-o nome] [--graph g]`. É uma cópia do próprio `calyx` com o programa e o `calyx.toml` dentro (D35); não precisa de compilador C, nem de Calyx onde roda. Os parâmetros do grafo viram opções (`./nome --param valor`), e `./nome resume <id>`, `replay` e `runs` funcionam como no `calyx` |
 | `calyx run` | Executa um grafo: `calyx run arquivo.clyx --param valor`. Chamadas independentes rodam em paralelo; `--deterministic` roda uma por vez; `--budget` troca o orçamento |
 | `calyx fmt` | Formata o código |
-| `calyx resume` | Continua uma execução interrompida ou que falhou: `calyx resume <id>`. Chamadas já no diário não são feitas (nem pagas) de novo. `--budget` aumenta um orçamento esgotado |
+| `calyx resume` | Continua uma execução interrompida ou que falhou: `calyx resume <id>`. Chamadas já no diário não são feitas (nem pagas) de novo. `--budget` aumenta um orçamento esgotado; `--uncertain done\|retry\|failed` diz o que aconteceu com chamadas `write once` de resultado incerto |
 | `calyx replay` | Reexecuta a partir de um diário, sem chamar modelos nem tools: `calyx replay <id>` |
 | `calyx runs` | Lista as execuções, com estado (`finished`, `failed`, `interrupted`), chamadas e retomadas |
 | `calyx trace` | Mostra o grafo realizado, custos e latências por nó |
@@ -569,9 +585,10 @@ Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*`
 - **Modelo:** o prompt é preenchido com os argumentos (texto como está; listas, um item por linha; registros, em JSON). Se o prompt não devolve `Text`, o tipo de saída vira um **JSON Schema** enviado junto, e a resposta é decodificada nesse tipo.
 - **A resposta é conferida contra o tipo** (tipos, campos obrigatórios, valores permitidos, `max` de listas, variantes). Modelos nem sempre respeitam o esquema que recebem; uma resposta fora do tipo conta como erro temporário e o modelo é chamado de novo.
 - **Variantes:** um tipo só com variantes sem campos (`Optimist | Skeptic`) vira um texto com um dos nomes; um tipo com campos vira um objeto com `kind` e os campos daquela variante, com uma alternativa por variante no esquema (`anyOf`).
-- **Novas tentativas:** erros temporários (`Timeout`, `RateLimit`, `Unavailable`, `Network`) de modelos são repetidos até 4 tentativas, esperando 1 s, 2 s e 4 s (o dobro para `RateLimit`), ou mais, se o provedor pedir (cabeçalho `Retry-After` ou "retry in N s" na mensagem, até 60 s). Tools repetem só os erros listados em `retry_on`; `write once` nunca repete (D2).
+- **Novas tentativas:** erros temporários (`Timeout`, `RateLimit`, `Unavailable`, `Network`) de modelos são repetidos até 4 tentativas, esperando 1 s, 2 s e 4 s (o dobro para `RateLimit`), ou mais, se o provedor pedir (cabeçalho `Retry-After` ou "retry in N s" na mensagem, até 60 s). Tools repetem os erros listados em `retry_on`; tools `write` com `idempotency_key` repetem também os temporários; `write once` nunca repete sozinha: depois de `Timeout`, `Unavailable` ou `Network` aplica `on_uncertain` (D2).
+- **Contrato com a tool (MCP):** a chave de idempotência e as precondições vão no `_meta` da chamada `tools/call`, como `calyx/idempotency_key` (texto) e `calyx/requires` (lista de árvores: `{"state": campo}`, `{"value": v}`, `{"op", "l", "r"}` ou `{"op", "v"}`). Uma tool cujas precondições não valem responde com erro (`isError`) e texto começando com `PreconditionFailed:`, sem ter feito nada. `examples/tools/fake_store.py` implementa o contrato.
 - **Saída de tools:** cortada em `max_output` (D16).
-- **Falha:** se um passo falha depois das tentativas, a execução para com o grafo, o passo e o motivo. Falha como valor (`try`, D11) chega no M5.
+- **Falha:** se um passo falha depois das tentativas, a execução para com o grafo, o passo e o motivo, a menos que um `try` a capture (D11).
 
 ## 12. Implementação (D10)
 

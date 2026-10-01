@@ -53,6 +53,23 @@ struct ToolSig {
     params: Vec<(String, Ty)>,
     ret: Ty,
     effect: Effect,
+    /// `on_uncertain ...` and where it is written.
+    policy: Option<(Policy, Span)>,
+    /// `checks StateType`: the state `requires` is checked against.
+    checks: Option<Ident>,
+    /// Declares `idempotency_key`.
+    keyed: bool,
+}
+
+/// What a `write once` tool does when a call may or may not have happened.
+enum Policy {
+    Pause,
+    AcceptLoss,
+    /// `verify(f(a, b))`: `f` is a tool, `a` and `b` this tool's parameters.
+    Verify {
+        tool: Ident,
+        args: Vec<Ident>,
+    },
 }
 
 struct PromptSig {
@@ -191,6 +208,7 @@ impl<'p> Cx<'_, 'p> {
                 Decl::Model(_) | Decl::Type(_) => {}
             }
         }
+        self.check_write_contracts(program);
     }
 
     fn fields(&mut self, fields: &[Field]) -> Vec<(String, Ty)> {
@@ -297,6 +315,9 @@ impl<'p> Cx<'_, 'p> {
         let ret = self.ty(&t.ret);
         let mut effect = None;
         let mut on_uncertain = false;
+        let mut policy = None;
+        let mut checks = None;
+        let mut keyed = false;
         let mut seen = HashSet::new();
         for p in &t.props {
             let key = p.key.name.as_str();
@@ -329,6 +350,7 @@ impl<'p> Cx<'_, 'p> {
                 }
                 "idempotency_key" => match p.value.as_slice() {
                     [Expr { kind: ExprKind::Ident(n), span }] => {
+                        keyed = true;
                         if !params.iter().any(|(pn, _)| pn == n) {
                             self.push(
                                 err("E0306", "idempotency key is not a parameter of the tool", *span)
@@ -341,24 +363,37 @@ impl<'p> Cx<'_, 'p> {
                 },
                 "on_uncertain" => {
                     on_uncertain = true;
-                    let ok = match p.value.as_slice() {
-                        [Expr { kind: ExprKind::Ident(n), .. }] => {
-                            n == "pause" || n == "accept_loss"
+                    policy = match p.value.as_slice() {
+                        [Expr { kind: ExprKind::Ident(n), .. }] if n == "pause" => {
+                            Some(Policy::Pause)
                         }
-                        [Expr { kind: ExprKind::Call { callee, .. }, .. }] => {
-                            matches!(&callee.kind, ExprKind::Ident(n) if n == "verify")
+                        [Expr { kind: ExprKind::Ident(n), .. }] if n == "accept_loss" => {
+                            Some(Policy::AcceptLoss)
                         }
-                        _ => false,
-                    };
-                    if !ok {
-                        self.bad_prop(p, "`verify(...)`, `pause` or `accept_loss`");
+                        [Expr { kind: ExprKind::Call { callee, args }, .. }]
+                            if matches!(&callee.kind, ExprKind::Ident(n) if n == "verify") =>
+                        {
+                            verify_policy(args)
+                        }
+                        _ => None,
+                    }
+                    .map(|pol| (pol, p.span));
+                    if policy.is_none() {
+                        self.bad_prop(
+                            p,
+                            "`verify(tool(param, ...))`, `pause` or `accept_loss`",
+                        );
                     }
                 }
-                "checks" => {
-                    if !matches!(p.value.as_slice(), [Expr { kind: ExprKind::Ident(_), .. }]) {
-                        self.bad_prop(p, "a type name");
+                "checks" => match p.value.as_slice() {
+                    [Expr { kind: ExprKind::Ident(n), span }] => {
+                        checks = Some(Ident {
+                            name: n.clone(),
+                            span: *span,
+                        })
                     }
-                }
+                    _ => self.bad_prop(p, "a type name"),
+                },
                 "repeatable" => {
                     if !p.value.is_empty() {
                         self.bad_prop(p, "no value");
@@ -396,7 +431,122 @@ impl<'p> Cx<'_, 'p> {
             params,
             ret,
             effect,
+            policy,
+            checks,
+            keyed,
         }
+    }
+
+    /// Checks what a tool's properties name, once every tool is known:
+    /// `on_uncertain`, `checks` and `idempotency_key` (decisions D2, D29).
+    fn check_write_contracts(&mut self, program: &'p Program) {
+        for d in &program.decls {
+            let Decl::Tool(t) = d else { continue };
+            let Some(sig) = self.tools.get(t.name.name.as_str()) else {
+                continue;
+            };
+            let mut out = Vec::new();
+            if sig.effect == Effect::Write && !sig.keyed {
+                out.push(
+                    warn("W0601", "`write` tool without `idempotency_key`", t.name.span)
+                        .expected("`idempotency_key param`, so retries and resumed runs cannot apply it twice")
+                        .observed("no key: the runtime repeats the call after failures, so the tool itself must be idempotent"),
+                );
+            }
+            if let Some((policy, span)) = &sig.policy {
+                if sig.effect != Effect::WriteOnce {
+                    out.push(
+                        err(
+                            "E0641",
+                            "`on_uncertain` is only for `write once` tools",
+                            *span,
+                        )
+                        .expected("`effect write once`, or no `on_uncertain`")
+                        .observed(format!("`effect {}`", sig.effect)),
+                    );
+                }
+                let takes_as_done = !matches!(policy, Policy::Pause);
+                if takes_as_done && !matches!(sig.ret, Ty::Unit | Ty::Error) {
+                    out.push(
+                        err("E0634", "this policy needs a tool that returns `Unit`", *span)
+                            .expected("`-> Unit`: the run goes on as if the call happened, with no answer to use")
+                            .observed(format!("`-> {}`; use `on_uncertain pause`", sig.ret)),
+                    );
+                }
+                if let Policy::Verify { tool, args } = policy {
+                    out.extend(self.check_verify(sig, tool, args));
+                }
+            }
+            if let Some(c) = &sig.checks
+                && !matches!(self.types.get(c.name.as_str()), Some(UserType::Record(_)))
+            {
+                out.push(
+                    err("E0635", "`checks` must name a record type", c.span)
+                        .expected("a `type` with fields: the state the tool validates")
+                        .observed(format!("`{}`", c.name)),
+                );
+            }
+            for d in out {
+                self.push(d);
+            }
+        }
+    }
+
+    fn check_verify(&self, sig: &ToolSig, tool: &Ident, args: &[Ident]) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        let Some(v) = self.tools.get(tool.name.as_str()) else {
+            out.push(
+                err("E0631", "`verify` must call a tool", tool.span)
+                    .expected("a `read` tool that tells whether the call happened")
+                    .observed(format!("`{}`", tool.name)),
+            );
+            return out;
+        };
+        if v.effect != Effect::Read {
+            out.push(
+                err("E0631", "`verify` must call a `read` tool", tool.span)
+                    .expected("`effect read`: checking must not change anything")
+                    .observed(format!("`{}` is `{}`", tool.name, v.effect)),
+            );
+        }
+        if !matches!(v.ret, Ty::Bool | Ty::Error) {
+            out.push(
+                err("E0633", "`verify` tool must return `Bool`", tool.span)
+                    .expected("`-> Bool`: whether the call happened")
+                    .observed(format!("`-> {}`", v.ret)),
+            );
+        }
+        if args.len() != v.params.len() {
+            out.push(
+                err(
+                    "E0632",
+                    "wrong number of arguments for the `verify` tool",
+                    tool.span,
+                )
+                .expected(format!("{}", v.params.len()))
+                .observed(format!("{}", args.len())),
+            );
+        }
+        for (a, (pname, pty)) in args.iter().zip(&v.params) {
+            match sig.params.iter().find(|(n, _)| *n == a.name) {
+                None => out.push(
+                    err(
+                        "E0632",
+                        "`verify` arguments must be parameters of the tool",
+                        a.span,
+                    )
+                    .expected("a parameter of the `write once` tool: the same call, looked up")
+                    .observed(format!("`{}`", a.name)),
+                ),
+                Some((_, ty)) if !assignable(ty, pty) => out.push(
+                    err("E0632", "`verify` argument has the wrong type", a.span)
+                        .expected(format!("`{pty}` for `{pname}`"))
+                        .observed(format!("`{ty}`")),
+                ),
+                Some(_) => {}
+            }
+        }
+        out
     }
 
     fn effect_words(&mut self, value: &[Expr], span: Span) -> Option<Effect> {
@@ -593,6 +743,7 @@ impl<'p> Cx<'_, 'p> {
         let mut locals: Vec<Local> = Vec::new();
         let mut returns = Vec::new();
         let mut limits = Vec::new();
+        let mut afters: Vec<(&Ident, &Vec<Ident>)> = Vec::new();
         for s in &g.body {
             match s {
                 Stmt::Node {
@@ -606,6 +757,7 @@ impl<'p> Cx<'_, 'p> {
                 }),
                 Stmt::Return(e) => returns.push(e),
                 Stmt::Limits(entries) => limits.push(entries),
+                Stmt::After { node, after } => afters.push((node, after)),
             }
         }
         let mut index: HashMap<&str, usize> = HashMap::new();
@@ -629,7 +781,7 @@ impl<'p> Cx<'_, 'p> {
         }
 
         // Pass 2: dependencies between locals, then a topological order.
-        let deps: Vec<Vec<usize>> = locals
+        let mut deps: Vec<Vec<usize>> = locals
             .iter()
             .map(|l| {
                 let bound = l.fan_out.map(|(v, _)| v.name.as_str());
@@ -644,6 +796,37 @@ impl<'p> Cx<'_, 'p> {
                 out
             })
             .collect();
+        // `a after b`: an ordering edge without data (decision D2).
+        for (node, after) in &afters {
+            let step = |cx: &mut Self, id: &Ident| match index.get(id.name.as_str()) {
+                Some(&i) => Some(i),
+                None => {
+                    cx.push(
+                        err(
+                            "E0639",
+                            "`after` names something that is not a step",
+                            id.span,
+                        )
+                        .expected("a step of this graph (`name = ...`)")
+                        .observed(format!("`{}`", id.name)),
+                    );
+                    None
+                }
+            };
+            let Some(i) = step(self, node) else { continue };
+            for a in after.iter() {
+                if a.name == node.name {
+                    self.push(
+                        err("E0639", "a step cannot come after itself", a.span)
+                            .observed(format!("`{} after {}`", node.name, a.name)),
+                    );
+                } else if let Some(j) = step(self, a) {
+                    deps[i].push(j);
+                }
+            }
+            deps[i].sort_unstable();
+            deps[i].dedup();
+        }
         let (order, cyclic) = self.topo(&locals, &deps);
         // Nodes in a cycle were already reported: type them as errors up
         // front so they do not also show up as unknown names.
@@ -754,6 +937,8 @@ impl<'p> Cx<'_, 'p> {
             }
         }
 
+        self.unordered_writes(&locals, &deps, &ids, &nodes);
+
         // Results nobody uses: wasted money for `llm` and `read` nodes.
         for (i, l) in locals.iter().enumerate() {
             if used.contains(&i) || !index.contains_key(l.name.name.as_str()) {
@@ -819,6 +1004,52 @@ impl<'p> Cx<'_, 'p> {
             nodes,
             output,
             limits: ir::Limits::default(),
+        }
+    }
+
+    /// Two steps that write outside the run with no order between them may
+    /// run at the same time, in either order (decision D2).
+    fn unordered_writes(
+        &mut self,
+        locals: &[Local],
+        deps: &[Vec<usize>],
+        ids: &HashMap<usize, NodeId>,
+        nodes: &[ir::Node],
+    ) {
+        let writes: Vec<usize> = (0..locals.len())
+            .filter(|i| {
+                ids.get(i)
+                    .is_some_and(|id| nodes[id.0 as usize].effect >= Effect::Write)
+            })
+            .collect();
+        if writes.len() < 2 {
+            return;
+        }
+        // Everything each step waits for, directly or not.
+        let before = |start: usize| {
+            let mut seen = HashSet::new();
+            let mut stack = deps[start].clone();
+            while let Some(d) = stack.pop() {
+                if seen.insert(d) {
+                    stack.extend(deps[d].iter().copied());
+                }
+            }
+            seen
+        };
+        let befores: HashMap<usize, HashSet<usize>> =
+            writes.iter().map(|&w| (w, before(w))).collect();
+        for (k, &b) in writes.iter().enumerate() {
+            if let Some(&a) = writes[..k]
+                .iter()
+                .find(|&&a| !befores[&b].contains(&a) && !befores[&a].contains(&b))
+            {
+                let (an, bn) = (&locals[a].name.name, &locals[b].name.name);
+                self.push(
+                    warn("W0602", "external writes without a defined order", locals[b].name.span)
+                        .expected(format!("`{bn} after {an}` (or `{an} after {bn}`), or a value one passes to the other"))
+                        .observed(format!("`{an}` and `{bn}` both write outside the run and may run at the same time")),
+                );
+            }
         }
     }
 
@@ -924,6 +1155,7 @@ impl<'p> Cx<'_, 'p> {
 
     fn expr(&mut self, e: &Expr, gc: &GraphCx) -> Typed {
         match &e.kind {
+            ExprKind::Guarded { call, requires } => self.guarded(call, requires, gc),
             ExprKind::Ident(n) => {
                 if let Some(t) = gc.scope.get(n) {
                     return Typed::pure(t.clone());
@@ -1368,6 +1600,68 @@ impl<'p> Cx<'_, 'p> {
         }
     }
 
+    /// A tool call with `requires` lines (decision D29): conditions on the
+    /// tool's state (`state.field`) and the graph's values, made only of
+    /// operators, so the tool can check them when it acts.
+    fn guarded(&mut self, call: &Expr, requires: &[Expr], gc: &GraphCx) -> Typed {
+        let typed = self.expr(call, gc);
+        let tool = match &call.kind {
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Ident(n) => self
+                    .tools
+                    .get(n.as_str())
+                    .map(|s| (n, s.checks.clone(), s.effect)),
+                _ => None,
+            },
+            _ => None,
+        };
+        let state = match tool {
+            Some((_, Some(c), effect)) if effect >= Effect::Write => {
+                match self.types.get(c.name.as_str()) {
+                    Some(UserType::Record(_)) => Ty::User(c.name),
+                    _ => Ty::Error, // reported at the tool
+                }
+            }
+            Some((n, checks, effect)) => {
+                let why = if effect < Effect::Write {
+                    format!("`{n}` is `{effect}`: preconditions guard writes")
+                } else if checks.is_none() {
+                    format!("`{n}` has no `checks`")
+                } else {
+                    String::new()
+                };
+                self.push(
+                    err("E0636", "`requires` needs a write tool that declares `checks`", call.span)
+                        .expected("a `write` or `write once` tool with `checks StateType`: the tool validates the conditions")
+                        .observed(why),
+                );
+                Ty::Error
+            }
+            None => {
+                self.push(
+                    err("E0636", "`requires` only applies to tool calls", call.span)
+                        .expected("`name = tool(...):` followed by `requires ...` lines"),
+                );
+                Ty::Error
+            }
+        };
+        let mut inner = gc.clone();
+        inner.scope.insert("state".into(), state);
+        for r in requires {
+            if let Some(span) = not_an_operator(r) {
+                self.push(
+                    err("E0638", "`requires` may only use operators and values", span)
+                        .expected("comparisons, `+ - * /`, `and`, `or`, `not`, `state.field` and values of the graph")
+                        .observed("a call or another construct the tool cannot evaluate"),
+                );
+                continue;
+            }
+            let t = self.expr(r, &inner);
+            self.expect_bool(&t.ty, r.span);
+        }
+        typed
+    }
+
     fn agent(&mut self, a: &AgentExpr, gc: &GraphCx) -> Typed {
         let model = a.model.name.as_str();
         let mut effect = Effect::Llm;
@@ -1387,6 +1681,14 @@ impl<'p> Cx<'_, 'p> {
                 ),
                 Some(sig) => {
                     effect = effect.join(sig.effect);
+                    if sig.effect == Effect::WriteOnce {
+                        // A model decides when to call it, and may call it again.
+                        self.push(
+                            err("E0640", "an agent cannot use a `write once` tool", t.span)
+                                .expected("`write once` calls as steps of the graph, e.g. after the agent, with its answer")
+                                .observed(format!("`{}` is `write once`", t.name)),
+                        );
+                    }
                     if !self.tools_with_max_output.contains(t.name.as_str()) {
                         // An agent reads the whole output into the
                         // conversation: it must be bounded (decision D16).
@@ -1828,6 +2130,10 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
                     walk(t, f);
                 }
             }
+            ExprKind::Guarded { call, requires } => {
+                walk(call, f);
+                requires.iter().for_each(|r| walk(r, f));
+            }
             _ => {}
         }
     }
@@ -1840,6 +2146,54 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
             walk(value, f);
         }
         Stmt::Return(e) => walk(e, f),
+        Stmt::After { .. } => {}
+    }
+}
+
+/// `verify(f(a, b))` as a policy, if it has that shape.
+fn verify_policy(args: &[Arg]) -> Option<Policy> {
+    let [Arg { name: None, value }] = args else {
+        return None;
+    };
+    let ExprKind::Call { callee, args } = &value.kind else {
+        return None;
+    };
+    let ExprKind::Ident(tool) = &callee.kind else {
+        return None;
+    };
+    let args = args
+        .iter()
+        .map(|a| match (&a.name, &a.value.kind) {
+            (None, ExprKind::Ident(n)) => Some(Ident {
+                name: n.clone(),
+                span: a.value.span,
+            }),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Policy::Verify {
+        tool: Ident {
+            name: tool.clone(),
+            span: callee.span,
+        },
+        args,
+    })
+}
+
+/// The first part of a precondition the tool could not evaluate.
+fn not_an_operator(e: &Expr) -> Option<Span> {
+    match &e.kind {
+        ExprKind::Ident(_)
+        | ExprKind::Int { .. }
+        | ExprKind::Float { .. }
+        | ExprKind::Str(_)
+        | ExprKind::Error => None,
+        ExprKind::Field { base, .. } => not_an_operator(base),
+        ExprKind::Binary { left, right, .. } => {
+            not_an_operator(left).or_else(|| not_an_operator(right))
+        }
+        ExprKind::Unary { value, .. } => not_an_operator(value),
+        _ => Some(e.span),
     }
 }
 
@@ -1895,6 +2249,12 @@ fn collect_refs(e: &Expr, bound: Option<&str>, index: &HashMap<&str, usize>, out
         ExprKind::Agent(a) => {
             if let Some(t) = &a.task {
                 collect_refs(t, bound, index, out);
+            }
+        }
+        ExprKind::Guarded { call, requires } => {
+            collect_refs(call, bound, index, out);
+            for r in requires {
+                collect_refs(r, bound, index, out);
             }
         }
         ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Error => {}

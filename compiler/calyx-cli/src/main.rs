@@ -38,9 +38,13 @@ commands:
       Independent calls run in parallel, up to the graph's `limits threads`
       (8 by default).
   resume <run> [--fake-models] [--quiet] [--config FILE] [--budget USD]
+               [--uncertain done|retry|failed]
       Continue an interrupted or failed run. Calls already in its journal
       are taken from it, not made (or paid for) again. --budget raises the
-      budget of a run that used it up.
+      budget of a run that used it up. --uncertain says what happened to
+      `write once` calls of unknown outcome (after you checked): `done`
+      (it happened), `retry` (it did not: make it) or `failed`; without
+      it, each tool's `on_uncertain` decides.
   replay <run> [--quiet]
       Run again using only the journal: no model or tool is called.
   runs
@@ -149,6 +153,8 @@ options:
   --no-journal      run without a journal (nothing can be resumed)
   --deterministic   one call at a time, always in the same order
   --budget USD      replace the program's budget
+
+resume also takes --uncertain done|retry|failed (see `calyx help`).
 ",
         graph = b.graph,
         file = b.file,
@@ -377,6 +383,7 @@ fn start(origin: Origin, flags: RunFlags) -> ExitCode {
         program: Some(std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())),
         deterministic: flags.deterministic,
         budget_usd: flags.budget_usd,
+        uncertain: None,
     };
     if let Some(id) = &id {
         eprintln!("{}: run {id}", command());
@@ -504,12 +511,17 @@ fn rerun(args: &[String], mode: Mode) -> ExitCode {
     let mut quiet = false;
     let mut deterministic = false;
     let mut budget_usd = None;
+    let mut uncertain = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--config" => match it.next() {
                 Some(c) => config_path = Some(PathBuf::from(c)),
                 None => return usage_error("--config expects a file"),
+            },
+            "--uncertain" if mode == Mode::Resume => match it.next().map(String::as_str) {
+                Some(d @ ("done" | "retry" | "failed")) => uncertain = Some(d.to_owned()),
+                _ => return usage_error("--uncertain expects `done`, `retry` or `failed`"),
             },
             "--fake-models" => fake_models = true,
             "--quiet" => quiet = true,
@@ -558,6 +570,7 @@ fn rerun(args: &[String], mode: Mode) -> ExitCode {
         program: Some(header.program.clone()),
         deterministic,
         budget_usd,
+        uncertain,
     };
     execute(&program, &header.graph, header.args, opts, Some(&id))
 }

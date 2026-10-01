@@ -1,0 +1,34 @@
+# Bug: A verificação de um envio incerto usa uma tool que também escreve.
+# Pego por: E0631
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt decide(o: Order) -> Float:
+    """Quanto reembolsar de {o}?"""
+
+tool mark_sent(to: Text) -> Bool:
+    effect write
+
+tool email(to: Text, text: Text) -> Unit:
+    effect write once
+    on_uncertain verify(mark_sent(to))
+
+graph g(id: Text) -> Text:
+    o = get_order(id)
+    sent = email(o.email, "oi")
+    return "ok"

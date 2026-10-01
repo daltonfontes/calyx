@@ -84,6 +84,14 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
             out.tools.push(ir_tool);
         }
     }
+    // `on_uncertain verify(f(...))` names a tool that may come later.
+    for d in &program.decls {
+        if let Decl::Tool(t) = d
+            && let Some((i, _)) = cx.tools.get(t.name.name.as_str())
+        {
+            out.tools[*i].on_uncertain = cx.uncertain(t);
+        }
+    }
     for d in &program.decls {
         if let Decl::Prompt(p) = d {
             let params: Vec<String> = p.params.iter().map(|x| x.name.name.clone()).collect();
@@ -197,6 +205,8 @@ impl Lower<'_> {
                 }
                 Stmt::Return(e) => ret = Some(e),
                 Stmt::Limits(entries) => g.limits = limits(entries),
+                // Ordering only: already in the nodes' inputs.
+                Stmt::After { .. } => {}
             }
         }
         for n in &mut g.nodes {
@@ -236,6 +246,13 @@ impl Lower<'_> {
                 ir::Expr::Field(Box::new(self.expr(base, scope)), name.name.clone())
             }
             ExprKind::Call { callee, args } => self.call(callee, args, scope),
+            ExprKind::Guarded { call, requires } => {
+                let mut e = self.expr(call, scope);
+                if let ir::Expr::Tool { requires: r, .. } = &mut e {
+                    *r = requires.iter().map(|q| self.guard(q, scope)).collect();
+                }
+                e
+            }
             // Only present in programs with errors, which are never lowered.
             ExprKind::Error => ir::Expr::Text(String::new()),
             ExprKind::Binary { op, left, right } => ir::Expr::Binary {
@@ -345,6 +362,61 @@ impl Lower<'_> {
         }
     }
 
+    /// The `on_uncertain` policy of a tool, if it has one.
+    fn uncertain(&self, t: &ToolDecl) -> Option<ir::Uncertain> {
+        let p = t.props.iter().find(|p| p.key.name == "on_uncertain")?;
+        match p.value.as_slice() {
+            [
+                Expr {
+                    kind: ExprKind::Ident(n),
+                    ..
+                },
+            ] if n == "pause" => Some(ir::Uncertain::Pause),
+            [
+                Expr {
+                    kind: ExprKind::Ident(n),
+                    ..
+                },
+            ] if n == "accept_loss" => Some(ir::Uncertain::AcceptLoss),
+            [
+                Expr {
+                    kind: ExprKind::Call { args, .. },
+                    ..
+                },
+            ] => {
+                // verify(f(a, b)): a and b are parameters of `t`.
+                let Some(Arg {
+                    value:
+                        Expr {
+                            kind:
+                                ExprKind::Call {
+                                    callee,
+                                    args: inner,
+                                },
+                            ..
+                        },
+                    ..
+                }) = args.first()
+                else {
+                    return None;
+                };
+                let ExprKind::Ident(f) = &callee.kind else {
+                    return None;
+                };
+                let (tool, _) = self.tools.get(f.as_str())?;
+                let args = inner
+                    .iter()
+                    .filter_map(|a| match &a.value.kind {
+                        ExprKind::Ident(n) => t.params.iter().position(|p| p.name.name == *n),
+                        _ => None,
+                    })
+                    .collect();
+                Some(ir::Uncertain::Verify { tool: *tool, args })
+            }
+            _ => None,
+        }
+    }
+
     /// The fields of a variant, in order. `Ok` and `Failed` are the result
     /// of `try`.
     fn variant_fields(&self, name: &str) -> Vec<String> {
@@ -378,6 +450,26 @@ impl Lower<'_> {
         }
         out.extend(fields.iter().cloned().zip(values));
         ir::Expr::Record(out)
+    }
+
+    /// A precondition: `state.field` is the tool's state; everything else
+    /// is a value of the graph, computed before the call.
+    fn guard(&self, e: &Expr, scope: &Scope) -> ir::Expr {
+        match &e.kind {
+            ExprKind::Field { base, name } if matches!(&base.kind, ExprKind::Ident(s) if s == "state") => {
+                ir::Expr::State(name.name.clone())
+            }
+            ExprKind::Binary { op, left, right } => ir::Expr::Binary {
+                op: op.clone(),
+                left: Box::new(self.guard(left, scope)),
+                right: Box::new(self.guard(right, scope)),
+            },
+            ExprKind::Unary { op, value } => ir::Expr::Unary {
+                op: op.clone(),
+                value: Box::new(self.guard(value, scope)),
+            },
+            _ => self.expr(e, scope),
+        }
     }
 
     fn name(&self, n: &str, scope: &Scope) -> ir::Expr {
@@ -434,6 +526,7 @@ impl Lower<'_> {
             return ir::Expr::Tool {
                 tool: *tool,
                 args: self.ordered(params, args, scope),
+                requires: Vec::new(),
             };
         }
         if let Some((graph, params)) = self.graphs.get(name.as_str()) {
@@ -774,7 +867,28 @@ fn tool(t: &ToolDecl) -> ir::Tool {
                 _ => None,
             });
     let repeatable = t.props.iter().any(|p| p.key.name == "repeatable");
+    let param = |n: &str| t.params.iter().position(|p| p.name.name == n);
+    let single_name = |key: &str| {
+        t.props
+            .iter()
+            .find_map(|p| match (p.key.name == key, p.value.as_slice()) {
+                (
+                    true,
+                    [
+                        Expr {
+                            kind: ExprKind::Ident(n),
+                            ..
+                        },
+                    ],
+                ) => Some(n.clone()),
+                _ => None,
+            })
+    };
     ir::Tool {
+        idempotency_key: single_name("idempotency_key").and_then(|n| param(&n)),
+        on_uncertain: None,
+        returns_unit: matches!(&t.ret.kind, TypeKind::Named { name, args, .. } if name.name == "Unit" && args.is_empty()),
+        checks: single_name("checks"),
         schema: String::new(),
         description,
         repeatable,

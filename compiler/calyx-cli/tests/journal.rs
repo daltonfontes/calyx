@@ -193,10 +193,12 @@ fn a_write_once_call_with_unknown_outcome_is_not_repeated() {
     let resumed = d.calyx(&["resume", &id, "--fake-models"], None);
     assert_eq!(resumed.status.code(), Some(3));
     let err = text(&resumed.stderr);
+    // Its `on_uncertain pause` stops the run for a person to decide (M6).
     assert!(
-        err.contains("`notify` (write once) started before the interruption"),
+        err.contains("`notify` (write once) may or may not have happened (the run stopped"),
         "{err}"
     );
+    assert!(err.contains("--uncertain done"), "{err}");
 }
 
 #[test]

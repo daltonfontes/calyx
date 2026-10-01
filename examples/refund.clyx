@@ -1,0 +1,80 @@
+# Reembolso com escritas externas seguras (marco M6).
+#
+# - `refund` é `write` com chave de idempotência: repetir (nova tentativa ou
+#   execução retomada) nunca paga duas vezes.
+# - As precondições (`requires`) são conferidas pela própria tool, sobre o
+#   estado ATUAL do pedido, no mesmo passo em que ela paga (D29).
+# - `email` é `write once`: nunca se repete sozinho. Se cair no meio do envio,
+#   `verify` pergunta se o e-mail saiu antes de decidir.
+# - `notice after paid`: o e-mail só sai depois do reembolso.
+#
+# calyx run examples/refund.clyx --fake-models --request R1 --order A100 --message "chegou quebrado"
+
+model gemini = "gemini-3.5-flash-lite"
+
+type Status = Pending | Delivered | Cancelled
+
+type Order:
+    id: Text
+    customer: Text
+    email: Text
+    total: Float
+    refunded: Float
+    status: Status
+
+# O estado que a tool de pagamento valida no momento do reembolso.
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Proposal:
+    amount: Float
+    reason: Text
+
+tool get_order(id: Text) -> Order:
+    effect read
+    retry_on [Timeout]
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    checks OrderState
+
+tool email_sent(to: Text, subject: Text) -> Bool:
+    effect read
+
+tool email(to: Text, subject: Text, body: Text) -> Unit:
+    effect write once
+    timeout 10 s
+    on_uncertain verify(email_sent(to, subject))
+
+prompt decide(order: Order, message: Text) -> Proposal:
+    """
+    Um cliente pediu reembolso. Proponha um valor que, somado ao já
+    reembolsado ({order.refunded}), não passe de {order.total}, e explique
+    em uma frase.
+
+    Pedido: {order}
+    Mensagem do cliente: {message}
+    """
+
+prompt reply(order: Order, amount: Float) -> Text:
+    """
+    Escreva um e-mail curto para {order.customer} confirmando o reembolso
+    de {amount} do pedido {order.id}.
+    """
+
+graph handle_refund(request: Text, order: Text, message: Text) -> Text:
+    found = get_order(order)
+    proposal = gemini(decide(found, message))
+
+    paid = refund(request, order, proposal.amount):
+        requires state.status == Delivered
+        requires state.refunded + proposal.amount <= state.total
+
+    body = gemini(reply(found, proposal.amount))
+    notice = email(found.email, "Reembolso do pedido {order}", body)
+    notice after paid
+
+    return "reembolso de {proposal.amount} enviado para {found.email}"

@@ -108,11 +108,17 @@ pub enum Expr {
         prompt: usize,
         args: Vec<Expr>,
     },
-    /// Arguments follow the tool's parameters.
+    /// Arguments follow the tool's parameters. `requires` are the call's
+    /// preconditions (decision D29), sent to the tool, which checks them
+    /// against the current state when it acts.
     Tool {
         tool: usize,
         args: Vec<Expr>,
+        requires: Vec<Expr>,
     },
+    /// `state.field` inside a `requires`: a field of the state the tool
+    /// checks, known only to the tool.
+    State(String),
     /// Arguments follow the graph's parameters.
     Graph {
         graph: usize,
@@ -221,6 +227,27 @@ pub struct Tool {
     pub description: Option<String>,
     /// Repeating it with the same arguments is legitimate (not "stuck").
     pub repeatable: bool,
+    /// The parameter whose value is the idempotency key (`write` tools).
+    pub idempotency_key: Option<usize>,
+    /// What to do when a `write once` call may or may not have happened.
+    pub on_uncertain: Option<Uncertain>,
+    /// The tool returns `Unit`: nothing to make up when a call is taken as
+    /// done without its answer.
+    pub returns_unit: bool,
+    /// The type of state the tool validates `requires` against.
+    pub checks: Option<String>,
+}
+
+/// The `on_uncertain` policy of a `write once` tool (decision D2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Uncertain {
+    /// Stop the run; a person decides when resuming.
+    Pause,
+    /// Take the call as done and go on.
+    AcceptLoss,
+    /// Ask a `read` tool (returning `Bool`) whether the call happened; its
+    /// arguments are parameters of the `write once` tool, by position.
+    Verify { tool: usize, args: Vec<usize> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -296,6 +323,7 @@ impl Graph {
                     3.0 + args.iter().map(calls).sum::<f64>()
                 }
                 Expr::Tool { args, .. } => 1.0 + args.iter().map(calls).sum::<f64>(),
+                Expr::State(_) => 0.0,
                 Expr::Field(base, _) => calls(base),
                 Expr::List(items) => items.iter().map(calls).sum(),
                 Expr::Record(fields) => fields.iter().map(|(_, e)| calls(e)).sum(),

@@ -147,6 +147,9 @@ pub enum Stmt {
     },
     /// `return e`
     Return(Expr),
+    /// `notice after paid, saved`: `notice` starts only after those steps
+    /// finished, though it reads nothing from them (decision D2).
+    After { node: Ident, after: Vec<Ident> },
 }
 
 /// A string literal. `text` is the raw content between the quotes, with
@@ -228,6 +231,13 @@ pub enum ExprKind {
     Try(Box<Expr>),
     /// `agent model:` with a block of properties (decision D5).
     Agent(Box<AgentExpr>),
+    /// A tool call with preconditions, checked by the tool against the
+    /// current state when it acts (decision D29):
+    /// `refund(order, amount):` then `requires state.total >= amount` lines.
+    Guarded {
+        call: Box<Expr>,
+        requires: Vec<Expr>,
+    },
 }
 
 /// `case Variant(field, ...):` or `case _:`, and what it evaluates to.
