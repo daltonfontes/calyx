@@ -28,7 +28,8 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D22 | Timeouts | Timeout por tentativa obrigatório em nós com efeito externo; padrão por tipo de efeito |
 | D23 | Versionamento de templates | Execuções fixadas na versão; migração quando o compilador provar compatibilidade |
 | D24 | Escalonamento | Lista com prioridade pelo caminho crítico; durações estimadas pelo compilador e refinadas pelo histórico de traces |
-| D25 | Invariantes entre ramos | Validação declarada na junção; violação produz valor `conflito` |
+| D25 | Invariantes entre ramos | Recursos: resolvido por afinidade (D26); valores: validação declarada na junção, violação produz valor `conflito` |
+| D26 | Recursos afins | Sandbox, orçamento e capacidades `write once` têm um dono por vez; dividir entre ramos é explícito e verificado (ver [Bend](08-bend.md)) |
 
 As decisões D11 a D19 surgiram no [teste no papel](04-teste-no-papel.md), onde estão descritas com os workflows que as motivaram. As propostas de D11, D12, D14 e D15 foram revisadas, e D20 a D23 surgiram, na leitura do [Temporal](05-temporal.md).
 
@@ -210,6 +211,7 @@ Adiada por decisão do projeto. Critérios a considerar:
 | Verificador embutido no runtime | Grafos gerados por LLM precisam ser verificados em tempo de execução (W7) |
 | Execução durável | O runtime precisa persistir e retomar execuções que esperam dias (W3) |
 | Runtime orientado a eventos | Execuções esperando não podem ocupar threads; vivem só no armazenamento (Temporal) |
+| Limitado por E/S, não por computação | O tempo está na espera de LLMs e tools; desempenho bruto pesa menos que E/S assíncrona, durabilidade e custo de escrever o compilador (Bend) |
 
 ---
 
