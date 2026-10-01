@@ -1,0 +1,4 @@
+.calyx/
+.work/
+__pycache__/
+w1_fanout/research_*.clyx

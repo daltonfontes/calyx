@@ -1,0 +1,322 @@
+[
+ {
+  "experiment": "latency",
+  "system": "calyx",
+  "n": 5,
+  "latency_ms": 1000,
+  "median_s": 2.032,
+  "min_s": 2.03,
+  "max_s": 2.033,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "calyx --no-journal",
+  "n": 5,
+  "latency_ms": 1000,
+  "median_s": 2.032,
+  "min_s": 2.03,
+  "max_s": 2.035,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "calyx --deterministic",
+  "n": 5,
+  "latency_ms": 1000,
+  "median_s": 6.035,
+  "min_s": 6.032,
+  "max_s": 6.035,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "python sequencial",
+  "n": 5,
+  "latency_ms": 1000,
+  "median_s": 6.07,
+  "min_s": 6.07,
+  "max_s": 6.073,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "python asyncio",
+  "n": 5,
+  "latency_ms": 1000,
+  "median_s": 2.089,
+  "min_s": 2.081,
+  "max_s": 2.092,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "langgraph",
+  "n": 5,
+  "latency_ms": 1000,
+  "median_s": 2.802,
+  "min_s": 2.796,
+  "max_s": 2.854,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "calyx",
+  "n": 20,
+  "latency_ms": 1000,
+  "median_s": 4.037,
+  "min_s": 4.036,
+  "max_s": 4.037,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "calyx --no-journal",
+  "n": 20,
+  "latency_ms": 1000,
+  "median_s": 4.029,
+  "min_s": 4.025,
+  "max_s": 4.031,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "calyx --deterministic",
+  "n": 20,
+  "latency_ms": 1000,
+  "median_s": 21.06,
+  "min_s": 21.055,
+  "max_s": 21.068,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "python sequencial",
+  "n": 20,
+  "latency_ms": 1000,
+  "median_s": 21.084,
+  "min_s": 21.078,
+  "max_s": 21.085,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "python asyncio",
+  "n": 20,
+  "latency_ms": 1000,
+  "median_s": 4.082,
+  "min_s": 4.077,
+  "max_s": 4.086,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "langgraph",
+  "n": 20,
+  "latency_ms": 1000,
+  "median_s": 4.878,
+  "min_s": 4.856,
+  "max_s": 4.9,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "calyx",
+  "n": 50,
+  "latency_ms": 1000,
+  "median_s": 8.046,
+  "min_s": 8.046,
+  "max_s": 8.054,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "calyx --no-journal",
+  "n": 50,
+  "latency_ms": 1000,
+  "median_s": 8.034,
+  "min_s": 8.033,
+  "max_s": 8.041,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "python asyncio",
+  "n": 50,
+  "latency_ms": 1000,
+  "median_s": 8.095,
+  "min_s": 8.087,
+  "max_s": 8.113,
+  "reps": 3
+ },
+ {
+  "experiment": "latency",
+  "system": "langgraph",
+  "n": 50,
+  "latency_ms": 1000,
+  "median_s": 8.826,
+  "min_s": 8.796,
+  "max_s": 8.838,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "calyx",
+  "n": 10,
+  "latency_ms": 0,
+  "median_s": 0.026,
+  "min_s": 0.024,
+  "max_s": 0.03,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "calyx --no-journal",
+  "n": 10,
+  "latency_ms": 0,
+  "median_s": 0.03,
+  "min_s": 0.028,
+  "max_s": 0.041,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "python asyncio",
+  "n": 10,
+  "latency_ms": 0,
+  "median_s": 0.07,
+  "min_s": 0.064,
+  "max_s": 0.072,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "langgraph",
+  "n": 10,
+  "latency_ms": 0,
+  "median_s": 0.843,
+  "min_s": 0.822,
+  "max_s": 0.887,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "calyx",
+  "n": 100,
+  "latency_ms": 0,
+  "median_s": 0.041,
+  "min_s": 0.039,
+  "max_s": 0.044,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "calyx --no-journal",
+  "n": 100,
+  "latency_ms": 0,
+  "median_s": 0.042,
+  "min_s": 0.033,
+  "max_s": 0.042,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "python asyncio",
+  "n": 100,
+  "latency_ms": 0,
+  "median_s": 0.072,
+  "min_s": 0.069,
+  "max_s": 0.096,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "langgraph",
+  "n": 100,
+  "latency_ms": 0,
+  "median_s": 0.844,
+  "min_s": 0.79,
+  "max_s": 0.885,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "calyx",
+  "n": 1000,
+  "latency_ms": 0,
+  "median_s": 0.167,
+  "min_s": 0.157,
+  "max_s": 0.168,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "calyx --no-journal",
+  "n": 1000,
+  "latency_ms": 0,
+  "median_s": 0.174,
+  "min_s": 0.144,
+  "max_s": 0.183,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "python asyncio",
+  "n": 1000,
+  "latency_ms": 0,
+  "median_s": 0.084,
+  "min_s": 0.081,
+  "max_s": 0.092,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "langgraph",
+  "n": 1000,
+  "latency_ms": 0,
+  "median_s": 2.413,
+  "min_s": 2.069,
+  "max_s": 2.47,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "calyx",
+  "n": 10000,
+  "latency_ms": 0,
+  "median_s": 1.617,
+  "min_s": 1.544,
+  "max_s": 1.741,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "calyx --no-journal",
+  "n": 10000,
+  "latency_ms": 0,
+  "median_s": 1.402,
+  "min_s": 1.34,
+  "max_s": 1.468,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "python asyncio",
+  "n": 10000,
+  "latency_ms": 0,
+  "median_s": 0.253,
+  "min_s": 0.253,
+  "max_s": 0.319,
+  "reps": 3
+ },
+ {
+  "experiment": "scale",
+  "system": "langgraph",
+  "n": 10000,
+  "latency_ms": 0,
+  "median_s": 84.296,
+  "min_s": 83.417,
+  "max_s": 87.911,
+  "reps": 3
+ }
+]
