@@ -9,24 +9,24 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D3 | Threads e conversa | ✅ **Decidido:** threads = execução paralela derivada pelo runtime; `conversation` = valor; compactação explícita com verificação de orçamento |
 | D4 | Quanto dinamismo permitir | ✅ **Decidido:** até grafo gerado por LLM, desde que verificado antes de rodar (níveis 0 a 3); edição arbitrária durante a execução fica de fora |
 | D5 | Ciclos no grafo | ✅ **Decidido:** laço com valores carregados e limite obrigatório; ciclo só no código, execução desenrolada; pior caso calculado multiplicando pelo limite; agente com variantes obrigatórias `turn_limit` e `stuck`; repetição detectada pelo runtime; compactação por tamanho com limite calculado pelo compilador. Ver [ReAct como ciclo](06-react-como-ciclo.md) |
-| D6 | Unidade de recuperação | Diário de nós concluídos (event sourcing) |
+| D6 | Unidade de recuperação | ✅ **Decidido:** diário de eventos com uma entrada por chamada de LLM ou tool; escrito só no fim do arquivo, em lotes; formato próprio em arquivo local (uma máquina); backend PostgreSQL depois, atrás da mesma interface, para várias máquinas |
 | D7 | Junção de ramos paralelos | ✅ **Decidido:** resultados na ordem da entrada; redutor obrigatório quando ramos escrevem no mesmo estado |
-| D8 | Template / realized graph / trace | Os três são conceitos de primeira classe |
+| D8 | Template / realized graph / trace | ✅ **Decidido:** os três são conceitos da linguagem: o código, o grafo desenrolado de cada execução e o diário |
 | D9 | Superfície da linguagem | Linguagem textual, com visualização derivada |
 | D10 | Plataforma | ✅ **Direção decidida:** o compilador emite C (um arquivo por programa, com o runtime); runtime em C com o modelo de atores da BEAM reimplementado; o mesmo binário roda de uma thread a várias máquinas; `calyx check` em até 1 segundo. **Compilador em Rust**, com o verificador compilado também como biblioteca estática ligada ao runtime em C (um verificador só). Ver [arquitetura do runtime](12-arquitetura-runtime.md) |
 | D11 | Falha parcial em fan-out | ✅ **Decidido:** falhas são valores (`Ok` / `Failed`); o compilador obriga a tratar; tools declaram erros não retentáveis |
-| D12 | Corrida e cancelamento | Construção `corrida` explícita; vencedor no diário; cancelamento cooperativo entre nós; `llm`/`read` abandonáveis, `write` protegidos; nós de compensação |
+| D12 | Corrida e cancelamento | ✅ **Decidido:** `race` explícito; vencedor gravado no diário; cancelamento cooperativo entre nós (`llm`/`read` abandonados, `write` termina antes de valer). Compensação (saga) fica para uma versão futura |
 | D13 | Ambiente da execução (sandbox) | Efeitos na sandbox recuperáveis por snapshot, restaurado junto com o diário; isolamento entre ramos por validação do conjunto de leitura a cada escrita (STORM), preferida a cópia + merge |
-| D14 | Tempo e execuções longas | Timers no diário; runtime durável e orientado a eventos; diário ligado à versão do template |
+| D14 | Tempo e execuções longas | ✅ **Decidido:** timers no diário; suspender = gravar o estado e liberar a memória; retomar = reconstruir a partir do diário; diário ligado à versão do template |
 | D15 | Concorrência entre execuções | Chave de negócio (no máximo uma execução aberta por chave); recurso compartilhado tem uma execução dona, e as outras enviam mensagens a ela |
 | D16 | Tamanho máximo da saída das tools | Tools declaram o máximo, ou o runtime trunca |
 | D17 | Recursão de subgrafos | Permitida com parâmetro que decresce a cada chamada |
 | D18 | Rodadas (barreira) | Construção explícita para ramos que trocam informação |
 | D19 | Resultado antecipado | O grafo entrega a saída antes de terminar os nós restantes |
-| D20 | Tamanho do diário | Subgrafos com diário próprio; conteúdos grandes fora do diário, referenciados por hash |
+| D20 | Tamanho do diário | ✅ **Decidido:** conteúdos grandes (prompts, respostas) fora do diário, referenciados por hash; subgrafos grandes podem ter diário próprio |
 | D21 | Mensagens para uma execução em andamento | Mensagens tipadas e consultas de estado; mensagens recebidas vão para o diário |
-| D22 | Timeouts | Timeout por tentativa obrigatório em nós com efeito externo; padrão por tipo de efeito |
-| D23 | Versionamento de templates | Execuções fixadas na versão; migração quando o compilador provar compatibilidade |
+| D22 | Timeouts | ✅ **Decidido:** obrigatórios em nós com efeito externo; padrão por tentativa: `llm` 5 min, `read` 30 s, `write`/`write once` 60 s, `sandbox` 10 min; cada tool pode sobrescrever |
+| D23 | Versionamento de templates | ✅ **Decidido:** cada versão é um binário; execuções terminam na versão em que começaram; migram só se o compilador provar que os grafos são compatíveis |
 | D24 | Escalonamento | Lista com prioridade pelo caminho crítico; durações estimadas pelo compilador e refinadas pelo histórico de traces |
 | D25 | Invariantes entre ramos | Recursos: resolvido por afinidade (D26); valores: validação declarada na junção, violação produz valor `conflito` |
 | D26 | Recursos afins | ✅ **Decidido:** sandbox, orçamento e capacidades `write once` têm um dono por vez; dividir entre ramos é explícito e verificado; sintaxe `reads` / `edits` (sem `&` / `&mut`). Ver [Bend](08-bend.md) |
