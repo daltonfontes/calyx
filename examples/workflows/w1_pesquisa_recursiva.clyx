@@ -1,0 +1,71 @@
+// W1. Pesquisa profunda recursiva
+// Força: fan-out aninhado, recursão de subgrafos (D17), teto de custo calculado.
+
+model claude = llm("claude-sonnet-5-5", max_output: 2_000 tokens)
+
+tool web_search(query: Text) -> Text {
+  effect     read
+  max_output 4_000 tokens
+  retry_on   [Timeout, RateLimit]
+}
+
+type Learning = { facts: List<Text>, next_directions: List<Text> max 4 }
+
+prompt queries(topic: Text, breadth: Nat) -> List<Text> max 8 {
+  """
+  Gere até {breadth} consultas de busca diferentes para investigar: {topic}
+  """
+}
+
+prompt learn(query: Text, results: Text) -> Learning {
+  """
+  A partir dos resultados da busca "{query}", extraia fatos e até 4 direções
+  que merecem aprofundamento.
+
+  {results}
+  """
+}
+
+prompt report(topic: Text, facts: List<Text>) -> Text {
+  """
+  Escreva um relatório sobre "{topic}" com base nestes fatos:
+  {facts}
+  """
+}
+
+// "decreases depth": o compilador exige que toda chamada recursiva passe um depth menor.
+graph deep_research(topic: Text, depth: Nat max 3, breadth: Nat max 8) -> List<Text>
+  decreases depth
+{
+  node qs = claude(queries(topic, breadth))
+
+  node results[q in qs] = web_search(q)
+  node learned[q in qs] = claude(learn(q, results[q]))
+
+  // Recursão: um subgrafo por direção nova, com profundidade e largura menores.
+  node deeper[q in qs] = if depth > 1 {
+    // ⚠️ fan-out dentro de fan-out: lista de listas. Precisa de flatten explícito.
+    flatten(
+      for d in learned[q].next_directions {
+        deep_research(d, depth - 1, breadth / 2)
+      }
+    )
+  } else {
+    []
+  }
+
+  // Junção: concatena na ordem das consultas (D7); deduplicação é um nó puro.
+  node all_facts = dedupe(concat(learned.facts) ++ concat(deeper))
+
+  return all_facts
+}
+
+graph main(topic: Text) -> Text {
+  // Com depth ≤ 3 e breadth ≤ 8 (8 → 4 → 2), o compilador calcula o número máximo
+  // de nós e um teto de custo antes de rodar.
+  limits { threads: 16, budget: 10 USD }
+
+  node facts = deep_research(topic, 3, 8)
+  node text  = claude(report(topic, facts))
+  return text
+}

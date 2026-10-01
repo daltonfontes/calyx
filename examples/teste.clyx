@@ -20,62 +20,111 @@ model claude = llm("claude-sonnet-5-5", max_output: 2_000 tokens)
 // Cada tool declara o próprio efeito (D2) e o tamanho máximo da saída (D16).
 // O efeito dos nós é inferido pelo compilador a partir das tools que eles usam.
 
-tool web_search(query: Text) -> Text
-  effect read
+tool web_search(query: Text) -> Text {
+  effect     read
   max_output 4_000 tokens
-  retry_on [Timeout, RateLimit]           // erros temporários: o runtime repete sozinho
+  retry_on   [Timeout, RateLimit]        // erros temporários: o runtime repete sozinho
+}
 
-tool save_file(path: Text, content: Text) -> Unit
-  effect write                            // idempotente: pode repetir com segurança
+tool save_file(path: Text, content: Text) -> Unit {
+  effect          write                  // idempotente: pode repetir com segurança
   idempotency_key path
+}
 
-tool send_email(to: Email, subject: Text, body: Text) -> Unit
-  effect write once                       // não idempotente: nunca repete sozinho
+tool send_email(to: Email, subject: Text, body: Text) -> Unit {
+  effect       write once                // não idempotente: nunca repete sozinho
   on_uncertain verify(email_was_sent(to, subject))   // política obrigatória se cair no meio
+}
 
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-type Plan   = { questions: List<Text> max 5 }
+type Plan = { questions: List<Text> max 5 }
 
-type Review = Approved
-            | Rejected { feedback: Text }   // o compilador obriga a tratar as duas variantes
+type Review =
+  | Approved
+  | Rejected { feedback: Text }          // o compilador obriga a tratar as duas variantes
+
+
+// ─── Prompts ──────────────────────────────────────────────────────────────────
+// Separados da lógica: o grafo só referencia. Cada prompt tem tipo de entrada e de saída,
+// e o compilador verifica que toda {variável} existe.
+
+prompt split_topic(topic: Text) -> Plan {
+  """
+  Divida o tema abaixo em até 5 perguntas de pesquisa independentes.
+
+  Tema: {topic}
+  """
+}
+
+prompt investigate(question: Text) -> Text {
+  """
+  Pesquise a pergunta abaixo e responda citando as fontes.
+
+  Pergunta: {question}
+  """
+}
+
+prompt write_report(topic: Text, findings: List<Text>) -> Text {
+  """
+  Escreva um relatório sobre "{topic}" usando apenas as descobertas abaixo.
+
+  {findings}
+  """
+}
+
+prompt revise(text: Text) -> Review {
+  """
+  Revise criticamente o relatório abaixo.
+  Aponte erros factuais e trechos sem fonte.
+
+  {text}
+  """
+}
+
+prompt rewrite(text: Text, feedback: Text) -> Text {
+  """
+  Reescreva o relatório corrigindo os pontos indicados.
+
+  Pontos: {feedback}
+
+  Relatório:
+  {text}
+  """
+}
 
 
 // ─── Grafo ────────────────────────────────────────────────────────────────────
 
-graph research(topic: Text, owner: Email) -> Text
+graph research(topic: Text, owner: Email) -> Text {
 
   // Limites: o programador não cria threads, só limita (D3).
-  limits {
-    threads: 8
-    budget:  2 USD
-  }
+  limits { threads: 8, budget: 2 USD }
 
-  // Nó LLM com saída tipada.
-  node plan = claude "Divida o tema '{topic}' em até 5 perguntas de pesquisa." -> Plan
+  node plan = claude(split_topic(topic))
 
-  // Fan-out: um agente por pergunta. Não há "parallel": o runtime deriva
-  // que os agentes são independentes e roda até 8 ao mesmo tempo.
+  // Fan-out: um agente por pergunta. Não há "parallel": o runtime deriva que os
+  // agentes são independentes e roda até 8 ao mesmo tempo.
   // "agent" é atalho para o ciclo modelo → tools → observação (ReAct).
-  node findings[q in plan.questions] =
-    agent claude
-      tools     [web_search]
-      max_turns 10
-      "Pesquise e responda com fontes: {q}"
+  node findings[q in plan.questions] = agent claude {
+    tools      [web_search]
+    max_turns  10
+    task       investigate(q)
     on turn_limit => final_answer        // limite de voltas: uma última volta pedindo a resposta
     on stuck      => final_answer        // mesma tool, mesmos argumentos, várias vezes
+  }
 
   // findings chega aqui como lista, na ordem das perguntas (não na ordem de término).
-  node draft = claude "Escreva um relatório sobre '{topic}' usando estas descobertas: {findings}"
+  node draft = claude(write_report(topic, findings))
 
   // Ciclo com valor carregado (text) e limite obrigatório (D5).
-  node final = loop text = draft, max 3
-    review = claude "Revise criticamente o relatório abaixo.\n{text}" -> Review
-    match review
+  node final = loop text = draft, max 3 {
+    match claude(revise(text)) {
       Approved              => done text
-      Rejected { feedback } => next claude "Reescreva corrigindo: {feedback}\n\n{text}"
-  else last                              // limite atingido: fica com a última versão
+      Rejected { feedback } => next claude(rewrite(text, feedback))
+    }
+  } else last                            // limite atingido: fica com a última versão
 
   // Efeitos externos.
   node save   = save_file("relatorios/{topic}.md", final)
@@ -85,3 +134,4 @@ graph research(topic: Text, owner: Email) -> Text
   notify after save
 
   return final
+}

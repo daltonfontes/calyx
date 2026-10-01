@@ -1,0 +1,64 @@
+// W8. Estratégias concorrentes ("vence a primeira")
+// Força: corrida (D12), cancelamento, não-determinismo gravado no diário,
+//        sandbox afim dividida entre ramos (D13, D26).
+
+model claude = llm("claude-sonnet-5-5", max_output: 4_000 tokens)
+
+tool edit_file(box: &mut Sandbox, path: Text, old: Text, new: Text) -> Unit {
+  effect sandbox
+}
+
+tool run_tests(box: &mut Sandbox, filter: Text) -> TestReport {
+  effect     sandbox
+  max_output 6_000 tokens
+  timeout    10 min
+}
+
+type TestReport = { passed: Nat, failed: Nat, log: Text }
+
+prompt minimal_fix(issue: Text) -> Text {
+  """Corrija com a menor mudança possível: {issue}"""
+}
+
+prompt refactor_fix(issue: Text) -> Text {
+  """Corrija reorganizando o código afetado: {issue}"""
+}
+
+prompt test_first(issue: Text) -> Text {
+  """Escreva primeiro um teste que reproduz o problema, depois corrija: {issue}"""
+}
+
+graph fix_race(issue: Text, repo: Sandbox) -> Sandbox {
+  limits { threads: 3, budget: 6 USD }
+
+  // A sandbox é afim (D26): para três ramos a usarem, ela precisa ser dividida
+  // explicitamente em três cópias. O compilador recusa passar "repo" para os três.
+  let [a, b, c] = repo.fork(3)
+
+  // "race": os ramos rodam em paralelo; vence o primeiro que satisfizer a condição.
+  // Os outros são cancelados ENTRE nós (D12): uma chamada de LLM em andamento é abandonada;
+  // uma escrita externa em andamento terminaria antes do cancelamento valer.
+  // Qual ramo venceu é gravado no diário: na retomada, o vencedor é o mesmo.
+  node winner = race {
+    minimal:  attempt(issue, minimal_fix,  a)
+    refactor: attempt(issue, refactor_fix, b)
+    tests:    attempt(issue, test_first,   c)
+  } first where it.report.failed == 0
+    else fail "nenhuma estratégia passou nos testes"
+
+  // ⚠️ As sandboxes dos ramos perdedores são descartadas. Precisa ficar explícito
+  // que "race" consome as três e devolve só a do vencedor.
+  return winner.box
+}
+
+graph attempt(issue: Text, how: Prompt<Text>, box: Sandbox) -> { report: TestReport, box: Sandbox } {
+  node work = agent claude {
+    tools      [edit_file(&mut box), run_tests(&mut box)]
+    max_turns  20
+    task       how(issue)
+    on turn_limit => final_answer
+    on stuck      => final_answer
+  }
+  node report = run_tests(&mut box, "")
+  return { report: report, box: box }
+}

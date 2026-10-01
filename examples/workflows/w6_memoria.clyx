@@ -1,0 +1,55 @@
+// W6. Assistente com memória entre sessões
+// Força: estado persistente, execuções simultâneas do mesmo usuário (D15),
+//        resultado antecipado (D19), mensagens entre execuções (D21).
+
+model claude = llm("claude-sonnet-5-5", max_output: 1_500 tokens)
+
+type Fact = { key: Text, content: Text }
+
+prompt answer(history: Conversation, memories: List<Fact>, text: Text) -> Text {
+  """
+  Você conhece estes fatos sobre o usuário: {memories}
+  Responda à mensagem: {text}
+  """
+}
+
+prompt facts_from(history: Conversation) -> List<Fact> max 5 {
+  """
+  Extraia da conversa até 5 fatos novos e duradouros sobre o usuário.
+  {history}
+  """
+}
+
+// "entity": uma execução de vida longa, no máximo uma aberta por chave (D15).
+// Ela é a DONA da memória do usuário. Outras execuções não gravam direto:
+// mandam mensagens, que ela processa uma de cada vez.
+entity UserMemory key user: UserId {
+  state facts: Map<Text, Fact> = {}
+
+  // Consulta: resposta síncrona, não altera o estado.
+  on Recall(query: Text) -> List<Fact> {
+    return search(facts, query, limit: 10)
+  }
+
+  // Escrita: altera o estado; cada mensagem processada vai para o diário.
+  on Remember(new: List<Fact>) {
+    next facts = facts.merge(new, by: .key)
+  }
+}
+
+graph chat(user: UserId, history: Conversation, text: Text) -> Text {
+  limits { budget: 0.20 USD }
+
+  node memories = ask UserMemory(user).Recall(text)
+  node reply    = claude.continue(history, answer(history, memories, text))
+
+  // Resultado antecipado (D19): o usuário recebe a resposta já aqui.
+  // O resto do grafo continua em segundo plano.
+  respond reply.text
+
+  node learned = claude(facts_from(reply.conversation))
+  send UserMemory(user).Remember(learned)
+
+  // ⚠️ "respond" e "return" convivem: respond entrega cedo, e o grafo ainda termina.
+  // Precisa ficar claro que um grafo com respond não pode ter return com outro valor.
+}

@@ -1,0 +1,57 @@
+// W4. Debate entre agentes
+// Força: agentes que veem as respostas uns dos outros sem quebrar o snapshot (D1),
+//        rodadas com barreira (D18), uma conversation por agente (D3).
+
+model claude = llm("claude-sonnet-5-5", max_output: 1_500 tokens)
+
+type Role    = | Optimist | Skeptic | Engineer
+type Verdict = { position: Text, confidence: Nat max 100 }
+
+prompt opening(role: Role, question: Text) -> Text {
+  """
+  Você é o debatedor {role}. Dê sua posição inicial sobre:
+  {question}
+  """
+}
+
+prompt rebut(role: Role, others: List<Text>) -> Text {
+  """
+  Você é o debatedor {role}. Responda aos argumentos dos outros:
+  {others}
+  """
+}
+
+prompt judge(question: Text, finals: List<Text>) -> Verdict {
+  """
+  Avalie o debate sobre "{question}" e dê um veredito.
+  {finals}
+  """
+}
+
+graph debate(question: Text) -> Verdict {
+  limits { threads: 3, budget: 1 USD }
+
+  let roles = [Optimist, Skeptic, Engineer]
+
+  // Rodada 0: cada agente abre a própria conversa.
+  node start[r in roles] = claude.start(opening(r, question))   // -> (Conversation, Text)
+
+  // "rounds" carrega valores entre rodadas, como um loop (D5), e põe uma barreira no fim
+  // de cada rodada: só ali as respostas de uma rodada ficam visíveis para a próxima (D18).
+  node final = rounds 1..3
+    carry talk    = start.conversation       // uma Conversation por papel
+    carry answers = start.text
+  {
+    node turn[r in roles] = claude.continue(
+      talk[r],
+      rebut(r, answers.without(r))           // vê as respostas dos OUTROS da rodada anterior
+    )
+    next talk = turn.conversation, answers = turn.text
+  }
+
+  // ⚠️ "carry" com dois valores e "next" com atribuição ficou verboso.
+  // Talvez um tipo de registro para o estado da rodada seja mais claro.
+
+  node verdict = claude(judge(question, final.answers))
+  return verdict
+}

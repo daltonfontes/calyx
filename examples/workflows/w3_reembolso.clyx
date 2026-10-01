@@ -1,0 +1,90 @@
+// W3. Reembolso com aprovação humana
+// Força: espera longa, tempo como efeito (D14), mensagens para a execução (D21),
+//        efeitos externos em ordem, write once com política.
+
+model claude = llm("claude-sonnet-5-5", max_output: 1_000 tokens)
+
+tool get_order(id: OrderId) -> Order {
+  effect   read
+  retry_on [Timeout]
+}
+
+tool get_customer(id: CustomerId) -> Customer {
+  effect   read
+  retry_on [Timeout]
+}
+
+tool refund(order: OrderId, amount: Money) -> Unit {
+  effect          write
+  idempotency_key order                 // o gateway de pagamento aceita chave
+}
+
+tool email(to: Email, body: Text) -> Unit {
+  effect       write once
+  on_uncertain pause                    // se cair no meio do envio: pausa e pede decisão humana
+}
+
+type Intent   = | Refund { order: OrderId } | Other
+type Proposal = { amount: Money, reason: Text }
+
+// Mensagem que a execução pode receber de fora (D21). Fica no diário quando chega.
+message Approval =
+  | Approved
+  | Denied { reason: Text }
+
+prompt classify(text: Text) -> Intent {
+  """
+  Classifique a mensagem do cliente.
+
+  {text}
+  """
+}
+
+prompt decide(order: Order, customer: Customer, policy: Text) -> Proposal {
+  """
+  Proponha um valor de reembolso segundo a política.
+
+  Política: {policy}
+  Pedido: {order}
+  Cliente: {customer}
+  """
+}
+
+prompt reply(customer: Customer, amount: Money) -> Text {
+  """
+  Escreva um e-mail curto confirmando o reembolso de {amount} para {customer.name}.
+  """
+}
+
+graph handle_refund(text: Text, customer_id: CustomerId, policy: Text) -> Text {
+
+  match claude(classify(text)) {
+    Other => return "encaminhado para atendimento"
+
+    Refund { order } => {
+      // Sem dependência entre si: o runtime roda os dois em paralelo.
+      node o = get_order(order)
+      node c = get_customer(customer_id)
+
+      node p = claude(decide(o, c, policy))
+
+      // Espera durável: a execução sai da memória e volta quando a mensagem chegar
+      // ou o prazo vencer. O timer fica no diário.
+      node approval = if p.amount > 100 BRL {
+        receive Approval timeout 3 days else Denied { reason: "prazo de aprovação expirou" }
+      } else {
+        Approved
+      }
+
+      match approval {
+        Denied { reason } => return "recusado: {reason}"
+        Approved => {
+          node paid   = refund(order, p.amount)
+          node notice = email(c.email, claude(reply(c, p.amount)))
+          notice after paid
+          return "reembolsado"
+        }
+      }
+    }
+  }
+}

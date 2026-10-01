@@ -16,3 +16,4 @@ O projeto está na fase de **discovery**: ainda não há implementação. O obje
 | [ReAct como ciclo](docs/discovery/06-react-como-ciclo.md) | Como representar o laço de raciocínio e ação como o primeiro ciclo do grafo |
 | [Escalonamento e concorrência](docs/discovery/07-escalonamento-e-concorrencia.md) | Controle de concorrência entre agentes e escalonamento de grafos de tarefas |
 | [Bend](docs/discovery/08-bend.md) | Runtime paralelo e tipos afins do Bend, e o que se transfere para a Calyx |
+| [Sintaxe](docs/discovery/09-sintaxe.md) | Proposta de sintaxe testada com 9 programas em `examples/` |

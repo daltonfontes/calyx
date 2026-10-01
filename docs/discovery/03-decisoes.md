@@ -30,6 +30,8 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D24 | Escalonamento | Lista com prioridade pelo caminho crítico; durações estimadas pelo compilador e refinadas pelo histórico de traces |
 | D25 | Invariantes entre ramos | Recursos: resolvido por afinidade (D26); valores: validação declarada na junção, violação produz valor `conflito` |
 | D26 | Recursos afins | Sandbox, orçamento e capacidades `write once` têm um dono por vez; dividir entre ramos é explícito e verificado (ver [Bend](08-bend.md)) |
+| D27 | Camadas da linguagem | Camada de grafo (`node`, efeitos, diário) + camada pura pequena (`let`, `fn`), recalculável; ver [sintaxe](09-sintaxe.md) |
+| D28 | Chamada ao modelo | Forma única `modelo(prompt, continue: conversa?)`, saída tipada pelo prompt |
 
 As decisões D11 a D19 surgiram no [teste no papel](04-teste-no-papel.md), onde estão descritas com os workflows que as motivaram. As propostas de D11, D12, D14 e D15 foram revisadas, e D20 a D23 surgiram, na leitura do [Temporal](05-temporal.md).
 

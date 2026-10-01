@@ -1,0 +1,71 @@
+// W5. Extração em lote (1000 documentos)
+// Força: escala, limites, falha parcial como valor (D11), retentativa derivada do efeito.
+
+model claude = llm("claude-haiku-4-5", max_output: 800 tokens)
+
+tool load_documents(folder: Text) -> List<Document> {
+  effect read
+}
+
+tool write_sheet(path: Text, rows: List<Contract>) -> Unit {
+  effect          write
+  idempotency_key path
+}
+
+type Contract = { parties: List<Text>, value: Money, signed_at: Date }
+
+prompt extract(doc: Document) -> Contract {
+  """
+  Extraia partes, valor e data de assinatura do contrato abaixo.
+
+  {doc.text}
+  """
+}
+
+prompt correct(doc: Document, attempt: Contract, problems: List<Text>) -> Contract {
+  """
+  A extração abaixo tem problemas: {problems}
+  Corrija usando o documento original.
+
+  Extração: {attempt}
+  Documento: {doc.text}
+  """
+}
+
+// Validação pura: sem efeito, o compilador sabe que pode recalcular à vontade.
+fn check(c: Contract) -> List<Text> {
+  [
+    if c.parties.length < 2 { "menos de duas partes" },
+    if c.value <= 0 BRL     { "valor inválido" },
+  ].compact()
+}
+
+graph batch(folder: Text) -> Summary {
+  // Concorrência controlada só pelos limites. Retentativa de erros temporários
+  // (limite de requisições, erro 500) é automática porque os nós são llm/read.
+  limits { threads: 20, rate: 50/s, budget: 30 USD }
+
+  node docs = load_documents(folder)
+
+  // "try": o resultado de cada item é um valor Ok(...) ou Failed(...) (D11).
+  // A falha de um documento não derruba os outros 999.
+  node contracts[d in docs] = try {
+    loop c = claude(extract(d)), max 2 {
+      match check(c) {
+        []       => done c
+        problems => next claude(correct(d, c, problems))
+      }
+    } else fail "continua inválido após 2 correções"
+  }
+
+  // O compilador obriga a tratar as duas variantes antes de usar a lista.
+  node good   = contracts.ok()
+  node failed = contracts.failed()
+
+  node sheet = write_sheet("{folder}/contratos.xlsx", good)
+
+  return { extracted: good.length, failed: failed }
+}
+
+// Se o orçamento acabar no meio, a execução pausa e pode ser retomada com mais orçamento;
+// os documentos já extraídos vêm do diário.
