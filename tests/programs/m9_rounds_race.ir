@@ -1,0 +1,13 @@
+graph sources(q: Text) -> Text [read]
+  %0 found: Text = tool search [read]
+  %1 return: Text = model m(solve) [llm] <- %0
+  return %1
+
+graph g(q: Text) -> Text [read]
+  %0 roles: List[Text] max 2 = pure [pure]
+  %1 final: List[Text] = rounds [llm] <- %0
+  %2 counted: Int = loop [pure]
+  %3 best: Text = race [read]
+  %4 any: Text = race [read]
+  %5 return: Text = pure [pure] <- %3 %4 %1 %2
+  return %5

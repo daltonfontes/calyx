@@ -1,0 +1,37 @@
+# `rounds` with steps and `for each`, and `race` (M9).
+model m = "m"
+
+tool search(q: Text) -> Text:
+    effect read
+
+prompt say(role: Text, others: List[Text]) -> Text:
+    """{role}: {others}"""
+
+prompt solve(how: Text, q: Text) -> Text:
+    """{how} {q}"""
+
+graph sources(q: Text) -> Text:
+    found = search(q)
+    return m(solve(found, q))
+
+graph g(q: Text) -> Text:
+    roles = ["a", "b"]
+    final = rounds 3, carry answers = roles:
+        turn = for each r in roles:
+            m(say(r, answers))
+        next turn
+    counted = loop n = 0, max 5:
+        step = n + 1
+        if step >= 3:
+            done step
+        else:
+            next step
+    best = race first where len(it) > 0:
+        quick: m(solve("rápido", q))
+        careful: sources(q)
+        on none: "nada"
+    any = race first:
+        one: search(q)
+        two: search("{q}?")
+        on none: fail "nenhuma busca respondeu"
+    return "{best} {any} {final} {counted}"

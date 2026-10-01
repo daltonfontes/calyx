@@ -48,8 +48,6 @@ const FUTURE_DECLS: &[(&str, &str)] = &[("router", "a later milestone")];
 const FUTURE_STMTS: &[(&str, &str)] = &[
     ("state", "a later milestone"),
     ("respond", "a later milestone"),
-    ("rounds", "a later milestone"),
-    ("race", "a later milestone"),
     ("run", "a later milestone"),
 ];
 
@@ -1016,13 +1014,27 @@ impl Parser<'_> {
 
     /// `name = for each x in list: expr` (inline or indented body).
     fn for_each(&mut self, name: Ident) -> PResult<Stmt> {
-        self.advance(); // for
+        let e = self.each_expr()?;
+        let ExprKind::Each { var, over, body } = e.kind else {
+            unreachable!("each_expr gives `Each`")
+        };
+        Ok(Stmt::Node {
+            name,
+            fan_out: Some((var, *over)),
+            value: *body,
+        })
+    }
+
+    /// `for each x in list: expr`, the body inline or indented on the next
+    /// line. Starts at `for`.
+    fn each_expr(&mut self) -> PResult<Expr> {
+        let start = self.advance().span; // for
         self.advance(); // each
         let var = self.ident("the name of each item")?;
         self.expect_word("in")?;
         let over = self.expr()?;
         self.expect(TokenKind::Colon, "`:` and what to do with each item")?;
-        let value = if self.eat(TokenKind::Newline) {
+        let body = if self.eat(TokenKind::Newline) {
             self.expect(TokenKind::Indent, "what to do with each item, indented")?;
             let value = self.expr()?;
             self.eat(TokenKind::Newline);
@@ -1034,10 +1046,51 @@ impl Parser<'_> {
         } else {
             self.expr()?
         };
-        Ok(Stmt::Node {
-            name,
-            fan_out: Some((var, over)),
-            value,
+        Ok(Expr {
+            span: self.span_from(start),
+            kind: ExprKind::Each {
+                var,
+                over: Box::new(over),
+                body: Box::new(body),
+            },
+        })
+    }
+
+    /// Is `for each` next?
+    fn at_for_each(&self) -> bool {
+        self.is_word("for")
+            && self.nth_kind(1) == TokenKind::Ident
+            && self.text_of(self.tokens[self.pos + 1]) == "each"
+    }
+
+    /// The body of a loop or of rounds, at the first token of its block:
+    /// `name = value` steps (`for each` included), then what the turn gives.
+    fn turn_body(&mut self) -> PResult<Expr> {
+        let start = self.tok().span;
+        let mut steps = Vec::new();
+        while self.kind() == TokenKind::Ident && self.nth_kind(1) == TokenKind::Eq {
+            let name = self.ident("a name")?;
+            self.advance(); // `=`
+            let value = if self.at_for_each() {
+                self.each_expr()?
+            } else {
+                self.expr()?
+            };
+            if self.tokens[self.pos.saturating_sub(1)].kind != TokenKind::Dedent {
+                self.end_of_line()?;
+            }
+            steps.push((name, value));
+        }
+        let tail = self.expr()?;
+        if steps.is_empty() {
+            return Ok(tail);
+        }
+        Ok(Expr {
+            span: self.span_from(start),
+            kind: ExprKind::Block {
+                steps,
+                tail: Box::new(tail),
+            },
         })
     }
 
@@ -1225,6 +1278,12 @@ impl Parser<'_> {
         }
         if self.keyword("loop") {
             return self.loop_expr();
+        }
+        if self.keyword("rounds") {
+            return self.rounds_expr();
+        }
+        if self.keyword("race") {
+            return self.race_expr();
         }
         if self.keyword("agent") {
             return self.agent_expr();
@@ -1434,7 +1493,7 @@ impl Parser<'_> {
         let t = self.expect(TokenKind::Int, "the maximum number of turns")?;
         let max = self.int_value(t);
         self.block_start("the body of the loop")?;
-        let body = self.expr()?;
+        let body = self.turn_body()?;
         if self.tokens[self.pos.saturating_sub(1)].kind != TokenKind::Dedent {
             self.end_of_line()?;
         }
@@ -1449,7 +1508,7 @@ impl Parser<'_> {
         if self.kind() != TokenKind::Dedent {
             return Err(self.error_here(
                 "E0108",
-                "a loop's body is one expression, then `on limit: ...`",
+                "a loop's body is its steps and what each turn gives, then `on limit: ...`",
                 "the end of the loop",
             ));
         }
@@ -1462,7 +1521,117 @@ impl Parser<'_> {
                 max,
                 body: Box::new(body),
                 on_limit,
+                rounds: false,
             },
+        })
+    }
+
+    /// `rounds N, carry var = init:` then a body like a loop's (decision
+    /// D18). After N rounds it gives the value carried.
+    fn rounds_expr(&mut self) -> PResult<Expr> {
+        let start = self.advance().span; // rounds
+        let t = self.expect(TokenKind::Int, "the number of rounds")?;
+        let max = self.int_value(t);
+        self.expect(TokenKind::Comma, "`, carry name = first value`")?;
+        self.expect_word("carry")?;
+        let var = self.ident("the name of the value the rounds carry")?;
+        self.expect(TokenKind::Eq, "`=` and the first value")?;
+        let init = self.expr()?;
+        self.block_start("the body of a round")?;
+        let body = self.turn_body()?;
+        if self.tokens[self.pos.saturating_sub(1)].kind != TokenKind::Dedent {
+            self.end_of_line()?;
+        }
+        if self.kind() != TokenKind::Dedent {
+            return Err(self.error_here(
+                "E0108",
+                "a round's body is its steps, then `next value`",
+                "the end of the rounds",
+            ));
+        }
+        self.advance();
+        Ok(Expr {
+            span: self.span_from(start),
+            kind: ExprKind::Loop {
+                var,
+                init: Box::new(init),
+                max,
+                body: Box::new(body),
+                on_limit: OnLimit::Last,
+                rounds: true,
+            },
+        })
+    }
+
+    /// `race first [where cond]:` then `name: value` lines and `on none:`
+    /// (decision D12).
+    fn race_expr(&mut self) -> PResult<Expr> {
+        let start = self.advance().span; // race
+        self.expect_word("first")?;
+        let cond = if self.is_word("where") {
+            self.advance();
+            Some(self.expr()?)
+        } else {
+            None
+        };
+        self.block_start("the branches of the race")?;
+        let mut branches = Vec::new();
+        let mut on_none = None;
+        while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
+            if self.is_word("on") && self.nth_kind(1) == TokenKind::Ident {
+                self.advance();
+                let what = self.ident("`none`")?;
+                if what.name != "none" {
+                    return Err(self.error_here_at(
+                        what.span,
+                        "E0113",
+                        "a race handles only `on none`",
+                        "`on none: fail \"reason\"` or `on none: value`",
+                        &what.name,
+                    ));
+                }
+                self.expect(TokenKind::Colon, "`:` and what the race gives")?;
+                on_none = Some(
+                    if self.is_word("fail") && self.nth_kind(1) != TokenKind::LParen {
+                        self.advance();
+                        let t = self.tok();
+                        if !matches!(t.kind, TokenKind::Str | TokenKind::LongStr) {
+                            return Err(self.error_here(
+                                "E0100",
+                                "syntax error",
+                                "the reason, in quotes",
+                            ));
+                        }
+                        self.advance();
+                        OnNone::Fail(self.str_lit(t))
+                    } else {
+                        OnNone::Value(self.expr()?)
+                    },
+                );
+                self.end_of_line()?;
+                continue;
+            }
+            if !(self.kind() == TokenKind::Ident && self.nth_kind(1) == TokenKind::Colon) {
+                return Err(self.error_here(
+                    "E0113",
+                    "expected a branch of the race",
+                    "`name: value` or `on none: ...`",
+                ));
+            }
+            let name = self.ident("the branch's name")?;
+            self.advance(); // `:`
+            let value = self.expr()?;
+            self.end_of_line()?;
+            branches.push((name, value));
+        }
+        self.eat(TokenKind::Dedent);
+        Ok(Expr {
+            span: self.span_from(start),
+            kind: ExprKind::Race(Box::new(RaceExpr {
+                cond,
+                branches,
+                on_none,
+            })),
         })
     }
 
@@ -1961,6 +2130,48 @@ graph research(topic: Text) -> List[Text]:
         };
         assert_eq!(op, "+");
         assert!(matches!(&right.kind, ExprKind::Binary { op, .. } if op == "*"));
+    }
+
+    #[test]
+    fn rounds_with_steps_and_for_each() {
+        let e = graph_value(
+            "graph g(q: Text) -> Text:\n    final = rounds 2, carry answers = start:\n        turn = for each r in roles:\n            m(say(r, answers))\n        count = len(turn)\n        next turn\n    return final\n",
+        );
+        let ExprKind::Loop {
+            var,
+            max,
+            body,
+            on_limit,
+            rounds,
+            ..
+        } = &e.kind
+        else {
+            panic!("{e:?}")
+        };
+        assert!(*rounds);
+        assert_eq!(var.name, "answers");
+        assert_eq!(*max, 2);
+        assert_eq!(*on_limit, OnLimit::Last);
+        let ExprKind::Block { steps, tail } = &body.kind else {
+            panic!("{body:?}")
+        };
+        assert_eq!(steps.len(), 2);
+        assert!(matches!(steps[0].1.kind, ExprKind::Each { .. }));
+        assert!(matches!(tail.kind, ExprKind::Next(_)));
+    }
+
+    #[test]
+    fn race_with_where_branches_and_on_none() {
+        let e = graph_value(
+            "graph g(q: Text) -> Text:\n    best = race first where it.ok:\n        quick: m(p(q))\n        careful: deep(q)\n        on none: fail \"nada\"\n    return best\n",
+        );
+        let ExprKind::Race(r) = &e.kind else {
+            panic!("{e:?}")
+        };
+        assert!(r.cond.is_some());
+        let names: Vec<&str> = r.branches.iter().map(|(n, _)| n.name.as_str()).collect();
+        assert_eq!(names, ["quick", "careful"]);
+        assert!(matches!(r.on_none, Some(OnNone::Fail(_))));
     }
 
     #[test]

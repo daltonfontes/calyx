@@ -1,0 +1,19 @@
+# Bug: A estratégia rápida já venceu, mas a lenta continua chamando o modelo, passo após passo, e a conta sobe.
+# Pego por: runtime
+model m = "m"
+
+prompt step(q: Text) -> Text:
+    """{q}"""
+
+graph slow(q: Text) -> Text:
+    a = m(step(q))
+    b = m(step(a))
+    c = m(step(b))
+    return c
+
+graph g(q: Text) -> Text:
+    best = race first:
+        quick: m(step(q))
+        careful: slow(q)
+        on none: fail "nenhum"
+    return best

@@ -1,7 +1,7 @@
-error[E0101]: `race` is not supported yet (planned for a later milestone)
-- observed : `race`
-Location: m1_future.clyx:5:9
+error[E0101]: `respond` is not supported yet (planned for a later milestone)
+- observed : `respond`
+Location: m1_future.clyx:5:5
 
-error[E0101]: `rounds` is not supported yet (planned for a later milestone)
-- observed : `rounds`
-Location: m1_future.clyx:7:9
+error[E0101]: `state` is not supported yet (planned for a later milestone)
+- observed : `state`
+Location: m1_future.clyx:6:5

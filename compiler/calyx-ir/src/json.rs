@@ -491,6 +491,7 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
             max,
             body,
             on_limit,
+            rounds,
         } => {
             let mut inner = String::new();
             inner.push_str(",\"init\":");
@@ -505,6 +506,54 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
             o.push_str(&inner);
             o.push_str(",\"on_limit\":");
             opt_string(o, on_limit.as_deref());
+            if *rounds {
+                o.push_str(",\"rounds\":true");
+            }
+            o.push('}');
+        }
+        // Each item's calls are keyed by the item: `scope#id[j]#call`.
+        Expr::Each { slot, over, body } => {
+            let mut inner = String::new();
+            inner.push_str(",\"over\":");
+            expr(&mut inner, over, ids);
+            inner.push_str(",\"body\":");
+            expr(&mut inner, body, ids);
+            let id = *ids;
+            *ids += 1;
+            o.push_str(&format!("{{\"k\":\"each\",\"id\":{id},\"slot\":{slot}"));
+            o.push_str(&inner);
+            o.push('}');
+        }
+        // A branch's calls are keyed by it: `scope#id.name#call`; the
+        // winner goes to the journal as `scope#id`.
+        Expr::Race {
+            branches,
+            slot,
+            cond,
+            on_none,
+            on_none_fail,
+        } => {
+            let mut inner = String::new();
+            inner.push_str(",\"names\":");
+            list(&mut inner, branches, |o, (n, _)| string(o, n));
+            inner.push_str(",\"branches\":");
+            list(&mut inner, branches, |o, (_, b)| expr(o, b, ids));
+            inner.push_str(",\"cond\":");
+            match cond {
+                Some(c) => expr(&mut inner, c, ids),
+                None => inner.push_str("null"),
+            }
+            inner.push_str(",\"on_none\":");
+            match on_none {
+                Some(v) => expr(&mut inner, v, ids),
+                None => inner.push_str("null"),
+            }
+            inner.push_str(",\"on_none_fail\":");
+            opt_string(&mut inner, on_none_fail.as_deref());
+            let id = *ids;
+            *ids += 1;
+            o.push_str(&format!("{{\"k\":\"race\",\"id\":{id},\"slot\":{slot}"));
+            o.push_str(&inner);
             o.push('}');
         }
         Expr::Done(v) | Expr::Next(v) | Expr::Try(v) => {

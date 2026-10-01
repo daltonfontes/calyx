@@ -1,0 +1,11 @@
+# Bug: Duas estratégias de correção editam o mesmo repositório ao mesmo tempo; as edições se misturam.
+# Pego por: E0645
+tool edit_file(box: edits Sandbox, path: Text, new: Text) -> Text:
+    effect sandbox
+
+graph g(repo: Sandbox) -> Text:
+    fixed = race first:
+        minimal: edit_file(edits repo, "calc.py", "a")
+        rewrite: edit_file(edits repo, "calc.py", "b")
+        on none: fail "nenhuma"
+    return fixed

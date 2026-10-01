@@ -14,8 +14,7 @@ graph g(q: Text) -> Text:
     roles = [Optimist, Skeptic]
     intros = for each r in roles: claude(opening(r))
     found = for each x in intros:
-        race first where it == x:
-            one: claude(ask_it(x))
+        respond claude(ask_it(x))
     a, b = split(q)
     c = claude(ask_it(found))
     return c

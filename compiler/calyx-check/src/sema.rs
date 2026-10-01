@@ -1840,6 +1840,37 @@ impl<'p> Cx<'_, 'p> {
                 v.extend(self.borrows_in(body, sandboxes));
                 return v;
             }
+            // Steps run in order, as written.
+            ExprKind::Block { steps, tail } => {
+                let mut v = Vec::new();
+                for x in steps
+                    .iter()
+                    .map(|(_, s)| s)
+                    .chain(std::iter::once(tail.as_ref()))
+                {
+                    for b in self.borrows_in(x, sandboxes) {
+                        if !v.contains(&b) {
+                            v.push(b);
+                        }
+                    }
+                }
+                return v;
+            }
+            // Every item at once: an edit would clash with itself.
+            ExprKind::Each { over, body, .. } => {
+                let o = self.borrows_in(over, sandboxes);
+                let b = self.borrows_in(body, sandboxes);
+                return self.parallel(vec![o, b.clone(), b], e.span);
+            }
+            // Every branch at once.
+            ExprKind::Race(r) => {
+                let groups = r
+                    .branches
+                    .iter()
+                    .map(|(_, v)| self.borrows_in(v, sandboxes))
+                    .collect();
+                return self.parallel(groups, e.span);
+            }
             // The runtime runs an agent's calls on one sandbox one at a time.
             ExprKind::Agent(a) => {
                 let mut v = Vec::new();
@@ -2102,6 +2133,43 @@ impl<'p> Cx<'_, 'p> {
             ExprKind::Guarded { call, requires } => self.guarded(call, requires, gc),
             ExprKind::Message(m) => self.message(m, gc),
             ExprKind::Bool(_) => Typed::pure(Ty::Bool),
+            ExprKind::Block { steps, tail } => {
+                let (inner, effect) = self.steps(steps, gc);
+                let t = self.expr(tail, &inner);
+                Typed {
+                    ty: t.ty,
+                    kind: NodeKind::Other("steps".into()),
+                    effect: effect.join(t.effect),
+                }
+            }
+            ExprKind::Each { var, over, body } => {
+                let o = self.expr(over, gc);
+                let (elem, max) = match o.ty {
+                    Ty::List(t, m) => (*t, m),
+                    Ty::Error => (Ty::Error, None),
+                    other => {
+                        self.push(
+                            err(
+                                "E0609",
+                                "`for each` over a value that is not a list",
+                                over.span,
+                            )
+                            .expected("a list")
+                            .observed(format!("`{other}`")),
+                        );
+                        (Ty::Error, None)
+                    }
+                };
+                let mut inner = gc.clone();
+                self.bind(&mut inner, var, elem);
+                let b = self.expr(body, &inner);
+                Typed {
+                    ty: Ty::List(Box::new(b.ty), max),
+                    kind: NodeKind::Other("for each".into()),
+                    effect: o.effect.join(b.effect),
+                }
+            }
+            ExprKind::Race(r) => self.race(r, e.span, gc),
             ExprKind::Receive {
                 message,
                 timeout,
@@ -2297,14 +2365,16 @@ impl<'p> Cx<'_, 'p> {
                 init,
                 body,
                 on_limit,
+                rounds,
                 ..
             } => {
                 let i = self.expr(init, gc);
                 // `loop i = 0`: the value is an `Int`, not just the literal.
-                let var_ty = if i.ty == Ty::IntLit {
-                    Ty::Int
-                } else {
-                    i.ty.clone()
+                // A list carried from turn to turn may change size.
+                let var_ty = match &i.ty {
+                    Ty::IntLit => Ty::Int,
+                    Ty::List(t, _) => Ty::List(t.clone(), None),
+                    t => t.clone(),
                 };
                 let mut inner = gc.clone();
                 self.bind(&mut inner, var, var_ty.clone());
@@ -2315,6 +2385,19 @@ impl<'p> Cx<'_, 'p> {
                 let effect = self.tail(body, &inner, &mut lp);
                 let ty = lp.done_ty.clone().unwrap_or_else(|| var_ty.clone());
                 match on_limit {
+                    OnLimit::Last if *rounds => {
+                        if !assignable(&lp.var_ty, &ty) {
+                            self.push(
+                                err(
+                                    "E0685",
+                                    "rounds end with the value they carry: `done` gives a value of its type",
+                                    e.span,
+                                )
+                                .expected(format!("`{}`", lp.var_ty))
+                                .observed(format!("`{ty}`")),
+                            );
+                        }
+                    }
                     OnLimit::Last => {
                         if !assignable(&lp.var_ty, &ty) {
                             self.push(
@@ -2336,7 +2419,7 @@ impl<'p> Cx<'_, 'p> {
                 }
                 Typed {
                     ty,
-                    kind: NodeKind::Other("loop".into()),
+                    kind: NodeKind::Other(if *rounds { "rounds" } else { "loop" }.into()),
                     effect: i.effect.join(effect),
                 }
             }
@@ -2576,8 +2659,108 @@ impl<'p> Cx<'_, 'p> {
     }
 
     /// A loop body: `done`/`next` at its end, possibly inside `match`/`if`.
+    /// `name = value` steps of a loop's or a round's body: each sees the
+    /// ones before it.
+    fn steps(&mut self, steps: &[(Ident, Expr)], gc: &GraphCx) -> (GraphCx, Effect) {
+        let mut inner = gc.clone();
+        let mut effect = Effect::Pure;
+        for (name, v) in steps {
+            let t = self.expr(v, &inner);
+            effect = effect.join(t.effect);
+            let ty = if t.ty == Ty::IntLit { Ty::Int } else { t.ty };
+            self.bind(&mut inner, name, ty);
+        }
+        (inner, effect)
+    }
+
+    /// `race first where cond:` (decision D12): branches of one type, run at
+    /// once; the first whose value passes `cond` wins, the others are
+    /// cancelled. `on none` says what it gives when none does.
+    fn race(&mut self, r: &RaceExpr, span: Span, gc: &GraphCx) -> Typed {
+        if r.branches.len() < 2 {
+            self.push(
+                err("E0680", "a race needs at least two branches", span)
+                    .expected("two or more `name: value` lines"),
+            );
+        }
+        let mut seen = HashSet::new();
+        let mut ty: Option<Ty> = None;
+        let mut effect = Effect::Pure;
+        for (name, v) in &r.branches {
+            if !seen.insert(name.name.as_str()) {
+                self.push(
+                    err(
+                        "E0681",
+                        "two branches of a race with the same name",
+                        name.span,
+                    )
+                    .observed(format!("`{}`", name.name)),
+                );
+            }
+            let t = self.expr(v, gc);
+            effect = effect.join(t.effect);
+            if t.effect >= Effect::Write {
+                self.push(
+                    warn("W0604", "a branch of a race writes outside the run", v.span)
+                        .expected("reads, models and sandboxes in the branches; the write after the race, with the winner")
+                        .observed(format!("`{}` can lose and still have written: a write in progress finishes when the race is decided", name.name)),
+                );
+            }
+            ty = Some(match ty {
+                None => t.ty,
+                Some(first) => self.same_type(&first, &t.ty, v.span),
+            });
+        }
+        let ty = match ty {
+            Some(Ty::IntLit) => Ty::Int,
+            Some(t) => t,
+            None => Ty::Error,
+        };
+        if let Some(c) = &r.cond {
+            let mut inner = gc.clone();
+            inner.scope.insert("it".into(), ty.clone());
+            let t = self.expr(c, &inner);
+            self.expect_bool(&t.ty, c.span);
+            if let Some(s) = self.impure(c) {
+                self.push(
+                    err("E0682", "a race's condition is pure", s)
+                        .expected(
+                            "a condition on `it`, the branch's value, made of operators and `def`s",
+                        )
+                        .observed("a call with effects in `where`"),
+                );
+            }
+        }
+        match &r.on_none {
+            None => self.push(err("E0683", "a race needs `on none`", span).expected(
+                "`on none: fail \"reason\"` or `on none: value`, for when no branch wins",
+            )),
+            Some(OnNone::Fail(_)) => {}
+            Some(OnNone::Value(v)) => {
+                let t = self.expr(v, gc);
+                effect = effect.join(t.effect);
+                if !assignable(&t.ty, &ty) {
+                    self.push(
+                        err("E0684", "`on none` gives a value of another type", v.span)
+                            .expected(format!("`{ty}`, like the branches"))
+                            .observed(format!("`{}`", t.ty)),
+                    );
+                }
+            }
+        }
+        Typed {
+            ty,
+            kind: NodeKind::Other("race".into()),
+            effect,
+        }
+    }
+
     fn tail(&mut self, e: &Expr, gc: &GraphCx, lp: &mut LoopCx) -> Effect {
         match &e.kind {
+            ExprKind::Block { steps, tail } => {
+                let (inner, effect) = self.steps(steps, gc);
+                effect.join(self.tail(tail, &inner, lp))
+            }
             ExprKind::Done(v) => {
                 let t = self.expr(v, gc);
                 lp.done_ty = Some(match lp.done_ty.take() {
@@ -3229,6 +3412,9 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
                 on_timeout: Some(v),
                 ..
             } => walk(v, f),
+            ExprKind::Block { .. } | ExprKind::Each { .. } | ExprKind::Race(_) => {
+                m9_kids(e).into_iter().for_each(|k| walk(k, f))
+            }
             _ => {}
         }
     }
@@ -3300,10 +3486,33 @@ fn visit(e: &Expr, f: &mut dyn FnMut(&Expr)) {
             .flatten()
             .collect(),
         ExprKind::Receive { on_timeout, .. } => on_timeout.as_deref().into_iter().collect(),
+        ExprKind::Block { .. } | ExprKind::Each { .. } | ExprKind::Race(_) => m9_kids(e),
         _ => Vec::new(),
     };
     for k in kids {
         visit(k, f);
+    }
+}
+
+/// The expressions inside a block of steps, a `for each` or a `race`.
+fn m9_kids(e: &Expr) -> Vec<&Expr> {
+    match &e.kind {
+        ExprKind::Block { steps, tail } => steps
+            .iter()
+            .map(|(_, v)| v)
+            .chain(std::iter::once(tail.as_ref()))
+            .collect(),
+        ExprKind::Each { over, body, .. } => vec![over, body],
+        ExprKind::Race(r) => r
+            .cond
+            .iter()
+            .chain(r.branches.iter().map(|(_, v)| v))
+            .chain(match &r.on_none {
+                Some(OnNone::Value(v)) => Some(v),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -3472,6 +3681,40 @@ fn collect_refs(e: &Expr, bound: Option<&str>, index: &HashMap<&str, usize>, out
         ExprKind::Receive { on_timeout, .. } => {
             if let Some(v) = on_timeout {
                 collect_refs(v, bound, index, out);
+            }
+        }
+        // Names bound inside (steps, items, `it`) hide steps of the graph.
+        ExprKind::Block { steps, tail } => {
+            let mut inner = Vec::new();
+            for (_, v) in steps {
+                collect_refs(v, bound, index, &mut inner);
+            }
+            collect_refs(tail, bound, index, &mut inner);
+            let hidden: Vec<usize> = steps
+                .iter()
+                .filter_map(|(n, _)| index.get(n.name.as_str()).copied())
+                .collect();
+            out.extend(inner.into_iter().filter(|i| !hidden.contains(i)));
+        }
+        ExprKind::Each { var, over, body } => {
+            collect_refs(over, bound, index, out);
+            let mut inner = Vec::new();
+            collect_refs(body, bound, index, &mut inner);
+            let hidden = index.get(var.name.as_str()).copied();
+            out.extend(inner.into_iter().filter(|i| Some(*i) != hidden));
+        }
+        ExprKind::Race(r) => {
+            for (_, v) in &r.branches {
+                collect_refs(v, bound, index, out);
+            }
+            if let Some(OnNone::Value(v)) = &r.on_none {
+                collect_refs(v, bound, index, out);
+            }
+            if let Some(c) = &r.cond {
+                let mut inner = Vec::new();
+                collect_refs(c, bound, index, &mut inner);
+                let hidden = index.get("it").copied();
+                out.extend(inner.into_iter().filter(|i| Some(*i) != hidden));
             }
         }
         ExprKind::Bool(_) => {}

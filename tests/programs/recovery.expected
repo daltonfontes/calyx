@@ -1,16 +1,16 @@
-error[E0101]: `race` is not supported yet (planned for a later milestone)
-- observed : `race`
+error[E0101]: `respond` is not supported yet (planned for a later milestone)
+- observed : `respond`
 Location: recovery.clyx:17:9
 
 error[E0101]: `a, b = ... (destructuring)` is not supported yet (planned for a later milestone)
 - observed : `a, b = ... (destructuring)`
-Location: recovery.clyx:19:5
+Location: recovery.clyx:18:5
 
 error[E0101]: `a property block on a type` is not supported yet (planned for a later milestone)
 - observed : `a property block on a type`
-Location: recovery.clyx:23:24
+Location: recovery.clyx:22:24
 
 error[E0602]: unknown name
 - expected : a parameter, node or value in scope
 - observed : `unknown_name`
-Location: recovery.clyx:27:12
+Location: recovery.clyx:26:12

@@ -1,0 +1,13 @@
+# Bug: A execução cai depois de a corrida ser decidida; na retomada, outro ramo termina primeiro e a execução segue com um vencedor diferente do que já usou.
+# Pego por: runtime
+model m = "m"
+
+prompt solve(how: Text, q: Text) -> Text:
+    """{how}: {q}"""
+
+graph g(q: Text) -> Text:
+    best = race first:
+        quick: m(solve("rápido", q))
+        careful: m(solve("com cuidado", q))
+        on none: fail "nenhum"
+    return best

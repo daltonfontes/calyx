@@ -32,6 +32,8 @@ jobs:
           ./target/release/calyx run examples/fix.clyx --fake-models --repo examples/sample_repo --issue "average devolve 6"
           ./target/release/calyx run examples/memory.clyx --fake-models --user ana --text "Moro em Recife"
           ./target/release/calyx run examples/memory.clyx --fake-models --user ana --text "Onde eu moro?"
+          ./target/release/calyx run examples/debate.clyx --fake-models --question "IA vai substituir programadores?"
+          ./target/release/calyx run examples/race.clyx --fake-models --question "Qual a capital da Austrália?"
 
       - name: Wait for a message, deliver it, continue (receive)
         run: |
