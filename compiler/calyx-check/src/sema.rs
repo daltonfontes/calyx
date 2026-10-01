@@ -2430,6 +2430,7 @@ impl<'p> Cx<'_, 'p> {
                     ),
                     OnLimit::Fail(_) | OnLimit::Missing => {}
                 }
+                self.same_write_every_turn(var, body, *rounds);
                 Typed {
                     ty,
                     kind: NodeKind::Other(if *rounds { "rounds" } else { "loop" }.into()),
@@ -2462,6 +2463,53 @@ impl<'p> Cx<'_, 'p> {
                 }
             }
             ExprKind::Agent(a) => self.agent(a, gc),
+        }
+    }
+
+    /// `W0605`: a `write once` call in a loop body whose arguments use
+    /// nothing that changes from turn to turn. Each turn is a new place in
+    /// the run (its own key in the journal), so each turn writes again: a
+    /// payment inside a retry loop is made once per turn.
+    fn same_write_every_turn(&mut self, var: &Ident, body: &Expr, rounds: bool) {
+        let mut turn_names: HashSet<String> = HashSet::from([var.name.clone()]);
+        visit(body, &mut |e| match &e.kind {
+            ExprKind::Block { steps, .. } => {
+                turn_names.extend(steps.iter().map(|(n, _)| n.name.clone()))
+            }
+            ExprKind::Each { var, .. } | ExprKind::Comprehension { var, .. } => {
+                turn_names.insert(var.name.clone());
+            }
+            ExprKind::Match { cases, .. } => turn_names.extend(
+                cases
+                    .iter()
+                    .flat_map(|c| c.binds.iter().map(|b| b.name.clone())),
+            ),
+            _ => {}
+        });
+        let mut found = Vec::new();
+        visit(body, &mut |e| {
+            let ExprKind::Call { callee, args } = &e.kind else {
+                return;
+            };
+            let ExprKind::Ident(name) = &callee.kind else {
+                return;
+            };
+            let Some(sig) = self.tools.get(name.as_str()) else {
+                return;
+            };
+            if sig.effect == Effect::WriteOnce
+                && !args.iter().any(|a| mentions_any(&a.value, &turn_names))
+            {
+                found.push((name.clone(), e.span));
+            }
+        });
+        let what = if rounds { "round" } else { "turn" };
+        for (name, span) in found {
+            self.push(
+                warn("W0605", format!("the same `write once` call on every {what}"), span)
+                    .expected(format!("the write after the {}, with its result; or arguments that change from {what} to {what}", if rounds { "rounds" } else { "loop" }))
+                    .observed(format!("`{name}` takes nothing that changes between {what}s, and each {what} is a new call: it writes once per {what}")),
+            );
         }
     }
 
@@ -3848,6 +3896,22 @@ fn arithmetic(op: &str, a: &Ty, b: &Ty) -> Option<Ty> {
         }
         _ => None,
     }
+}
+
+/// Whether `e` uses one of `names`, directly or inside a text's `{...}`.
+fn mentions_any(e: &Expr, names: &HashSet<String>) -> bool {
+    let mut hit = false;
+    visit(e, &mut |x| match &x.kind {
+        ExprKind::Ident(n) => hit |= names.contains(n),
+        ExprKind::Str(lit) => {
+            for (path, _, _) in interpolations(lit) {
+                let root = path.split(['.', '[', ' ']).next().unwrap_or("").trim();
+                hit |= names.contains(root);
+            }
+        }
+        _ => {}
+    });
+    hit
 }
 
 /// Finds `{...}` in a text literal: `(content, start, end)` with byte offsets

@@ -1,0 +1,21 @@
+# Bug: Um laço de novas tentativas repete a tarefa até a conferência passar, e o pagamento `write once` sai de novo a cada volta (CrewAI 5802).
+# Pego por: W0605
+model m = "m"
+
+tool refund(order: Text, amount: Float) -> Unit:
+    effect write once
+    on_uncertain pause
+
+prompt good(order: Text) -> Bool:
+    """O reembolso de {order} está certo?"""
+
+graph g(order: Text) -> Int:
+    tries = loop n = 1, max 3:
+        paid = refund(order, 10.0)
+        ok = m(good(order))
+        if ok:
+            done n
+        else:
+            next n + 1
+        on limit: last
+    return tries

@@ -4,9 +4,9 @@
   "refund_calls": 3,
   "payments": 1
  },
- "crewai-5802 pagamento `write once` num laço (lacuna)": {
+ "crewai-5802 pagamento `write once` num laço (lacuna, agora W0605)": {
   "ok": true,
-  "diagnostics": "",
+  "warning": true,
   "payments": 3,
   "exit": 0
  },

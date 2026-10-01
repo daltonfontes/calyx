@@ -71,7 +71,9 @@ Para repetir: `cargo run --release -p calyx-check --example phases -- arquivo.cl
 
 ### M6 (Q2): quantos bugs de estado o compilador pega
 
-**Com `rounds` e `race` (M9), a suíte tem 52 bugs:** o compilador pega 34, 2 não podem acontecer por construção, o runtime pega 10 e 6 escapam; **46 de 52 nunca causam dano**. Os 7 novos: ramo de corrida que cobra o cliente (`W0604`), dois ramos editando o mesmo repositório (`E0645`), corrida sem `on none` (`E0683`) e condição que chama um modelo (`E0682`), pelo compilador; rodada que vê respostas pela metade (por construção: o `next` só existe com todas); corrida decidida de novo na retomada e ramo perdedor que continua gastando (runtime).
+**Com o aviso `W0605`, a suíte tem 53 bugs:** o compilador pega 35, 2 não podem acontecer por construção, o runtime pega 10 e 6 escapam; **47 de 53 nunca causam dano**. O novo veio do estudo de bugs reais ([`docs/evaluation/bugs-reais.md`](evaluation/bugs-reais.md)): um pagamento `write once` num laço de novas tentativas sai de novo a cada volta (CrewAI 5802).
+
+**Com `rounds` e `race` (M9), a suíte tinha 52 bugs:** o compilador pega 34, 2 não podem acontecer por construção, o runtime pega 10 e 6 escapam; **46 de 52 nunca causam dano**. Os 7 novos: ramo de corrida que cobra o cliente (`W0604`), dois ramos editando o mesmo repositório (`E0645`), corrida sem `on none` (`E0683`) e condição que chama um modelo (`E0682`), pelo compilador; rodada que vê respostas pela metade (por construção: o `next` só existe com todas); corrida decidida de novo na retomada e ramo perdedor que continua gastando (runtime).
 
 **Com o `receive` (M8), a suíte tinha 45 bugs:** o compilador pega 30, 1 não pode acontecer por construção, o runtime pega 8 e 6 escapam; **39 de 45 nunca causam dano**. Os 4 novos: espera sem prazo e espera de um tipo que não é `message` (compilador); resposta entregue duas vezes e prazo que sobrevive a um reinício (runtime).
 

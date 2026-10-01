@@ -312,6 +312,7 @@ O limite é obrigatório. `on limit` define o que acontece se ele for atingido; 
 - O corpo são **passos** (`nome = valor`, cada um vendo os anteriores; `nome = for each x in lista: ...` roda os itens ao mesmo tempo) seguidos de **uma expressão** que termina em `done` ou `next`, diretamente ou em cada ramo de um `match` ou `if` (o compilador confere).
 - `next` precisa ter o tipo do valor inicial; `on limit: last` exige que `done` dê o mesmo tipo.
 - Cada volta é um lugar próprio no grafo realizado: as chamadas da volta `k` têm chaves `passo#laço.k#…` no diário, então um laço interrompido retoma na volta em que estava.
+- Por isso uma chamada `write once` no corpo é uma escrita nova a cada volta. Se os argumentos dela não usam nada que muda de volta para volta (a variável do laço, um passo do corpo), o compilador avisa (`W0605`): é o pagamento repetido a cada nova tentativa. O certo é escrever depois do laço, com o resultado dele. Vale também para `rounds`.
 
 ### 5.6 Rodadas (D18)
 

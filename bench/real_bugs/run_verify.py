@@ -51,7 +51,8 @@ def retry_pays_once() -> dict:
 
 
 def write_once_in_loop() -> dict:
-    """The same loop with `refund` as `write once`: no warning, paid each time."""
+    """The same loop with `refund` as `write once`: paid on every turn. Before the
+    study the compiler said nothing; now it warns (`W0605`)."""
     clean()
     src = open(os.path.join(DIR, "retry_pays_once.clyx")).read()
     src = src.replace("    effect write\n    idempotency_key request\n",
@@ -64,9 +65,9 @@ def write_once_in_loop() -> dict:
         out = calyx("run", "_write_once_in_loop.clyx", "--request", "R9", "--order", "A100")
     finally:
         os.remove(path)
-    # What the study reports: the compiler says nothing and the store pays 3 times.
-    return {"ok": check.returncode == 0 and not check.stderr.strip() and payments() == 3,
-            "diagnostics": check.stderr.strip(), "payments": payments(),
+    # A warning, not an error: the program still runs and the store pays 3 times.
+    return {"ok": check.returncode == 0 and "W0605" in check.stdout + check.stderr and payments() == 3,
+            "warning": "W0605" in check.stdout + check.stderr, "payments": payments(),
             "exit": out.returncode}
 
 
@@ -112,7 +113,7 @@ def human_gate() -> dict:
 
 CHECKS = {
     "crewai-5802 pagamento com chave num laço de novas tentativas": retry_pays_once,
-    "crewai-5802 pagamento `write once` num laço (lacuna)": write_once_in_loop,
+    "crewai-5802 pagamento `write once` num laço (lacuna, agora W0605)": write_once_in_loop,
     "langgraph-6208 duas esperas no mesmo passo": two_waits,
     "crewai-737 / langgraph-5099 agente repetindo a mesma chamada": stuck_agent,
     "crewai-960 / autogen-6819 próximo passo antes da aprovação": human_gate,
