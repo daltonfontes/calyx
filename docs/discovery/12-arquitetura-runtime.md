@@ -1,14 +1,14 @@
 # Arquitetura do runtime
 
-**Status:** direção decidida. Filosofia do Bend (nativo, emitindo C; verificação em até 1 segundo); compilador em Rust; runtime em C.
+**Status:** direção decidida. Código nativo (o compilador emite C); verificação em até 1 segundo; compilador em Rust; runtime em C com modelo de atores.
 
 ## Decisão
 
-**Compilador e runtime nativos, com o modelo de atores da BEAM reimplementado**: processos leves, supervisão e mensagens. A linguagem de implementação (C# ou C) continua em aberto.
+**Compilador e runtime nativos, com o modelo de atores da BEAM reimplementado**: processos leves, supervisão e mensagens. Compilador em Rust, runtime em C (ver "Linguagem de implementação" abaixo).
 
-## Princípio do projeto
+## Princípios do projeto
 
-> **A Calyx precisa rodar rápido e compilar rápido.**
+> **A Calyx compila para código nativo, roda rápido e verifica um programa em até 1 segundo, para que um agente de IA possa verificar a cada mudança.**
 
 Consequências diretas:
 
@@ -17,26 +17,16 @@ Consequências diretas:
 - **No runtime, a maior alavanca é fazer menos chamadas de LLM e rodar em paralelo o que é independente** (D3, D6, D24, D29). O custo do runtime por nó (milissegundos) importa menos, mas precisa ser baixo: diário com escrita só no fim do arquivo, gravado em lotes, conteúdos grandes fora dele (D20).
 - **Início imediato:** `calyx run` precisa responder em milissegundos, o que um binário nativo permite e a BEAM não.
 
-## Filosofia: a mesma do Bend
-
-O projeto adota a filosofia declarada pelo Bend:
-
-> *Bend compiles to native code. On one core, it runs nearly as fast as C. The same binary also runs on sixteen cores, or on the GPU, running up to a hundred times faster than one core. Bend's type checker is a proof checker, as in Lean and Rocq. Those can take minutes on a mid-sized codebase. Bend takes a second at most, so an AI agent can check after every change.*
-
-Traduzida para a Calyx, ela vira três compromissos:
-
 ### 1. Compilar para código nativo, emitindo C
 
-Como o BendRT, o compilador da Calyx emite **um arquivo C por programa**, contendo o runtime, o grafo compilado e o código dos efeitos (clientes de LLM, tools). Um compilador C gera o binário.
+O compilador da Calyx emite **um arquivo C por programa**, contendo o runtime, o grafo compilado e o código dos efeitos (clientes de LLM, tools). Um compilador C gera o binário.
 
-- Cada nó do grafo vira um **segmento** de uma máquina de estados, como os segmentos do BendRT: **sem pilha de chamadas do C**. O estado de uma execução continua sendo **dado** (nós prontos, nós em andamento, valores, posição no diário), então suspender, retomar e se recuperar continuam sendo a mesma operação.
-- **Afinidade no lugar do coletor de lixo** (D26, como no Bend): valores com um dono são liberados pelo código compilado; só o que o compilador detectar como compartilhado (ex.: a mesma `conversation` em vários ramos) recebe contador de referências.
-- **Dois caminhos de execução:** o código nativo, para os grafos escritos pelo programador, e um **interpretador pequeno**, dentro do runtime, para grafos gerados por LLM em tempo de execução (W7), depois de verificados. O Bend também tem dois backends (C e JavaScript).
+- Cada nó do grafo vira um **segmento** de uma máquina de estados, **sem usar a pilha de chamadas do C**. O estado de uma execução continua sendo **dado** (nós prontos, nós em andamento, valores, posição no diário), então suspender, retomar e se recuperar continuam sendo a mesma operação.
+- **Afinidade no lugar do coletor de lixo** (D26): valores com um dono são liberados pelo código compilado; só o que o compilador detectar como compartilhado (ex.: a mesma `conversation` em vários ramos) recebe contador de referências.
+- **Dois caminhos de execução:** o código nativo, para os grafos escritos pelo programador, e um **interpretador pequeno**, dentro do runtime, para grafos gerados por LLM em tempo de execução (W7), depois de verificados.
 - **Versionamento (D23):** cada versão do template é um binário. Execuções fixadas numa versão rodam no binário dela.
 
 ### 2. O mesmo binário, de um processo a muitos
-
-No Bend, o mesmo binário roda em 1 núcleo, 16 núcleos ou na GPU. A GPU não ajuda a Calyx (o gargalo é espera, não cálculo), mas a ideia se transfere assim:
 
 | Modo | Uso |
 |---|---|
@@ -44,19 +34,15 @@ No Bend, o mesmo binário roda em 1 núcleo, 16 núcleos ou na GPU. A GPU não a
 | **Várias threads, um processo** | `calyx run` no computador do desenvolvedor |
 | **Vários processos ou máquinas** | Produção, com o diário compartilhado |
 
-O **mesmo binário**, escolhendo o modo na hora de rodar, como o `--threads` e o `--gpu` do BendRT. E com a mesma exigência do Bend: **todos os modos produzem o mesmo resultado** (garantido pelas junções em ordem fixa, D7).
+O **mesmo binário**, escolhendo o modo na hora de rodar. **Todos os modos produzem o mesmo resultado** (garantido pelas junções em ordem fixa, D7).
 
 ### 3. Verificar em até 1 segundo, para que um agente de IA verifique a cada mudança
 
 - `calyx check` verifica tipos, efeitos, recursos afins, variantes obrigatórias, terminação, orçamento de custo e orçamento de contexto. **Meta: até 1 segundo** num projeto de tamanho médio.
 - É por isso que **toda análise é linear ou composicional** (sem enumerar caminhos, sem provador de teoremas): é o que torna a meta possível.
 - `calyx check` é separado de `calyx build`: verificar não exige gerar nem compilar C.
-- **Mensagens de erro feitas para agentes:** estruturadas, com esperado, observado e local (o formato `expected / observed / Location` do Bend), para um agente de IA corrigir sozinho.
-- **Mais tarde, provas opcionais:** a lição do BendTT é que *verificar* uma prova é rápido; *encontrar* a prova é que é caro, e um agente de IA pode escrevê-la. A Calyx pode, no futuro, aceitar propriedades provadas sobre grafos (invariantes, precondições) escritas pelo programador ou por um agente, verificadas em tempo linear.
-
-### Por que não compilar a Calyx *para* Bend
-
-Seria a forma mais direta de herdar tudo isso, mas hoje não serve: no BendRT, **os efeitos rodam num laço de eventos de uma thread só, um de cada vez**. A Calyx depende de muitas chamadas de LLM e tools ao mesmo tempo. Além disso, as restrições do BendTT (sem recursão mútua, funções usadas no máximo uma vez) apareceriam para o programador da Calyx. Vale reavaliar se o Bend ganhar E/S concorrente.
+- **Mensagens de erro feitas para agentes:** estruturadas, com esperado, observado e local, para um agente de IA corrigir sozinho.
+- **Mais tarde, provas opcionais:** *verificar* uma prova é rápido; *encontrar* a prova é que é caro, e um agente de IA pode escrevê-la. A Calyx pode, no futuro, aceitar propriedades provadas sobre grafos (invariantes, precondições), verificadas em tempo linear.
 
 ## Por que reimplementar o modelo da BEAM, e não usar a BEAM
 
@@ -86,7 +72,6 @@ Consequências:
 - **suspender** uma execução (esperar dias, D14) é gravar a estrutura e liberá-la da memória;
 - **retomar** é reconstruí-la a partir do diário, que é exatamente o mecanismo de recuperação (D6). Suspender, retomar e se recuperar de uma queda viram a mesma operação.
 
-É a mesma ideia do BendRT, que não usa a pilha de chamadas do C e trata as tarefas como dados.
 
 ## Os atores
 
@@ -115,7 +100,7 @@ Consequências:
 ## Linguagem de implementação
 
 **Decidido:**
-- **Runtime em C**, porque vai junto, como modelo, no arquivo C gerado (como no BendRT).
+- **Runtime em C**, porque vai junto, como modelo, no arquivo C gerado.
 - **Compilador em Rust.**
 
 **Motivo decisivo:** o verificador (tipos, efeitos, recursos, limites) é usado em dois lugares: no `calyx check` / `calyx build` e **dentro do runtime**, para verificar grafos gerados por LLM antes de rodá-los (W7). Em Rust, o mesmo código do verificador é compilado também como **biblioteca estática com interface C**, sem coletor de lixo e sem runtime extra, e ligado ao runtime em C. Resultado: **um verificador só**, e o que o `check` aceita é exatamente o que o runtime aceita.

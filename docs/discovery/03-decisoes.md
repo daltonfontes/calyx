@@ -13,7 +13,7 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D7 | Junção de ramos paralelos | ✅ **Decidido:** resultados na ordem da entrada; redutor obrigatório quando ramos escrevem no mesmo estado |
 | D8 | Template / realized graph / trace | Os três são conceitos de primeira classe |
 | D9 | Superfície da linguagem | Linguagem textual, com visualização derivada |
-| D10 | Plataforma | ✅ **Direção decidida:** filosofia do Bend. O compilador emite C (um arquivo por programa, com o runtime); runtime em C com o modelo de atores da BEAM reimplementado; o mesmo binário roda de uma thread a várias máquinas; `calyx check` em até 1 segundo. **Compilador em Rust**, com o verificador compilado também como biblioteca estática ligada ao runtime em C (um verificador só). Ver [arquitetura do runtime](12-arquitetura-runtime.md) |
+| D10 | Plataforma | ✅ **Direção decidida:** o compilador emite C (um arquivo por programa, com o runtime); runtime em C com o modelo de atores da BEAM reimplementado; o mesmo binário roda de uma thread a várias máquinas; `calyx check` em até 1 segundo. **Compilador em Rust**, com o verificador compilado também como biblioteca estática ligada ao runtime em C (um verificador só). Ver [arquitetura do runtime](12-arquitetura-runtime.md) |
 | D11 | Falha parcial em fan-out | ✅ **Decidido:** falhas são valores (`Ok` / `Failed`); o compilador obriga a tratar; tools declaram erros não retentáveis |
 | D12 | Corrida e cancelamento | Construção `corrida` explícita; vencedor no diário; cancelamento cooperativo entre nós; `llm`/`read` abandonáveis, `write` protegidos; nós de compensação |
 | D13 | Ambiente da execução (sandbox) | Efeitos na sandbox recuperáveis por snapshot, restaurado junto com o diário; isolamento entre ramos por validação do conjunto de leitura a cada escrita (STORM), preferida a cópia + merge |
@@ -215,7 +215,7 @@ Adiada por decisão do projeto. Critérios a considerar:
 | Verificador embutido no runtime | Grafos gerados por LLM precisam ser verificados em tempo de execução (W7) |
 | Execução durável | O runtime precisa persistir e retomar execuções que esperam dias (W3) |
 | Runtime orientado a eventos | Execuções esperando não podem ocupar threads; vivem só no armazenamento (Temporal) |
-| Limitado por E/S, não por computação | O tempo está na espera de LLMs e tools; desempenho bruto pesa menos que E/S assíncrona, durabilidade e custo de escrever o compilador (Bend) |
+| Limitado por E/S, não por computação | O tempo está na espera de LLMs e tools; desempenho bruto pesa menos que E/S assíncrona, durabilidade e custo de escrever o compilador |
 
 ---
 

@@ -1,8 +1,8 @@
 # Hipótese central
 
-## Princípio do projeto
+## Princípios do projeto
 
-**A Calyx segue a filosofia do Bend: compila para código nativo, roda rápido, e verifica um programa em até 1 segundo, para que um agente de IA possa verificar a cada mudança.** Toda análise do compilador é linear ou composicional (sem enumerar caminhos, sem provador de teoremas); no runtime, a prioridade é fazer menos chamadas de LLM e rodar em paralelo o que é independente. Ver [arquitetura do runtime](12-arquitetura-runtime.md).
+**A Calyx compila para código nativo, roda rápido e verifica um programa em até 1 segundo, para que um agente de IA possa verificar a cada mudança.** Toda análise do compilador é linear ou composicional (sem enumerar caminhos, sem provador de teoremas); no runtime, a prioridade é fazer menos chamadas de LLM e rodar em paralelo o que é independente. Ver [arquitetura do runtime](12-arquitetura-runtime.md).
 
 ## Pergunta
 
