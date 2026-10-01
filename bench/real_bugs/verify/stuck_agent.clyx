@@ -1,0 +1,19 @@
+# CrewAI 737 e LangGraph 5099: o agente repete a mesma tool com os mesmos
+# argumentos até estourar o limite. `fake-stuck` faz sempre a mesma chamada.
+model m = "fake-stuck"
+
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 4000 tokens
+
+prompt investigate(question: Text) -> Text:
+    """Responda: {question}"""
+
+graph g(question: Text) -> Text:
+    answer = agent m:
+        tools [web_search]
+        max_turns 20
+        task investigate(question)
+        on turn_limit: fail "limite de voltas"
+        on stuck: fail "preso: mesma chamada repetida"
+    return answer

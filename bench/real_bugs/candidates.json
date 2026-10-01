@@ -1,0 +1,417 @@
+{
+ "note": "Search results as returned (number, title), per repository and query, before any reading. Queries are the 8 in docs/evaluation/bugs-reais.md, in order.",
+ "langchain-ai/langgraph": {
+  "1": [
+   [
+    9164,
+    "Headless tool results dropped when the resume is sent immediately after the interrupt"
+   ],
+   [
+    9002,
+    "error_handler is executed again on resume even if it already ran and commited its write"
+   ],
+   [
+    8817,
+    "No pre-execution guardrail hook: repeat-after-me prompts trigger unconfirmed tool calls"
+   ],
+   [
+    8517,
+    "ToolNode async execution ignores RunnableConfig.max_concurrency for multiple tool calls"
+   ],
+   [
+    7780,
+    "[BUG] Interrupt() in a loop will cause extra resumes"
+   ],
+   [
+    7412,
+    "fix(prebuilt): Default handle_tool_errors doesn't catch tool execution errors in parallel calls"
+   ],
+   [
+    8516,
+    "ToolNode async execution ignores RunnableConfig.max_concurrency for multiple tool calls"
+   ],
+   [
+    8515,
+    "ToolNode async execution ignores RunnableConfig.max_concurrency for multiple tool calls"
+   ]
+  ],
+  "2": [
+   [
+    8551,
+    "DeltaChannel: update_state against an older checkpoint writes into the branch it forked away from"
+   ],
+   [
+    9106,
+    "Resuming one of two parallel interrupts inside a subgraph re-runs a sibling node that already completed"
+   ],
+   [
+    8714,
+    "aupdate_state raises \"Ambiguous update\" where update_state succeeds"
+   ],
+   [
+    8382,
+    "DeltaChannel replay order diverges from live execution order for parallel-superstep writes, corrupting continued-thread state"
+   ],
+   [
+    6446,
+    "InvalidUpdateError when using parallel subgraphs with shared state keys in LangGraph"
+   ],
+   [
+    7128,
+    "Can not get sub graph state when using Per-thread"
+   ],
+   [
+    7127,
+    "Can not get sub graph state when using Per-thread"
+   ],
+   [
+    6907,
+    "Entity-level merge for parallel branch state reconciliation"
+   ]
+  ],
+  "3": [
+   [
+    9164,
+    "Headless tool results dropped when the resume is sent immediately after the interrupt"
+   ],
+   [
+    9106,
+    "Resuming one of two parallel interrupts inside a subgraph re-runs a sibling node that already completed"
+   ],
+   [
+    9076,
+    "update_state during interrupt() clears StateSnapshot.interrupts and breaks resume-by-id"
+   ],
+   [
+    9001,
+    "`interrupt_before` re-interrupts forever after a state key is removed"
+   ],
+   [
+    8836,
+    "Command(resume={...}) with 32-hex keys that match no pending interrupt id is silently ignored"
+   ],
+   [
+    8837,
+    "Consumed resume values are re-delivered to later interrupts: invoke(None) auto-answers a pending interrupt with a stale payload"
+   ],
+   [
+    7780,
+    "[BUG] Interrupt() in a loop will cause extra resumes"
+   ],
+   [
+    6208,
+    "Do not re-execute a node that interrupted unless all of its interrupts have been resumed"
+   ]
+  ],
+  "4": [
+   [
+    5157,
+    "create_react_agent with `post_model_hook` - early stop on non unique tool call id"
+   ],
+   [
+    8817,
+    "No pre-execution guardrail hook: repeat-after-me prompts trigger unconfirmed tool calls"
+   ],
+   [
+    8204,
+    "create_react_agent aborts return_direct=True tools with \"need more steps\" when remaining_steps == 1"
+   ],
+   [
+    8226,
+    "Docs: grammar error in create_react_agent mermaid diagram"
+   ],
+   [
+    6064,
+    "Sub Agent sends back to starting agent after handoff even if it is waiting on further responses to finish it task from user"
+   ],
+   [
+    7591,
+    "bug: ToolNode._arun_one blocks event loop when using sync wrap_tool_call"
+   ],
+   [
+    6731,
+    "LangGraph [1.0.6] Bug - Agent infinite looping until recursion limit error is hit"
+   ],
+   [
+    5099,
+    "The agent via (create_react_agent) is looping and not able to complete the task"
+   ]
+  ],
+  "5": [
+   [
+    8234,
+    "fix: durability='sync' checkpoint ordering unenforced — post-crash recovery can restore inconsistent state"
+   ],
+   [
+    8644,
+    "Allow a state channel to be checkpointed/restorable but excluded from `StateSnapshot.values`"
+   ],
+   [
+    8582,
+    "Failed Send task loses UntrackedValue input when resumed from checkpoint"
+   ],
+   [
+    5672,
+    "Run Cancellation Causes Loss of Streamed State Not Yet Persisted as a Checkpoint"
+   ],
+   [
+    6491,
+    "Invalid state saved to checkpoint without validation, causing permanent corruption."
+   ],
+   [
+    6818,
+    "Deterministic checkpoint resume contract across crash boundaries"
+   ],
+   [
+    6623,
+    "Partial Graph State Missing Due to Mixed thread_id Formats in checkpoint_writes"
+   ],
+   [
+    4987,
+    "time travel then invoke, checkpoint id no longer updates"
+   ]
+  ],
+  "6": [],
+  "7": [],
+  "8": [
+   [
+    8817,
+    "No pre-execution guardrail hook: repeat-after-me prompts trigger unconfirmed tool calls"
+   ],
+   [
+    7591,
+    "bug: ToolNode._arun_one blocks event loop when using sync wrap_tool_call"
+   ],
+   [
+    7412,
+    "fix(prebuilt): Default handle_tool_errors doesn't catch tool execution errors in parallel calls"
+   ],
+   [
+    5157,
+    "create_react_agent with `post_model_hook` - early stop on non unique tool call id"
+   ],
+   [
+    4833,
+    "run_id isn't propagated to the tool call function"
+   ],
+   [
+    5109,
+    "`tool_use` ids were found without `tool_result` blocks immediately after"
+   ],
+   [
+    2610,
+    "Tool calls not working as expected when are called in parallel"
+   ],
+   [
+    2734,
+    "Different behaviour between tool usage and directly calling a function"
+   ]
+  ]
+ },
+ "crewAIInc/crewAI": {
+  "1": [
+   [
+    5802,
+    "Tool re-execution on task retry has no idempotency guard — duplicate payments, emails, trades possible"
+   ],
+   [
+    7775,
+    "[BUG] The default executor reports a cached native tool call as a live one"
+   ],
+   [
+    7657,
+    "Tools that settle per call and survive a retry?"
+   ],
+   [
+    7460,
+    "Add configurable retry-with-backoff for tool execution failures"
+   ],
+   [
+    2881,
+    "Tool Called Multiple Times in CrewAI v0.121.0"
+   ],
+   [
+    1978,
+    "[BUG] crew is running twice every time it is called"
+   ],
+   [
+    3462,
+    "[BUG] Tool invocation occurs twice in version 0.177.0"
+   ],
+   [
+    3489,
+    "[BUG] Tool repeated execution"
+   ]
+  ],
+  "2": [],
+  "3": [],
+  "4": [
+   [
+    7783,
+    "[BUG] OpenAI provider emits LLMCallFailedEvent twice per failed call and pops the enclosing agent scope"
+   ],
+   [
+    7349,
+    "[BUG] Native OpenAI tool-calling flow raises \"Invalid response from LLM call\" on a benign empty-text turn-end"
+   ],
+   [
+    3154,
+    "[BUG] Agent does not actually invoke tools, only simulates tool usage with fabricated output"
+   ],
+   [
+    6267,
+    "[BUG]Agent execution loop crashes with TypeError when custom tool returns a nested dict"
+   ],
+   [
+    6529,
+    "after_llm_call hook prevents agents from executing tools"
+   ],
+   [
+    737,
+    "Agent execution stuck in a forever loop while using gpt-4o"
+   ],
+   [
+    2881,
+    "Tool Called Multiple Times in CrewAI v0.121.0"
+   ],
+   [
+    4682,
+    "[FEATURE] Agent Loop Detection Middleware — detect and break repetitive behavioral patterns"
+   ]
+  ],
+  "5": [
+   [
+    6706,
+    "[BUG] Flow dict state loses fields added after a checkpoint on restore"
+   ],
+   [
+    6125,
+    "Critical: State loss in JsonProvider due to non-atomic checkpointing"
+   ]
+  ],
+  "6": [
+   [
+    960,
+    "Iteration on Agent with human feedback , if human does not approve it should not move forward"
+   ],
+   [
+    173,
+    "Getting timeout error when request takes longer than 5 minutes"
+   ]
+  ],
+  "7": [
+   [
+    5802,
+    "Tool re-execution on task retry has no idempotency guard — duplicate payments, emails, trades possible"
+   ]
+  ],
+  "8": [
+   [
+    3679,
+    "[BUG] Question on tool availability across tasks - (Not sure if bug or just wrong usage)"
+   ],
+   [
+    3462,
+    "[BUG] Tool invocation occurs twice in version 0.177.0"
+   ],
+   [
+    3489,
+    "[BUG] Tool repeated execution"
+   ],
+   [
+    2288,
+    "[BUG] tool input parameter not passed correctly"
+   ],
+   [
+    2294,
+    "[BUG]How to control the number of times a tool is called"
+   ],
+   [
+    2239,
+    "[FEATURE] parallel tool calling"
+   ],
+   [
+    2383,
+    "[BUG]why some models not call custom tools?"
+   ],
+   [
+    2209,
+    "[BUG] agent calling tool twice for same input"
+   ]
+  ]
+ },
+ "microsoft/autogen": {
+  "1": [
+   [
+    6843,
+    "Multiple tool call failure with Gemini"
+   ],
+   [
+    6882,
+    "TeamTool fails to execute twice for one Agent"
+   ]
+  ],
+  "2": [],
+  "3": [],
+  "4": [
+   [
+    3354,
+    "[Issue]: How to force implementing a tool function registered for an agent?"
+   ],
+   [
+    4894,
+    "AssistantAgent may ask for approval before executing a tool"
+   ],
+   [
+    7956,
+    "Cancelling an in-flight tool call deadlocks AssistantAgent.on_messages_stream"
+   ],
+   [
+    7115,
+    "Anthropic/Sonnet: Split assistant messages cause next agent function tool to receive empty input (non-streaming)"
+   ],
+   [
+    6823,
+    "Multiple intelligent agent models in RoundRobinGroupChat will not call the tool"
+   ],
+   [
+    3640,
+    "Support for Agent Tools, to a wrap the invocation of an agent via a tool"
+   ],
+   [
+    5510,
+    "Reliable tool calling"
+   ],
+   [
+    5044,
+    "When AssistantAgent gets called consecutively without new user messages, getting \"Expected last role User or Tool\" error when using Mistral models"
+   ]
+  ],
+  "5": [],
+  "6": [
+   [
+    6819,
+    "Conversational flow is not working as expected"
+   ]
+  ],
+  "7": [],
+  "8": [
+   [
+    5340,
+    "Allow tool call to be fatal instead of always passing info as tool execution result"
+   ],
+   [
+    5510,
+    "Reliable tool calling"
+   ],
+   [
+    4225,
+    "Issue tool calling using ollama"
+   ],
+   [
+    833,
+    "Inconsistent use of tools"
+   ]
+  ]
+ }
+}

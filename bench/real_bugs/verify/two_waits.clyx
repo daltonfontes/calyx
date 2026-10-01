@@ -1,0 +1,21 @@
+# LangGraph 6208: um nó com duas esperas por humano roda de novo inteiro
+# depois da primeira resposta. Aqui cada `receive` tem sua chave no diário.
+model m = "fake-model"
+
+message Approval = Approved | Denied(reason: Text)
+
+message Budget:
+    limit: Float
+
+prompt propose(request: Text) -> Text:
+    """{request}"""
+
+graph g(request: Text) -> Text:
+    proposal = m(propose(request))
+    approval = receive Approval, timeout 3 days:
+        on timeout: Denied(reason="sem resposta")
+    budget = receive Budget, timeout 3 days:
+        on timeout: Budget(limit=0.0)
+    return match approval:
+        case Approved: "aprovado até {budget.limit}: {proposal}"
+        case Denied(reason): "recusado ({reason})"

@@ -1,0 +1,37 @@
+# CrewAI 5802: a tarefa é repetida quando a saída não passa na conferência,
+# e a tool de pagamento roda de novo a cada tentativa. Aqui a conferência
+# (um modelo que sempre diz "não") repete o laço três vezes; o pagamento
+# leva a chave do pedido, então a loja paga uma vez só.
+model m = "fake-unsure"
+
+type Status = Pending | Delivered | Cancelled
+
+type Order:
+    id: Text
+    customer: Text
+    email: Text
+    total: Float
+    refunded: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+
+prompt good(order: Order) -> Bool:
+    """O reembolso de {order} está certo?"""
+
+graph g(request: Text, order: Text) -> Int:
+    found = get_order(order)
+    tries = loop n = 1, max 3:
+        paid = refund(request, order, 10.0)
+        ok = m(good(found))
+        if ok:
+            done n
+        else:
+            next n + 1
+        on limit: last
+    return tries

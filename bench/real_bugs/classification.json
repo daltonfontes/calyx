@@ -1,0 +1,649 @@
+[
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 2610,
+  "title": "Tool calls not working as expected when are called in parallel",
+  "url": "https://github.com/langchain-ai/langgraph/issues/2610",
+  "category": "C1",
+  "class": "bug do framework",
+  "note": "tool chamada duas vezes com dois agentes em paralelo; causa não explicada na issue (na dúvida, a classe neutra)"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 2734,
+  "title": "Different behaviour between tool usage and directly calling a function",
+  "url": "https://github.com/langchain-ai/langgraph/issues/2734",
+  "excluded": "contexto de execução da tool (event loop da thread), fora das categorias"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 4833,
+  "title": "run_id isn't propagated to the tool call function",
+  "url": "https://github.com/langchain-ai/langgraph/issues/4833",
+  "excluded": "interface da API"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 4987,
+  "title": "time travel then invoke, checkpoint id no longer updates",
+  "url": "https://github.com/langchain-ai/langgraph/issues/4987",
+  "category": "C7",
+  "class": "bug do framework",
+  "note": "fork por time travel reaproveita os ids de checkpoint"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 5099,
+  "title": "The agent via (create_react_agent) is looping and not able to complete the task",
+  "url": "https://github.com/langchain-ai/langgraph/issues/5099",
+  "category": "C5",
+  "class": "runtime",
+  "note": "agente repete a mesma chamada com argumentos errados; na Calyx o `on stuck` (obrigatório) para na terceira volta igual",
+  "verify": "stuck_agent"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 5109,
+  "title": "`tool_use` ids were found without `tool_result` blocks immediately after",
+  "url": "https://github.com/langchain-ai/langgraph/issues/5109",
+  "excluded": "erro do provedor de modelo"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 5157,
+  "title": "create_react_agent with `post_model_hook` - early stop on non unique tool call id",
+  "url": "https://github.com/langchain-ai/langgraph/issues/5157",
+  "category": "C5",
+  "class": "bug do framework",
+  "note": "ids de tool call repetidos pelo modelo encerram o agente antes da hora"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 5672,
+  "title": "Run Cancellation Causes Loss of Streamed State Not Yet Persisted as a Checkpoint",
+  "url": "https://github.com/langchain-ai/langgraph/issues/5672",
+  "category": "C7",
+  "class": "não pega",
+  "note": "cancelar no meio do streaming perde o que já foi mostrado; a Calyx também perde a resposta parcial de uma chamada em andamento"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 6064,
+  "title": "Sub Agent sends back to starting agent after handoff even if it is waiting on further responses to finish it task from user",
+  "url": "https://github.com/langchain-ai/langgraph/issues/6064",
+  "category": "C4",
+  "class": "não pega",
+  "note": "a próxima mensagem do usuário volta ao mediador em vez do subagente que esperava; a Calyx não tem passagem de controle entre agentes numa conversa"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 6208,
+  "title": "Do not re-execute a node that interrupted unless all of its interrupts have been resumed",
+  "url": "https://github.com/langchain-ai/langgraph/issues/6208",
+  "category": "C4",
+  "class": "runtime",
+  "note": "nó com dois interrupts roda de novo inteiro depois da primeira resposta; na Calyx cada `receive` tem sua chave no diário",
+  "verify": "two_waits"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 6446,
+  "title": "InvalidUpdateError when using parallel subgraphs with shared state keys in LangGraph",
+  "url": "https://github.com/langchain-ai/langgraph/issues/6446",
+  "category": "C2",
+  "class": "bug do framework",
+  "note": "InvalidUpdateError falso em subgrafos paralelos com chaves diferentes"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 6491,
+  "title": "Invalid state saved to checkpoint without validation, causing permanent corruption.",
+  "url": "https://github.com/langchain-ai/langgraph/issues/6491",
+  "category": "C7",
+  "class": "bug do framework",
+  "note": "estado inválido gravado no checkpoint sem validação"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 6623,
+  "title": "Partial Graph State Missing Due to Mixed thread_id Formats in checkpoint_writes",
+  "url": "https://github.com/langchain-ai/langgraph/issues/6623",
+  "category": "C7",
+  "class": "bug do framework",
+  "note": "checkpointer Postgres grava thread_id em dois formatos"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 6731,
+  "title": "LangGraph [1.0.6] Bug - Agent infinite looping until recursion limit error is hit",
+  "url": "https://github.com/langchain-ai/langgraph/issues/6731",
+  "category": "C5",
+  "class": "não pega",
+  "note": "agente alterna tools diferentes até o limite de recursão; o `on stuck` da Calyx só pega a mesma chamada repetida"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 6818,
+  "title": "Deterministic checkpoint resume contract across crash boundaries",
+  "url": "https://github.com/langchain-ai/langgraph/issues/6818",
+  "excluded": "pedido de garantia e de testes, sem bug relatado"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 6907,
+  "title": "Entity-level merge for parallel branch state reconciliation",
+  "url": "https://github.com/langchain-ai/langgraph/issues/6907",
+  "excluded": "pedido de recurso (merge semântico entre ramos)"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 7127,
+  "title": "Can not get sub graph state when using Per-thread",
+  "url": "https://github.com/langchain-ai/langgraph/issues/7127",
+  "excluded": "duplicata de 7128"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 7128,
+  "title": "Can not get sub graph state when using Per-thread",
+  "url": "https://github.com/langchain-ai/langgraph/issues/7128",
+  "category": "C7",
+  "class": "bug do framework",
+  "note": "estado do subgrafo inacessível com checkpointer por thread"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 7412,
+  "title": "fix(prebuilt): Default handle_tool_errors doesn't catch tool execution errors in parallel calls",
+  "url": "https://github.com/langchain-ai/langgraph/issues/7412",
+  "category": "C2",
+  "class": "bug do framework",
+  "note": "asyncio.gather descarta os resultados das outras tools quando uma falha"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 7591,
+  "title": "bug: ToolNode._arun_one blocks event loop when using sync wrap_tool_call",
+  "url": "https://github.com/langchain-ai/langgraph/issues/7591",
+  "excluded": "desempenho"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 7780,
+  "title": "[BUG] Interrupt() in a loop will cause extra resumes",
+  "url": "https://github.com/langchain-ai/langgraph/issues/7780",
+  "category": "C4",
+  "class": "bug do framework",
+  "note": "interrupt() dentro de um while reentrega respostas antigas"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8204,
+  "title": "create_react_agent aborts return_direct=True tools with \"need more steps\" when remaining_steps == 1",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8204",
+  "category": "C5",
+  "class": "bug do framework",
+  "note": "remaining_steps com return_direct aborta com um passo suficiente"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8226,
+  "title": "Docs: grammar error in create_react_agent mermaid diagram",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8226",
+  "excluded": "documentação"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8234,
+  "title": "fix: durability='sync' checkpoint ordering unenforced — post-crash recovery can restore inconsistent state",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8234",
+  "category": "C7",
+  "class": "bug do framework",
+  "note": "durability=sync: put_writes e checkpoint não são atômicos"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8382,
+  "title": "DeltaChannel replay order diverges from live execution order for parallel-superstep writes, corrupting continued-thread state",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8382",
+  "category": "C2",
+  "class": "bug do framework",
+  "note": "replay do DeltaChannel muda a ordem das escritas paralelas"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8515,
+  "title": "ToolNode async execution ignores RunnableConfig.max_concurrency for multiple tool calls",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8515",
+  "excluded": "desempenho (max_concurrency ignorado)"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8516,
+  "title": "ToolNode async execution ignores RunnableConfig.max_concurrency for multiple tool calls",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8516",
+  "excluded": "desempenho (duplicata de 8515)"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8517,
+  "title": "ToolNode async execution ignores RunnableConfig.max_concurrency for multiple tool calls",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8517",
+  "excluded": "desempenho (duplicata de 8515)"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8551,
+  "title": "DeltaChannel: update_state against an older checkpoint writes into the branch it forked away from",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8551",
+  "category": "C7",
+  "class": "bug do framework",
+  "note": "update_state num checkpoint antigo grava no ramo errado (DeltaChannel)"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8582,
+  "title": "Failed Send task loses UntrackedValue input when resumed from checkpoint",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8582",
+  "category": "C7",
+  "class": "runtime",
+  "note": "a tarefa retomada perde o UntrackedValue da entrada; na Calyx o recurso de execução (sandbox) volta pelo snapshot na retomada (tests/sandbox.rs)"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8644,
+  "title": "Allow a state channel to be checkpointed/restorable but excluded from `StateSnapshot.values`",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8644",
+  "excluded": "pedido de recurso"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8714,
+  "title": "aupdate_state raises \"Ambiguous update\" where update_state succeeds",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8714",
+  "category": "C2",
+  "class": "bug do framework",
+  "note": "aupdate_state diverge de update_state"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8817,
+  "title": "No pre-execution guardrail hook: repeat-after-me prompts trigger unconfirmed tool calls",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8817",
+  "category": "C6",
+  "class": "não pega",
+  "note": "prompt injection faz o ToolNode executar uma tool perigosa sem confirmação; um agente da Calyx pode usar tools `write` sem confirmação"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8836,
+  "title": "Command(resume={...}) with 32-hex keys that match no pending interrupt id is silently ignored",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8836",
+  "category": "C4",
+  "class": "bug do framework",
+  "note": "resposta com chave em hex de 32 caracteres vira no-op silencioso"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 8837,
+  "title": "Consumed resume values are re-delivered to later interrupts: invoke(None) auto-answers a pending interrupt with a stale payload",
+  "url": "https://github.com/langchain-ai/langgraph/issues/8837",
+  "category": "C4",
+  "class": "bug do framework",
+  "note": "invoke(None) reentrega a resposta já consumida ao segundo interrupt"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 9001,
+  "title": "`interrupt_before` re-interrupts forever after a state key is removed",
+  "url": "https://github.com/langchain-ai/langgraph/issues/9001",
+  "category": "C4",
+  "class": "bug do framework",
+  "note": "retomada após remover um campo do estado fica presa no interrupt_before"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 9002,
+  "title": "error_handler is executed again on resume even if it already ran and commited its write",
+  "url": "https://github.com/langchain-ai/langgraph/issues/9002",
+  "category": "C1",
+  "class": "bug do framework",
+  "note": "error_handler com efeito roda de novo na retomada após falhas em paralelo"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 9076,
+  "title": "update_state during interrupt() clears StateSnapshot.interrupts and breaks resume-by-id",
+  "url": "https://github.com/langchain-ai/langgraph/issues/9076",
+  "category": "C4",
+  "class": "bug do framework",
+  "note": "update_state apaga os interrupts pendentes; o id guardado pela interface morre"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 9106,
+  "title": "Resuming one of two parallel interrupts inside a subgraph re-runs a sibling node that already completed",
+  "url": "https://github.com/langchain-ai/langgraph/issues/9106",
+  "category": "C1",
+  "class": "bug do framework",
+  "note": "retomar um de dois interrupts paralelos refaz o efeito do nó irmão"
+ },
+ {
+  "repo": "langchain-ai/langgraph",
+  "issue": 9164,
+  "title": "Headless tool results dropped when the resume is sent immediately after the interrupt",
+  "url": "https://github.com/langchain-ai/langgraph/issues/9164",
+  "category": "C4",
+  "class": "bug do framework",
+  "note": "retomada logo após o interrupt perde resultados: o servidor anuncia o interrupt antes de gravá-lo"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 173,
+  "title": "Getting timeout error when request takes longer than 5 minutes",
+  "url": "https://github.com/crewAIInc/crewAI/issues/173",
+  "excluded": "timeout do provedor"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 737,
+  "title": "Agent execution stuck in a forever loop while using gpt-4o",
+  "url": "https://github.com/crewAIInc/crewAI/issues/737",
+  "category": "C5",
+  "class": "runtime",
+  "note": "agente repete a mesma tool com a mesma entrada até o timeout; na Calyx o `on stuck` para na terceira volta igual",
+  "verify": "stuck_agent"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 960,
+  "title": "Iteration on Agent with human feedback , if human does not approve it should not move forward",
+  "url": "https://github.com/crewAIInc/crewAI/issues/960",
+  "category": "C4",
+  "class": "construção",
+  "note": "o fluxo segue para o próximo agente sem a aprovação humana; na Calyx o passo seguinte usa o valor do `receive` e não começa antes",
+  "verify": "human_gate"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 1978,
+  "title": "[BUG] crew is running twice every time it is called",
+  "url": "https://github.com/crewAIInc/crewAI/issues/1978",
+  "category": "C1",
+  "class": "bug do framework",
+  "note": "kickoff roda duas vezes e o e-mail sai duas vezes"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 2209,
+  "title": "[BUG] agent calling tool twice for same input",
+  "url": "https://github.com/crewAIInc/crewAI/issues/2209",
+  "category": "C5",
+  "class": "não pega",
+  "note": "agente reenvia a mesma pergunta pelo websocket duas vezes; o `on stuck` só para na terceira"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 2239,
+  "title": "[FEATURE] parallel tool calling",
+  "url": "https://github.com/crewAIInc/crewAI/issues/2239",
+  "excluded": "pedido de recurso"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 2288,
+  "title": "[BUG] tool input parameter not passed correctly",
+  "url": "https://github.com/crewAIInc/crewAI/issues/2288",
+  "excluded": "erro de parâmetro"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 2294,
+  "title": "[BUG]How to control the number of times a tool is called",
+  "url": "https://github.com/crewAIInc/crewAI/issues/2294",
+  "category": "C5",
+  "class": "não pega",
+  "note": "agente continua chamando a tool depois de ter a resposta; não se sabe se com os mesmos argumentos (na dúvida, não pega)"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 2383,
+  "title": "[BUG]why some models not call custom tools?",
+  "url": "https://github.com/crewAIInc/crewAI/issues/2383",
+  "excluded": "comportamento do modelo"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 2881,
+  "title": "Tool Called Multiple Times in CrewAI v0.121.0",
+  "url": "https://github.com/crewAIInc/crewAI/issues/2881",
+  "category": "C1",
+  "class": "bug do framework",
+  "note": "regressão: tools chamadas várias vezes com resposta válida"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 3154,
+  "title": "[BUG] Agent does not actually invoke tools, only simulates tool usage with fabricated output",
+  "url": "https://github.com/crewAIInc/crewAI/issues/3154",
+  "excluded": "comportamento do modelo"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 3462,
+  "title": "[BUG] Tool invocation occurs twice in version 0.177.0",
+  "url": "https://github.com/crewAIInc/crewAI/issues/3462",
+  "category": "C1",
+  "class": "bug do framework",
+  "note": "regressão: toda tool roda exatamente duas vezes"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 3489,
+  "title": "[BUG] Tool repeated execution",
+  "url": "https://github.com/crewAIInc/crewAI/issues/3489",
+  "category": "C1",
+  "class": "bug do framework",
+  "note": "structured_tool.invoke chama a função duas vezes"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 3679,
+  "title": "[BUG] Question on tool availability across tasks - (Not sure if bug or just wrong usage)",
+  "url": "https://github.com/crewAIInc/crewAI/issues/3679",
+  "category": "C1",
+  "class": "bug do framework",
+  "note": "tools do agente copiadas para o gerente; a mesma tool roda duas vezes"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 4682,
+  "title": "[FEATURE] Agent Loop Detection Middleware — detect and break repetitive behavioral patterns",
+  "url": "https://github.com/crewAIInc/crewAI/issues/4682",
+  "excluded": "pedido de recurso"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 5802,
+  "title": "Tool re-execution on task retry has no idempotency guard — duplicate payments, emails, trades possible",
+  "url": "https://github.com/crewAIInc/crewAI/issues/5802",
+  "category": "C1",
+  "class": "não pega",
+  "note": "nova tentativa da tarefa repete o pagamento; na Calyx uma tool `write` com chave paga uma vez, mas uma `write once` num `loop` paga a cada volta, sem aviso",
+  "verify": "retry_pays_once, write_once_in_loop"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 6125,
+  "title": "Critical: State loss in JsonProvider due to non-atomic checkpointing",
+  "url": "https://github.com/crewAIInc/crewAI/issues/6125",
+  "category": "C3",
+  "class": "runtime",
+  "note": "agentes concorrentes gravam o mesmo estado e perdem 249 de 250 atualizações; na Calyx o estado compartilhado é uma entidade, uma mudança por vez com flock (tests/entities.rs, concurrent_runs_lose_no_update)"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 6267,
+  "title": "[BUG]Agent execution loop crashes with TypeError when custom tool returns a nested dict",
+  "url": "https://github.com/crewAIInc/crewAI/issues/6267",
+  "excluded": "TypeError do framework, fora das categorias"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 6529,
+  "title": "after_llm_call hook prevents agents from executing tools",
+  "url": "https://github.com/crewAIInc/crewAI/issues/6529",
+  "excluded": "interface de hooks"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 6706,
+  "title": "[BUG] Flow dict state loses fields added after a checkpoint on restore",
+  "url": "https://github.com/crewAIInc/crewAI/issues/6706",
+  "category": "C7",
+  "class": "bug do framework",
+  "note": "restaurar o checkpoint apaga campos novos do estado"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 7349,
+  "title": "[BUG] Native OpenAI tool-calling flow raises \"Invalid response from LLM call\" on a benign empty-text turn-end",
+  "url": "https://github.com/crewAIInc/crewAI/issues/7349",
+  "excluded": "erro do provedor de modelo"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 7460,
+  "title": "Add configurable retry-with-backoff for tool execution failures",
+  "url": "https://github.com/crewAIInc/crewAI/issues/7460",
+  "excluded": "pedido de recurso"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 7657,
+  "title": "Tools that settle per call and survive a retry?",
+  "url": "https://github.com/crewAIInc/crewAI/issues/7657",
+  "excluded": "proposta de fornecedor, sem bug"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 7775,
+  "title": "[BUG] The default executor reports a cached native tool call as a live one",
+  "url": "https://github.com/crewAIInc/crewAI/issues/7775",
+  "excluded": "observabilidade (flag de cache no evento)"
+ },
+ {
+  "repo": "crewAIInc/crewAI",
+  "issue": 7783,
+  "title": "[BUG] OpenAI provider emits LLMCallFailedEvent twice per failed call and pops the enclosing agent scope",
+  "url": "https://github.com/crewAIInc/crewAI/issues/7783",
+  "excluded": "erro do provedor de modelo"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 833,
+  "title": "Inconsistent use of tools",
+  "url": "https://github.com/microsoft/autogen/issues/833",
+  "category": "C5",
+  "class": "não pega",
+  "note": "o agente às vezes usa 2 das 3 tools pedidas; um agente da Calyx faria o mesmo"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 3354,
+  "title": "[Issue]: How to force implementing a tool function registered for an agent?",
+  "url": "https://github.com/microsoft/autogen/issues/3354",
+  "excluded": "uso"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 3640,
+  "title": "Support for Agent Tools, to a wrap the invocation of an agent via a tool",
+  "url": "https://github.com/microsoft/autogen/issues/3640",
+  "excluded": "pedido de recurso"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 4225,
+  "title": "Issue tool calling using ollama",
+  "url": "https://github.com/microsoft/autogen/issues/4225",
+  "excluded": "provedor (ollama)"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 4894,
+  "title": "AssistantAgent may ask for approval before executing a tool",
+  "url": "https://github.com/microsoft/autogen/issues/4894",
+  "excluded": "pedido de recurso (aprovação antes da tool)"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 5044,
+  "title": "When AssistantAgent gets called consecutively without new user messages, getting \"Expected last role User or Tool\" error when using Mistral models",
+  "url": "https://github.com/microsoft/autogen/issues/5044",
+  "excluded": "provedor (mistral)"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 5340,
+  "title": "Allow tool call to be fatal instead of always passing info as tool execution result",
+  "url": "https://github.com/microsoft/autogen/issues/5340",
+  "excluded": "pedido de recurso"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 5510,
+  "title": "Reliable tool calling",
+  "url": "https://github.com/microsoft/autogen/issues/5510",
+  "excluded": "pedido de recurso (encadear tools em ordem)"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 6819,
+  "title": "Conversational flow is not working as expected",
+  "url": "https://github.com/microsoft/autogen/issues/6819",
+  "category": "C4",
+  "class": "construção",
+  "note": "a conversa segue o procedimento sem esperar a resposta do cliente; na Calyx a espera é um `receive` e o passo seguinte depende dela",
+  "verify": "human_gate"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 6823,
+  "title": "Multiple intelligent agent models in RoundRobinGroupChat will not call the tool",
+  "url": "https://github.com/microsoft/autogen/issues/6823",
+  "excluded": "comportamento do modelo"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 6843,
+  "title": "Multiple tool call failure with Gemini",
+  "url": "https://github.com/microsoft/autogen/issues/6843",
+  "excluded": "provedor (gemini)"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 6882,
+  "title": "TeamTool fails to execute twice for one Agent",
+  "url": "https://github.com/microsoft/autogen/issues/6882",
+  "category": "C2",
+  "class": "bug do framework",
+  "note": "duas chamadas da TeamTool: a segunda falha porque o time ainda está rodando"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 7115,
+  "title": "Anthropic/Sonnet: Split assistant messages cause next agent function tool to receive empty input (non-streaming)",
+  "url": "https://github.com/microsoft/autogen/issues/7115",
+  "excluded": "provedor (anthropic)"
+ },
+ {
+  "repo": "microsoft/autogen",
+  "issue": 7956,
+  "title": "Cancelling an in-flight tool call deadlocks AssistantAgent.on_messages_stream",
+  "url": "https://github.com/microsoft/autogen/issues/7956",
+  "category": "C7",
+  "class": "bug do framework",
+  "note": "cancelar com uma tool em andamento deixa o stream pendurado para sempre"
+ }
+]

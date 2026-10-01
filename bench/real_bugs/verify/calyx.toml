@@ -1,0 +1,8 @@
+[tools.get_order]
+command = ["python3", "../../../examples/tools/fake_store.py"]
+
+[tools.refund]
+command = ["python3", "../../../examples/tools/fake_store.py"]
+
+[tools.web_search]
+command = ["python3", "../../../examples/tools/fake_search.py"]

@@ -1,0 +1,20 @@
+# CrewAI 960 e AutoGen 6819: o fluxo segue para o próximo agente sem a
+# aprovação humana. Aqui o segundo passo usa a aprovação, então não começa
+# antes dela.
+model m = "fake-model"
+
+message Approval = Approved | Denied(reason: Text)
+
+prompt draft(topic: Text) -> Text:
+    """Escreva um texto sobre {topic}"""
+
+prompt market(text: Text) -> Text:
+    """Transforme em anúncio: {text}"""
+
+graph g(topic: Text) -> Text:
+    text = m(draft(topic))
+    approval = receive Approval, timeout 3 days:
+        on timeout: Denied(reason="sem resposta")
+    return match approval:
+        case Approved: m(market(text))
+        case Denied(reason): "recusado ({reason})"
