@@ -180,6 +180,8 @@ pub struct Agent {
     pub prompt: usize,
     pub args: Vec<Expr>,
     pub tools: Vec<usize>,
+    /// Per tool: the sandboxes lent to it, as (parameter index, value).
+    pub bound: Vec<Vec<(usize, Expr)>>,
     pub max_turns: u64,
     /// `None`: ask for a final answer; `Some(reason)`: fail.
     pub on_turn_limit: Option<String>,
@@ -236,6 +238,9 @@ pub struct Tool {
     pub returns_unit: bool,
     /// The type of state the tool validates `requires` against.
     pub checks: Option<String>,
+    /// Per parameter: a sandbox it borrows, `Some(true)` to edit it,
+    /// `Some(false)` to read it (decision D26).
+    pub borrows: Vec<Option<bool>>,
 }
 
 /// The `on_uncertain` policy of a `write once` tool (decision D2).

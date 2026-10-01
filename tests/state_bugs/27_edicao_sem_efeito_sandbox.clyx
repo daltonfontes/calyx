@@ -1,0 +1,25 @@
+# Bug: Uma tool que edita o repositório declarada como leitura: uma falha no meio deixaria a edição pela metade.
+# Pego por: E0648
+model m = "m"
+
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 1000 tokens
+
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Text:
+    effect sandbox
+    max_output 100 tokens
+
+tool run_tests(box: reads Sandbox) -> Text:
+    effect read
+    max_output 1000 tokens
+
+prompt task(issue: Text) -> Text:
+    """Corrija: {issue}"""
+
+tool rename(box: edits Sandbox, old: Text, new: Text) -> Text:
+    effect read
+
+graph g(repo: Sandbox) -> Text:
+    r = rename(edits repo, "a.py", "b.py")
+    return r

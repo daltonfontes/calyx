@@ -708,6 +708,14 @@ fn parse_arg(ty: &str, raw: &str) -> Result<serde_json::Value, String> {
             .parse::<f64>()
             .map(serde_json::Value::from)
             .map_err(|_| format!("expected a `Float`, got `{raw}`")),
+        // A directory: the run works on a copy of it (decision D13).
+        "Sandbox" => {
+            if std::path::Path::new(raw).is_dir() {
+                Ok(serde_json::Value::String(raw.to_owned()))
+            } else {
+                Err(format!("expected a directory for a `Sandbox`, got `{raw}`"))
+            }
+        }
         "Bool" => match raw {
             "true" => Ok(true.into()),
             "false" => Ok(false.into()),

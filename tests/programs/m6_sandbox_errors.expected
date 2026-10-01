@@ -1,0 +1,64 @@
+error[E0648]: a tool that edits a sandbox needs `effect sandbox`
+- expected : `effect sandbox`: its changes are undone if the call fails, and restored on recovery
+- observed : `effect read`
+Location: m6_sandbox_errors.clyx:12:6
+
+error[E0646]: a tool borrows a sandbox for each call
+- expected : `box: reads Sandbox` or `box: edits Sandbox`
+- observed : `Sandbox` without `reads` or `edits`
+Location: m6_sandbox_errors.clyx:15:12
+
+error[E0646]: only a `Sandbox` can be borrowed
+- expected : `reads Sandbox`
+- observed : `reads Text`
+Location: m6_sandbox_errors.clyx:18:13
+
+error[E0647]: a sandbox is not a value a prompt can show
+- expected : the sandbox lent to tools; the text the tools return goes to the model
+- observed : a `Sandbox` parameter
+Location: m6_sandbox_errors.clyx:21:13
+
+error[E0647]: a graph cannot return a sandbox
+- expected : a value computed from it, e.g. the result of a tool that reads it
+- observed : `-> Sandbox`
+Location: m6_sandbox_errors.clyx:24:29
+
+error[E0642]: a sandbox must be lent to the tool
+- expected : `reads sandbox` for `box`
+- observed : a `Sandbox`
+Location: m6_sandbox_errors.clyx:28:19
+
+error[E0643]: the tool needs `edits`, not `reads`
+- expected : `edits ...` for `box`
+- observed : `reads ...`
+Location: m6_sandbox_errors.clyx:29:19
+
+error[E0644]: items of a `for each` cannot edit the same sandbox
+- expected : `reads repo` in the items, or the edits in a step of their own
+- observed : `edits repo` in every item, all at the same time
+Location: m6_sandbox_errors.clyx:30:18
+
+error[E0645]: two uses of a sandbox that could run at the same time, one editing it
+- expected : the edit of `repo` in a step of its own, so the order is defined
+- observed : `repo` borrowed twice in one expression, at least once with `edits`
+Location: m6_sandbox_errors.clyx:31:9
+
+error[E0647]: a sandbox is not a value a step can keep
+- expected : lend it to tools where it is used: `tool(reads repo)` or `tool(edits repo)`
+- observed : `e` would be a `reads Sandbox`
+Location: m6_sandbox_errors.clyx:32:5
+
+error[E0646]: only a `Sandbox` can be lent
+- expected : a `Sandbox` parameter of the graph
+- observed : `name` is `Text`
+Location: m6_sandbox_errors.clyx:33:25
+
+error[E0649]: lend the agent's tool each sandbox it borrows
+- expected : `edit_file(...)` lending `box: edits Sandbox`
+- observed : 0 lent
+Location: m6_sandbox_errors.clyx:35:16
+
+error[E0643]: the tool needs `reads`, not `edits`
+- expected : `reads ...` for `box`
+- observed : `edits ...`
+Location: m6_sandbox_errors.clyx:35:37

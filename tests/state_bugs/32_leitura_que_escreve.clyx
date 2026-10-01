@@ -1,0 +1,23 @@
+# Bug: Uma tool declarada como leitura escreve arquivos na sandbox (por exemplo, testes que geram caches).
+# Pego por: none
+model m = "m"
+
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 1000 tokens
+
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Text:
+    effect sandbox
+    max_output 100 tokens
+
+tool run_tests(box: reads Sandbox) -> Text:
+    effect read
+    max_output 1000 tokens
+
+prompt task(issue: Text) -> Text:
+    """Corrija: {issue}"""
+
+graph g(repo: Sandbox) -> Text:
+    a = run_tests(reads repo)
+    b = run_tests(reads repo)
+    return "{a} {b}"

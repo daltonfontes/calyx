@@ -1,0 +1,22 @@
+# Bug: Os testes rodam ao mesmo tempo que uma edição do mesmo repositório: o resultado depende de quem chega primeiro.
+# Pego por: E0645
+model m = "m"
+
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 1000 tokens
+
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Text:
+    effect sandbox
+    max_output 100 tokens
+
+tool run_tests(box: reads Sandbox) -> Text:
+    effect read
+    max_output 1000 tokens
+
+prompt task(issue: Text) -> Text:
+    """Corrija: {issue}"""
+
+graph g(repo: Sandbox) -> Text:
+    both = [edit_file(edits repo, "a.py", "x", "y"), run_tests(reads repo)]
+    return "ok"

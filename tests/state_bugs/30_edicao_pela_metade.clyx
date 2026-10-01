@@ -1,0 +1,22 @@
+# Bug: A tool cai depois de escrever parte da edição; a nova tentativa partiria de um arquivo pela metade.
+# Pego por: runtime
+model m = "m"
+
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 1000 tokens
+
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Text:
+    effect sandbox
+    max_output 100 tokens
+
+tool run_tests(box: reads Sandbox) -> Text:
+    effect read
+    max_output 1000 tokens
+
+prompt task(issue: Text) -> Text:
+    """Corrija: {issue}"""
+
+graph g(repo: Sandbox) -> Text:
+    e = edit_file(edits repo, "a.py", "x", "y")
+    return e

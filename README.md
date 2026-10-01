@@ -54,7 +54,7 @@ A analogia mais próxima é o **SQL**: você declara o que quer, e o banco decid
 
 ## Estado do projeto
 
-O **discovery** está concluído (35 decisões fechadas). Na implementação, os marcos M0 (estrutura), M1 (`calyx check` para o subconjunto inicial) M2 (`calyx run`: o runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP) M3 (diário: uma execução interrompida continua sem refazer nenhuma chamada concluída), M4 (paralelismo derivado do grafo, com limites e prioridade pelo caminho crítico) M5 (`agent`, `loop`, `match`, `if`, `try`: o ciclo ReAct funciona com o Gemini) e M6a (escritas externas seguras: chave de idempotência, políticas para `write once` de resultado incerto, precondições conferidas pela tool, `after`) estão concluídos. Na medida Q2, o compilador pega 17 de 22 bugs de estado antes de rodar. A Calyx se instala como um binário só, e `calyx build` gera executáveis autocontidos (D35). O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
+O **discovery** está concluído (35 decisões fechadas). Na implementação, os marcos M0 (estrutura), M1 (`calyx check` para o subconjunto inicial) M2 (`calyx run`: o runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP) M3 (diário: uma execução interrompida continua sem refazer nenhuma chamada concluída), M4 (paralelismo derivado do grafo, com limites e prioridade pelo caminho crítico) M5 (`agent`, `loop`, `match`, `if`, `try`: o ciclo ReAct funciona com o Gemini) M6a (escritas externas seguras: chave de idempotência, políticas para `write once` de resultado incerto, precondições conferidas pela tool, `after`) e M6b (sandboxes: o agente trabalha numa cópia do repositório, com empréstimos `reads`/`edits` verificados e snapshots para desfazer e retomar) estão concluídos. Na medida Q2, o compilador pega 23 de 32 bugs de estado antes de rodar. A Calyx se instala como um binário só, e `calyx build` gera executáveis autocontidos (D35). O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
 
 ## Como instalar
 
@@ -95,6 +95,9 @@ cargo run -p calyx-cli -- run examples/research.clyx --fake-models --topic "ener
 # Um agente que pesquisa (ciclo ReAct) e revisa a própria resposta:
 cargo run -p calyx-cli -- run examples/agent.clyx --fake-models --question "vantagens das baterias de sódio"
 
+# Um agente de código numa sandbox (cópia do repositório); o original não muda:
+cargo run -p calyx-cli -- run examples/fix.clyx --fake-models --repo examples/sample_repo --issue "average([2, 4, 6]) devolve 6"
+
 # Escritas externas seguras: reembolso com precondições e e-mail que nunca sai duas vezes:
 cargo run -p calyx-cli -- run examples/refund.clyx --fake-models --request R1 --order A100 --message "chegou quebrado"
 
@@ -119,6 +122,8 @@ calyx replay <id>          # reexecuta só a partir do diário, sem chamar nada
 
 **Escritas externas.** Uma tool que escreve declara o que o runtime precisa para não repetir nem perder o efeito: `idempotency_key` para `write`; `on_uncertain` (`pause`, `accept_loss` ou `verify(...)`) para `write once`, aplicada quando não se sabe se a chamada aconteceu; `checks` para precondições `requires`, que a própria tool confere sobre o estado atual. Com `on_uncertain pause`, a execução para e uma pessoa decide: `calyx resume <id> --uncertain done|retry|failed`.
 
+**Sandboxes.** Um parâmetro `Sandbox` é um diretório; a execução trabalha numa cópia, em `.calyx/runs/<id>/sandboxes/`. As tools pedem a sandbox emprestada (`reads` ou `edits`), e a ordem entre os passos sai desses empréstimos. Uma chamada que falha é desfeita; uma execução retomada encontra a sandbox como o diário a deixou.
+
 **Tools.** Cada tool roda num servidor MCP (decisão D34), declarado no `calyx.toml` ao lado do programa. O exemplo usa uma busca falsa ([`examples/tools/fake_search.py`](examples/tools/fake_search.py)); para usar uma busca real, troque o comando:
 
 ```toml
@@ -136,7 +141,7 @@ command = ["python3", "tools/fake_search.py"]   # relativo ao calyx.toml
 | `runtime/rs` | A camada de E/S em Rust que o interpretador chama: modelos por HTTPS, tools por MCP, `calyx.toml`; e o verificador exposto ao C. Tudo sai numa biblioteca estática só |
 | `tests/programs/` | Programas de teste com os diagnósticos esperados (`.expected`) e a representação intermediária esperada (`.ir`) |
 | `tests/state_bugs/` | A medida Q2: workflows com um bug de estado conhecido cada, e quem o pega (compilador, runtime ou ninguém) |
-| `examples/` | Programas de exemplo. `research.clyx`, `agent.clyx` e `refund.clyx` passam na verificação e rodam; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
+| `examples/` | Programas de exemplo. `research.clyx`, `agent.clyx`, `refund.clyx` e `fix.clyx` passam na verificação e rodam; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
 
 ## Plano de implementação
 

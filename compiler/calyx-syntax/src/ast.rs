@@ -67,6 +67,9 @@ pub struct ToolProp {
 pub struct Param {
     pub name: Ident,
     pub ty: TypeExpr,
+    /// `box: reads Sandbox` or `box: edits Sandbox`: how a tool borrows a
+    /// resource (decision D26).
+    pub borrow: Option<Ident>,
 }
 
 /// `type Name = ...`
@@ -238,6 +241,12 @@ pub enum ExprKind {
         call: Box<Expr>,
         requires: Vec<Expr>,
     },
+    /// `reads repo` or `edits repo`: lends a resource to a tool for one
+    /// call (decision D26). `mode` is `reads` or `edits`.
+    Borrow {
+        mode: Ident,
+        target: Ident,
+    },
 }
 
 /// `case Variant(field, ...):` or `case _:`, and what it evaluates to.
@@ -267,8 +276,8 @@ pub enum OnLimit {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentExpr {
     pub model: Ident,
-    /// `tools [a, b]`
-    pub tools: Vec<Ident>,
+    /// `tools [a, b(reads repo)]`: each tool, with the resources lent to it.
+    pub tools: Vec<AgentTool>,
     /// `max_turns N`
     pub max_turns: Option<(u64, Span)>,
     /// `task prompt(...)`
@@ -276,6 +285,14 @@ pub struct AgentExpr {
     pub on_turn_limit: OnLimit,
     pub on_stuck: OnLimit,
     pub span: Span,
+}
+
+/// A tool an agent may call, with resources lent to it for every call:
+/// `edit_file(edits repo)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentTool {
+    pub name: Ident,
+    pub lends: Vec<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

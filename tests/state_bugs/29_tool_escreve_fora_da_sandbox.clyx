@@ -1,0 +1,22 @@
+# Bug: Uma tool recebe a sandbox mas escreve fora dela (por exemplo, no diretório original): a cópia não protege nada.
+# Pego por: none
+model m = "m"
+
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 1000 tokens
+
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Text:
+    effect sandbox
+    max_output 100 tokens
+
+tool run_tests(box: reads Sandbox) -> Text:
+    effect read
+    max_output 1000 tokens
+
+prompt task(issue: Text) -> Text:
+    """Corrija: {issue}"""
+
+graph g(repo: Sandbox) -> Text:
+    e = edit_file(edits repo, "a.py", "x", "y")
+    return e
