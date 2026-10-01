@@ -5,12 +5,13 @@
 //! follow the order of the parameters, prompt templates are split into text
 //! and `{paths}`, and each prompt gets the JSON Schema of its answer.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use calyx_ir::{self as ir, Effect, NodeId, Part, PromptPart};
 use calyx_syntax::ast::{
-    Arg, Decl, Expr, ExprKind, GraphDecl, Ident, Program, Stmt, StrLit, ToolDecl, TypeDecl,
-    TypeExpr, TypeKind,
+    Arg, Decl, Expr, ExprKind, GraphDecl, Ident, OnLimit, Program, Stmt, StrLit, ToolDecl,
+    TypeDecl, TypeExpr, TypeKind,
 };
 
 pub fn lower(program: &Program, out: &mut ir::Program) {
@@ -40,19 +41,47 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
                     max_output: m.max_output,
                 });
             }
-            Decl::Tool(t) => {
-                cx.tools.insert(&t.name.name, (out.tools.len(), t));
-                out.tools.push(tool(t));
-            }
             Decl::Type(t) => {
                 cx.types.insert(&t.name.name, t);
                 if let TypeKind::Variants(vs) = &t.ty.kind {
-                    for v in vs.iter().filter(|v| v.fields.is_empty()) {
-                        cx.variants.insert(&v.name.name, ());
+                    let enum_like = vs.iter().all(|v| v.fields.is_empty());
+                    for v in vs {
+                        cx.variants.insert(&v.name.name, enum_like);
                     }
                 }
             }
-            Decl::Prompt(_) | Decl::Graph(_) => {}
+            Decl::Tool(_) | Decl::Prompt(_) | Decl::Graph(_) => {}
+        }
+    }
+    // Tools after types: their argument schemas need them.
+    for d in &program.decls {
+        if let Decl::Tool(t) = d {
+            cx.tools.insert(&t.name.name, (out.tools.len(), t));
+            let mut ir_tool = tool(t);
+            let props: Vec<String> = t
+                .params
+                .iter()
+                .map(|p| {
+                    let mut name = String::new();
+                    ir_string(&mut name, &p.name.name);
+                    format!("{name}:{}", cx.schema(&p.ty, 0))
+                })
+                .collect();
+            let required: Vec<String> = t
+                .params
+                .iter()
+                .map(|p| {
+                    let mut name = String::new();
+                    ir_string(&mut name, &p.name.name);
+                    name
+                })
+                .collect();
+            ir_tool.schema = format!(
+                "{{\"type\":\"object\",\"properties\":{{{}}},\"required\":[{}]}}",
+                props.join(","),
+                required.join(",")
+            );
+            out.tools.push(ir_tool);
         }
     }
     for d in &program.decls {
@@ -104,8 +133,10 @@ struct Lower<'p> {
     tools: HashMap<&'p str, (usize, &'p ToolDecl)>,
     prompts: HashMap<&'p str, (usize, Vec<String>)>,
     types: HashMap<&'p str, &'p TypeDecl>,
-    /// Variants without fields; as values they are their name.
-    variants: HashMap<&'p str, ()>,
+    /// Every variant, and whether its type has only variants without
+    /// fields. Those are their name as values (`"Optimist"`); the others are
+    /// records with `kind` (`{"kind": "Rejected", "feedback": ...}`).
+    variants: HashMap<&'p str, bool>,
     /// Index in the IR and parameter names.
     graphs: HashMap<String, (usize, Vec<String>)>,
 }
@@ -118,6 +149,25 @@ struct Scope<'a> {
     params: Vec<&'a str>,
     nodes: HashMap<String, NodeId>,
     item: Option<&'a str>,
+    /// Names bound by loops and cases, innermost last, with their slots.
+    locals: RefCell<Vec<(String, usize)>>,
+    /// Slots used so far by the current node.
+    slots: Cell<usize>,
+}
+
+impl Scope<'_> {
+    fn bind(&self, name: &str) -> usize {
+        let slot = self.slots.get();
+        self.slots.set(slot + 1);
+        self.locals.borrow_mut().push((name.to_owned(), slot));
+        slot
+    }
+
+    fn unbind(&self, n: usize) {
+        let mut l = self.locals.borrow_mut();
+        let keep = l.len() - n;
+        l.truncate(keep);
+    }
 }
 
 impl Lower<'_> {
@@ -131,6 +181,8 @@ impl Lower<'_> {
                 .map(|n| (n.name.clone(), n.id))
                 .collect(),
             item: None,
+            locals: RefCell::new(Vec::new()),
+            slots: Cell::new(0),
         };
         let mut stmts: HashMap<&str, (&FanOut, &Expr)> = HashMap::new();
         let mut ret = None;
@@ -148,8 +200,10 @@ impl Lower<'_> {
             }
         }
         for n in &mut g.nodes {
+            scope.slots.set(0);
             if n.name == "return" {
                 n.value = ret.map(|e| self.expr(e, &scope));
+                n.nlocals = scope.slots.get();
                 continue;
             }
             let Some((fan_out, value)) = stmts.get(n.name.as_str()) else {
@@ -164,6 +218,7 @@ impl Lower<'_> {
                 }
                 None => n.value = Some(self.expr(value, &scope)),
             }
+            n.nlocals = scope.slots.get();
         }
         g.rank_nodes();
     }
@@ -183,10 +238,152 @@ impl Lower<'_> {
             ExprKind::Call { callee, args } => self.call(callee, args, scope),
             // Only present in programs with errors, which are never lowered.
             ExprKind::Error => ir::Expr::Text(String::new()),
+            ExprKind::Binary { op, left, right } => ir::Expr::Binary {
+                op: op.clone(),
+                left: Box::new(self.expr(left, scope)),
+                right: Box::new(self.expr(right, scope)),
+            },
+            ExprKind::Unary { op, value } => ir::Expr::Unary {
+                op: op.clone(),
+                value: Box::new(self.expr(value, scope)),
+            },
+            ExprKind::If { cond, then, els } => ir::Expr::If {
+                cond: Box::new(self.expr(cond, scope)),
+                then: Box::new(self.expr(then, scope)),
+                els: Box::new(self.expr(els, scope)),
+            },
+            ExprKind::Match { value, cases } => ir::Expr::Match {
+                value: Box::new(self.expr(value, scope)),
+                cases: cases
+                    .iter()
+                    .map(|c| {
+                        // Names bind the variant's fields by position.
+                        let fields = c
+                            .variant
+                            .as_ref()
+                            .map(|v| self.variant_fields(&v.name))
+                            .unwrap_or_default();
+                        let binds: Vec<(String, usize)> = c
+                            .binds
+                            .iter()
+                            .zip(fields)
+                            .filter(|(b, _)| b.name != "_")
+                            .map(|(b, f)| (f, scope.bind(&b.name)))
+                            .collect();
+                        let body = self.expr(&c.body, scope);
+                        scope.unbind(binds.len());
+                        ir::MatchCase {
+                            variant: c.variant.as_ref().map(|v| v.name.clone()),
+                            binds,
+                            body,
+                        }
+                    })
+                    .collect(),
+            },
+            ExprKind::Loop {
+                var,
+                init,
+                max,
+                body,
+                on_limit,
+            } => {
+                let init = self.expr(init, scope);
+                let slot = scope.bind(&var.name);
+                let body = self.expr(body, scope);
+                scope.unbind(1);
+                ir::Expr::Loop {
+                    slot,
+                    init: Box::new(init),
+                    max: *max,
+                    body: Box::new(body),
+                    on_limit: match on_limit {
+                        OnLimit::Last => None,
+                        OnLimit::Fail(lit) => Some(plain_text(lit)),
+                        _ => Some(format!("the loop reached its limit of {max} turns")),
+                    },
+                }
+            }
+            ExprKind::Done(v) => ir::Expr::Done(Box::new(self.expr(v, scope))),
+            ExprKind::Next(v) => ir::Expr::Next(Box::new(self.expr(v, scope))),
+            ExprKind::Try(v) => ir::Expr::Try(Box::new(self.expr(v, scope))),
+            ExprKind::Agent(a) => {
+                let (prompt, args) = match a.task.as_ref().map(|t| &t.kind) {
+                    Some(ExprKind::Call {
+                        callee,
+                        args: pargs,
+                    }) => match &callee.kind {
+                        ExprKind::Ident(p) => match self.prompts.get(p.as_str()) {
+                            Some((i, params)) => (
+                                *i,
+                                self.ordered(params.iter().map(String::as_str), pargs, scope),
+                            ),
+                            None => (0, Vec::new()),
+                        },
+                        _ => (0, Vec::new()),
+                    },
+                    _ => (0, Vec::new()),
+                };
+                let action = |o: &OnLimit, what: &str| match o {
+                    OnLimit::Fail(lit) => Some(plain_text(lit)),
+                    OnLimit::FinalAnswer => None,
+                    _ => Some(format!("the agent {what}")),
+                };
+                ir::Expr::Agent(Box::new(ir::Agent {
+                    model: self.models.get(a.model.name.as_str()).copied().unwrap_or(0),
+                    prompt,
+                    args,
+                    tools: a
+                        .tools
+                        .iter()
+                        .filter_map(|t| self.tools.get(t.name.as_str()).map(|(i, _)| *i))
+                        .collect(),
+                    max_turns: a.max_turns.map_or(1, |m| m.0),
+                    on_turn_limit: action(&a.on_turn_limit, "reached its turn limit"),
+                    on_stuck: action(&a.on_stuck, "got stuck repeating the same action"),
+                }))
+            }
         }
     }
 
+    /// The fields of a variant, in order. `Ok` and `Failed` are the result
+    /// of `try`.
+    fn variant_fields(&self, name: &str) -> Vec<String> {
+        match name {
+            "Ok" => return vec!["value".into()],
+            "Failed" => return vec!["error".into()],
+            _ => {}
+        }
+        for decl in self.types.values() {
+            if let TypeKind::Variants(vs) = &decl.ty.kind
+                && let Some(v) = vs.iter().find(|v| v.name.name == name)
+            {
+                return v.fields.iter().map(|f| f.name.name.clone()).collect();
+            }
+        }
+        Vec::new()
+    }
+
+    /// `Name(field=value)`: a record, or a variant with `kind`.
+    fn construct(
+        &self,
+        kind: Option<&str>,
+        fields: &[String],
+        args: &[Arg],
+        scope: &Scope,
+    ) -> ir::Expr {
+        let values = self.ordered(fields.iter().map(String::as_str), args, scope);
+        let mut out: Vec<(String, ir::Expr)> = Vec::new();
+        if let Some(k) = kind {
+            out.push(("kind".into(), ir::Expr::Text(k.to_owned())));
+        }
+        out.extend(fields.iter().cloned().zip(values));
+        ir::Expr::Record(out)
+    }
+
     fn name(&self, n: &str, scope: &Scope) -> ir::Expr {
+        if let Some((_, slot)) = scope.locals.borrow().iter().rev().find(|(l, _)| l == n) {
+            return ir::Expr::Local(*slot);
+        }
         if scope.item == Some(n) {
             return ir::Expr::Item;
         }
@@ -196,8 +393,12 @@ impl Lower<'_> {
         if let Some(id) = scope.nodes.get(n) {
             return ir::Expr::Node(*id);
         }
-        if self.variants.contains_key(n) {
-            return ir::Expr::Text(n.to_owned());
+        match self.variants.get(n) {
+            Some(true) => return ir::Expr::Text(n.to_owned()),
+            Some(false) => {
+                return ir::Expr::Record(vec![("kind".into(), ir::Expr::Text(n.to_owned()))]);
+            }
+            None => {}
         }
         ir::Expr::Text(String::new())
     }
@@ -240,6 +441,22 @@ impl Lower<'_> {
                 graph: *graph,
                 args: self.ordered(params.iter().map(String::as_str), args, scope),
             };
+        }
+        if let Some(decl) = self.types.get(name.as_str())
+            && let TypeKind::Record(fields) = &decl.ty.kind
+        {
+            let names: Vec<String> = fields.iter().map(|f| f.name.name.clone()).collect();
+            return self.construct(None, &names, args, scope);
+        }
+        if self.variants.contains_key(name.as_str()) {
+            for decl in self.types.values() {
+                if let TypeKind::Variants(vs) = &decl.ty.kind
+                    && let Some(v) = vs.iter().find(|v| v.name.name == *name)
+                {
+                    let names: Vec<String> = v.fields.iter().map(|f| f.name.name.clone()).collect();
+                    return self.construct(Some(name), &names, args, scope);
+                }
+            }
         }
         ir::Expr::Text(String::new())
     }
@@ -378,8 +595,33 @@ impl Lower<'_> {
                     .collect();
                 format!("{{\"type\":\"string\",\"enum\":[{}]}}", names.join(","))
             }
-            // Variants with fields arrive with `match` (M5).
-            TypeKind::Variants(_) => "{\"type\":\"object\"}".into(),
+            // One alternative per variant: `kind` names it, and its own
+            // fields are required.
+            TypeKind::Variants(vs) => {
+                let alternatives: Vec<String> = vs
+                    .iter()
+                    .map(|v| {
+                        let mut kind = String::new();
+                        ir_string(&mut kind, &v.name.name);
+                        let mut props = vec![format!(
+                            "\"kind\":{{\"type\":\"string\",\"enum\":[{kind}]}}"
+                        )];
+                        let mut required = vec!["\"kind\"".to_owned()];
+                        for f in &v.fields {
+                            let mut name = String::new();
+                            ir_string(&mut name, &f.name.name);
+                            props.push(format!("{name}:{}", self.schema(&f.ty, depth + 1)));
+                            required.push(name);
+                        }
+                        format!(
+                            "{{\"type\":\"object\",\"properties\":{{{}}},\"required\":[{}]}}",
+                            props.join(","),
+                            required.join(",")
+                        )
+                    })
+                    .collect();
+                format!("{{\"anyOf\":[{}]}}", alternatives.join(","))
+            }
         }
     }
 }
@@ -421,6 +663,17 @@ fn limits(entries: &[(Ident, Expr)]) -> ir::Limits {
         }
     }
     l
+}
+
+/// The text of a literal without interpolation.
+fn plain_text(lit: &StrLit) -> String {
+    split_template(&lit.text)
+        .into_iter()
+        .map(|p| match p {
+            PromptPart::Lit(s) => s,
+            PromptPart::Path(path) => format!("{{{}}}", path.join(".")),
+        })
+        .collect()
 }
 
 fn is_text(t: &TypeExpr) -> bool {
@@ -505,7 +758,26 @@ fn tool(t: &ToolDecl) -> ir::Tool {
         Effect::Pure | Effect::Llm => 300_000,
         Effect::Write | Effect::WriteOnce => 60_000,
     };
+    let description =
+        t.props
+            .iter()
+            .find_map(|p| match (p.key.name.as_str(), p.value.as_slice()) {
+                (
+                    "description",
+                    [
+                        Expr {
+                            kind: ExprKind::Str(lit),
+                            ..
+                        },
+                    ],
+                ) => Some(plain_text(lit)),
+                _ => None,
+            });
+    let repeatable = t.props.iter().any(|p| p.key.name == "repeatable");
     ir::Tool {
+        schema: String::new(),
+        description,
+        repeatable,
         name: t.name.name.clone(),
         params: t.params.iter().map(|p| p.name.name.clone()).collect(),
         effect,

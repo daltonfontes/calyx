@@ -36,7 +36,7 @@ fn display_name(path: &Path) -> String {
 
 /// Examples that use only supported constructs and must pass the full check.
 /// The others use constructs from later milestones and are only lexed.
-const FULLY_CHECKED: &[&str] = &["examples/research.clyx"];
+const FULLY_CHECKED: &[&str] = &["examples/research.clyx", "examples/agent.clyx"];
 
 #[test]
 fn programs_match_expected_diagnostics_and_ir() {

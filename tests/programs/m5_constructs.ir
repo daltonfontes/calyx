@@ -1,0 +1,9 @@
+graph g(q: Text, n: Nat) -> Text [read]
+  %0 found: Text = agent m [read]
+  %1 final: Text = loop [llm] <- %0
+  %2 checked: Result[Review] = try [llm] <- %1
+  %3 label: Text = match [pure] <- %2
+  %4 size: Text = if [pure]
+  %5 note: Note = pure [pure] <- %3
+  %6 return: Text = pure [pure] <- %1 %5 %4
+  return %6

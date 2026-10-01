@@ -109,6 +109,41 @@ cx_value *cx_list(cx_arena *a, cx_value **items, size_t len) {
     return v;
 }
 
+cx_value *cx_rec(cx_arena *a, const char **keys, cx_value **vals, size_t len) {
+    cx_value *v = make(a, CX_REC);
+    v->u.rec.keys = cx_alloc(a, (len ? len : 1) * sizeof(char *));
+    v->u.rec.vals = cx_alloc(a, (len ? len : 1) * sizeof(cx_value *));
+    if (len) {
+        memcpy(v->u.rec.keys, keys, len * sizeof(char *));
+        memcpy(v->u.rec.vals, vals, len * sizeof(cx_value *));
+    }
+    v->u.rec.len = len;
+    return v;
+}
+
+int cx_equal(const cx_value *x, const cx_value *y) {
+    if (!x || !y) return x == y;
+    if (x->kind != y->kind) return 0;
+    switch (x->kind) {
+    case CX_NULL: return 1;
+    case CX_BOOL: return x->u.b == y->u.b;
+    case CX_NUM: return x->u.num == y->u.num;
+    case CX_STR:
+        return x->u.str.len == y->u.str.len && memcmp(x->u.str.s, y->u.str.s, x->u.str.len) == 0;
+    case CX_LIST:
+        if (x->u.list.len != y->u.list.len) return 0;
+        for (size_t i = 0; i < x->u.list.len; i++)
+            if (!cx_equal(x->u.list.items[i], y->u.list.items[i])) return 0;
+        return 1;
+    case CX_REC:
+        if (x->u.rec.len != y->u.rec.len) return 0;
+        for (size_t i = 0; i < x->u.rec.len; i++)
+            if (!cx_equal(x->u.rec.vals[i], cx_get(y, x->u.rec.keys[i]))) return 0;
+        return 1;
+    }
+    return 0;
+}
+
 cx_value *cx_get(const cx_value *rec, const char *key) {
     if (!rec || rec->kind != CX_REC) return NULL;
     for (size_t i = 0; i < rec->u.rec.len; i++)

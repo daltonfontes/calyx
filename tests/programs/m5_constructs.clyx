@@ -1,0 +1,48 @@
+# M5: agent, loop with match/done/next, try, nested match, if, operators, constructors.
+model m = "fake-model"
+
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 1000 tokens
+    description "Busca na web."
+
+type Review = Approved | Rejected(feedback: Text)
+
+type Note:
+    text: Text
+    score: Nat
+
+prompt investigate(q: Text) -> Text:
+    """Pesquise: {q}"""
+
+prompt revise(text: Text) -> Review:
+    """Revise: {text}"""
+
+prompt rewrite(text: Text, feedback: Text) -> Text:
+    """Reescreva {text} com {feedback}"""
+
+graph g(q: Text, n: Nat) -> Text:
+    found = agent m:
+        tools [web_search]
+        max_turns 5
+        task investigate(q)
+        on turn_limit: final_answer
+        on stuck: fail "travou"
+    final = loop text = found, max 3:
+        match m(revise(text)):
+            case Approved: done text
+            case Rejected(feedback): next m(rewrite(text, feedback))
+        on limit: last
+    checked = try m(revise(final))
+    label = match checked:
+        case Ok(value):
+            match value:
+                case Approved: "ok"
+                case Rejected(feedback): "rejeitado: " + feedback
+        case Failed(error): "falhou: " + error
+    size = if n > 2 and not (n == 5):
+        "grande"
+    else:
+        "pequeno"
+    note = Note(text=label, score=n * 2)
+    return final + " / " + note.text + " / " + size

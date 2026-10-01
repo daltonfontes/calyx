@@ -69,6 +69,8 @@ pub enum NodeKind {
     Tool { tool: String },
     /// A call to another graph.
     Call { graph: String },
+    /// A control construct: `loop`, `match`, `if`, `try`, `agent claude`.
+    Other(String),
 }
 
 impl fmt::Display for NodeKind {
@@ -78,6 +80,7 @@ impl fmt::Display for NodeKind {
             NodeKind::Model { model, prompt } => write!(f, "model {model}({prompt})"),
             NodeKind::Tool { tool } => write!(f, "tool {tool}"),
             NodeKind::Call { graph } => write!(f, "graph {graph}"),
+            NodeKind::Other(what) => f.write_str(what),
         }
     }
 }
@@ -115,6 +118,66 @@ pub enum Expr {
         graph: usize,
         args: Vec<Expr>,
     },
+    /// A name bound inside the node: a loop's value or a `case` field.
+    Local(usize),
+    /// A record, or a variant with fields (with `kind` naming it).
+    Record(Vec<(String, Expr)>),
+    Binary {
+        op: String,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    Unary {
+        op: String,
+        value: Box<Expr>,
+    },
+    If {
+        cond: Box<Expr>,
+        then: Box<Expr>,
+        els: Box<Expr>,
+    },
+    Match {
+        value: Box<Expr>,
+        cases: Vec<MatchCase>,
+    },
+    /// `loop` (decision D5): `slot` holds the carried value.
+    Loop {
+        slot: usize,
+        init: Box<Expr>,
+        max: u64,
+        body: Box<Expr>,
+        /// `None`: `on limit: last`; `Some(reason)`: fail.
+        on_limit: Option<String>,
+    },
+    Done(Box<Expr>),
+    Next(Box<Expr>),
+    /// `Ok(value)` or `Failed(error)` (decision D11).
+    Try(Box<Expr>),
+    /// The ReAct cycle (decision D5): the model, with tools, until it answers.
+    Agent(Box<Agent>),
+}
+
+/// One `case` of a `match`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchCase {
+    /// `None` for `case _`.
+    pub variant: Option<String>,
+    /// Fields of the variant and the local slots they are bound to.
+    pub binds: Vec<(String, usize)>,
+    pub body: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Agent {
+    pub model: usize,
+    /// The task: a prompt and its arguments.
+    pub prompt: usize,
+    pub args: Vec<Expr>,
+    pub tools: Vec<usize>,
+    pub max_turns: u64,
+    /// `None`: ask for a final answer; `Some(reason)`: fail.
+    pub on_turn_limit: Option<String>,
+    pub on_stuck: Option<String>,
 }
 
 /// A piece of an interpolated text.
@@ -152,6 +215,12 @@ pub struct Tool {
     pub retry_on: Vec<String>,
     /// The tool returns `Text`; otherwise its output is decoded as JSON.
     pub returns_text: bool,
+    /// JSON Schema of the arguments, for models that call the tool.
+    pub schema: String,
+    /// What the tool does, in words, for models that call it.
+    pub description: Option<String>,
+    /// Repeating it with the same arguments is legitimate (not "stuck").
+    pub repeatable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,6 +254,8 @@ pub struct Node {
     /// graph along its longest path: the scheduler runs higher ranks first
     /// (decision D24). Set by [`Graph::rank_nodes`].
     pub rank: f64,
+    /// Local slots its expressions use (loop values, `case` fields).
+    pub nlocals: usize,
 }
 
 /// What `limits ...` sets on a graph (decision D3). The programmer limits
@@ -227,6 +298,23 @@ impl Graph {
                 Expr::Tool { args, .. } => 1.0 + args.iter().map(calls).sum::<f64>(),
                 Expr::Field(base, _) => calls(base),
                 Expr::List(items) => items.iter().map(calls).sum(),
+                Expr::Record(fields) => fields.iter().map(|(_, e)| calls(e)).sum(),
+                Expr::Binary { left, right, .. } => calls(left) + calls(right),
+                Expr::Unary { value, .. }
+                | Expr::Done(value)
+                | Expr::Next(value)
+                | Expr::Try(value) => calls(value),
+                Expr::If { cond, then, els } => calls(cond) + calls(then).max(calls(els)),
+                Expr::Match { value, cases } => {
+                    calls(value) + cases.iter().map(|c| calls(&c.body)).fold(0.0, f64::max)
+                }
+                // A loop is expected to turn about twice.
+                Expr::Loop { init, body, .. } => calls(init) + 2.0 * calls(body),
+                // An agent: a few turns of a model call and a tool call each.
+                Expr::Agent(a) => {
+                    let turns = a.max_turns.min(3) as f64;
+                    turns * 4.0 + a.args.iter().map(calls).sum::<f64>()
+                }
                 Expr::Interp(parts) => parts
                     .iter()
                     .map(|p| match p {
@@ -356,6 +444,7 @@ mod tests {
             over: None,
             value: None,
             rank: 0.0,
+            nlocals: 0,
         }
     }
 
@@ -397,6 +486,7 @@ mod tests {
                 over: None,
                 value: None,
                 rank: 0.0,
+                nlocals: 0,
             }],
             output: Some(NodeId(0)),
             limits: Limits::default(),

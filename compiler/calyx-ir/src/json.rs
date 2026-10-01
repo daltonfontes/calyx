@@ -6,6 +6,13 @@
 
 use crate::{Effect, Expr, Graph, Limits, Model, Node, Part, Program, Prompt, PromptPart, Tool};
 
+fn opt_string(o: &mut String, v: Option<&str>) {
+    match v {
+        Some(s) => string(o, s),
+        None => o.push_str("null"),
+    }
+}
+
 /// Format version, checked by the runtime.
 pub const IR_VERSION: u32 = 1;
 
@@ -90,7 +97,12 @@ fn tool(o: &mut String, t: &Tool) {
     o.push_str(&format!(",\"timeout_ms\":{}", t.timeout_ms));
     o.push_str(",\"retry_on\":");
     strings(o, &t.retry_on);
-    o.push_str(&format!(",\"returns_text\":{}}}", t.returns_text));
+    o.push_str(&format!(",\"returns_text\":{}", t.returns_text));
+    o.push_str(",\"schema\":");
+    o.push_str(&t.schema);
+    o.push_str(",\"description\":");
+    opt_string(o, t.description.as_deref());
+    o.push_str(&format!(",\"repeatable\":{}}}", t.repeatable));
 }
 
 fn prompt(o: &mut String, p: &Prompt) {
@@ -164,7 +176,7 @@ fn node(o: &mut String, n: &Node) {
     effect(o, n.effect);
     o.push_str(",\"inputs\":");
     list(o, &n.inputs, |o, i| o.push_str(&i.0.to_string()));
-    o.push_str(&format!(",\"rank\":{:?}", n.rank));
+    o.push_str(&format!(",\"rank\":{:?},\"nlocals\":{}", n.rank, n.nlocals));
     // Call ids start at 0 in each expression: the list and the items are
     // separate places in the realized graph (`node#k` and `node[j]#k`).
     o.push_str(",\"over\":");
@@ -251,6 +263,109 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
         ),
         Expr::Tool { tool, args } => call(o, "tool", &[("tool", *tool)], args, ids),
         Expr::Graph { graph, args } => call(o, "graph", &[("graph", *graph)], args, ids),
+        Expr::Local(i) => o.push_str(&format!("{{\"k\":\"local\",\"i\":{i}}}")),
+        Expr::Record(fields) => {
+            o.push_str("{\"k\":\"record\",\"names\":");
+            list(o, fields, |o, (n, _)| string(o, n));
+            o.push_str(",\"values\":");
+            list(o, fields, |o, (_, e)| expr(o, e, ids));
+            o.push('}');
+        }
+        Expr::Binary { op, left, right } => {
+            o.push_str("{\"k\":\"bin\",\"op\":");
+            string(o, op);
+            o.push_str(",\"l\":");
+            expr(o, left, ids);
+            o.push_str(",\"r\":");
+            expr(o, right, ids);
+            o.push('}');
+        }
+        Expr::Unary { op, value } => {
+            o.push_str("{\"k\":\"un\",\"op\":");
+            string(o, op);
+            o.push_str(",\"v\":");
+            expr(o, value, ids);
+            o.push('}');
+        }
+        Expr::If { cond, then, els } => {
+            o.push_str("{\"k\":\"if\",\"c\":");
+            expr(o, cond, ids);
+            o.push_str(",\"t\":");
+            expr(o, then, ids);
+            o.push_str(",\"e\":");
+            expr(o, els, ids);
+            o.push('}');
+        }
+        Expr::Match { value, cases } => {
+            o.push_str("{\"k\":\"match\",\"v\":");
+            expr(o, value, ids);
+            o.push_str(",\"cases\":");
+            list(o, cases, |o, c| {
+                o.push_str("{\"variant\":");
+                opt_string(o, c.variant.as_deref());
+                o.push_str(",\"binds\":");
+                list(o, &c.binds, |o, (f, slot)| {
+                    o.push('[');
+                    string(o, f);
+                    o.push_str(&format!(",{slot}]"));
+                });
+                o.push_str(",\"body\":");
+                expr(o, &c.body, ids);
+                o.push('}');
+            });
+            o.push('}');
+        }
+        Expr::Loop {
+            slot,
+            init,
+            max,
+            body,
+            on_limit,
+        } => {
+            let mut inner = String::new();
+            inner.push_str(",\"init\":");
+            expr(&mut inner, init, ids);
+            inner.push_str(",\"body\":");
+            expr(&mut inner, body, ids);
+            let id = *ids;
+            *ids += 1;
+            o.push_str(&format!(
+                "{{\"k\":\"loop\",\"id\":{id},\"slot\":{slot},\"max\":{max}"
+            ));
+            o.push_str(&inner);
+            o.push_str(",\"on_limit\":");
+            opt_string(o, on_limit.as_deref());
+            o.push('}');
+        }
+        Expr::Done(v) | Expr::Next(v) | Expr::Try(v) => {
+            let k = match e {
+                Expr::Done(_) => "done",
+                Expr::Next(_) => "next",
+                _ => "try",
+            };
+            o.push_str(&format!("{{\"k\":\"{k}\",\"v\":"));
+            expr(o, v, ids);
+            o.push('}');
+        }
+        Expr::Agent(a) => {
+            let mut args = String::new();
+            list(&mut args, &a.args, |o, e| expr(o, e, ids));
+            let id = *ids;
+            *ids += 1;
+            o.push_str(&format!(
+                "{{\"k\":\"agent\",\"id\":{id},\"model\":{},\"prompt\":{},\"args\":{args},\"tools\":",
+                a.model, a.prompt
+            ));
+            list(o, &a.tools, |o, t| o.push_str(&t.to_string()));
+            o.push_str(&format!(
+                ",\"max_turns\":{},\"on_turn_limit\":",
+                a.max_turns
+            ));
+            opt_string(o, a.on_turn_limit.as_deref());
+            o.push_str(",\"on_stuck\":");
+            opt_string(o, a.on_stuck.as_deref());
+            o.push('}');
+        }
     }
 }
 

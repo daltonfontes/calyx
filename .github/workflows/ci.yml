@@ -25,3 +25,4 @@ jobs:
           cargo build --release
           ./target/release/calyx check examples/research.clyx --ir --time
           ./target/release/calyx run examples/research.clyx --fake-models --topic "energia solar"
+          ./target/release/calyx run examples/agent.clyx --fake-models --question "baterias de sódio"

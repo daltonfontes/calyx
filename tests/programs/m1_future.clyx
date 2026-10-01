@@ -5,9 +5,9 @@ def check(x: Text) -> Bool:
     return x
 
 graph g(q: Text) -> Text:
-    a = agent claude:
-        max_turns 10
-    b = loop t = q, max 3:
-        done t
+    a = race first where it == q:
+        one: q
+    b = rounds 3, carry t = q:
+        next t
     notify after a
     return q

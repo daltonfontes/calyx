@@ -38,8 +38,8 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | M2 | ✅ Concluído: `calyx run`. A IR passou a levar as expressões, os modelos, as tools e os prompts (com o JSON Schema da resposta), e sai em JSON (`calyx check --ir-json`). Interpretador em C (valores imutáveis numa arena, fan-out na ordem da lista, novas tentativas por efeito, rastro). Camada de E/S em Rust: modelos pela API no formato da OpenAI (Gemini, NVIDIA, OpenAI e outros), tools por MCP via stdio, `calyx.toml`, modelos falsos para testes. Tudo numa biblioteca estática só |
 | M3 | ✅ Concluído: diário por execução (`.calyx/runs/<id>/`), uma entrada por chamada com chave estável e hash do pedido, conteúdos grandes por hash, `begin` para `write once`, hash do programa (D23). `calyx resume`, `calyx replay`, `calyx runs`. Quedas simuladas nos testes (`CALYX_CRASH_AFTER`) |
 | M4 | ✅ Concluído: cada passo e cada item de `for each` é uma tarefa; workers com fila de prioridade e roubo de trabalho; chamadas em threads de E/S (nunca bloqueiam um worker), até `limits threads`; prioridade pelo caminho crítico calculado pelo compilador; limites `rate` e `budget` (preços no `calyx.toml`); espera pedida pelo provedor respeitada; `--deterministic` |
-| M5 | Próximo |
-| M6 | Não iniciado |
+| M5 | ✅ Concluído: `agent` (ciclo ReAct com chamada de tools nativa do provedor, tools em paralelo, `stuck`, `final_answer`), `loop` com `done`/`next`/`on limit`, `match` com cobertura de todas as variantes, `if`, operadores, construção de registros e variantes, `try` com `Result[T]`. Falhas locais (capturáveis) e respostas conferidas contra o tipo do prompt |
+| M6 | Próximo |
 
 ## Medidas
 
@@ -58,6 +58,26 @@ Programas sintéticos (grafos de 21 nós com fan-out), binário de release, máq
 - **Otimizações possíveis, ainda não necessárias:** cerca de 20% das instruções são alocação (`malloc`/`free`) e 5% são o hash padrão de `HashMap`. Trocar o hash por um mais rápido e reduzir cópias de texto deve reduzir o tempo do arquivo grande.
 
 Para repetir: `cargo run --release -p calyx-check --example phases -- arquivo.clyx`.
+
+### M5: o ReAct como ciclo funciona
+
+`examples/agent.clyx` com `gemini-3.5-flash-lite` e a busca falsa (MCP): um agente que pesquisa, seguido de um laço de revisão (`loop` + `match` em `Approved | Rejected(feedback)`).
+
+| | Resultado |
+|---|---|
+| Agente | 6 voltas com chamada de tool nativa do Gemini, depois `final_answer` pelo limite de voltas (a busca falsa nunca traz o que ele procura) |
+| Assinatura de raciocínio do Gemini | Ida e volta em todas as voltas, sem erro: a mensagem do modelo volta exatamente como veio |
+| Laço de revisão | `Rejected` com comentário → resposta melhorada → `Approved` → `done` |
+| Total | 10 chamadas de modelo, 6 de tool |
+
+O que o M5 ensinou:
+
+- **Modelos não respeitam o esquema que recebem.** Na primeira execução, o esquema de `Review` juntava os campos de todas as variantes como opcionais, e o Gemini respondeu `{"kind": "Rejected"}` **sem** o `feedback`. O laço seguiu com um comentário vazio, e o modelo respondeu "você esqueceu de colar o comentário". Duas correções:
+  - o esquema agora tem uma alternativa por variante, cada uma exigindo os próprios campos;
+  - **toda resposta é conferida contra o tipo antes de ser usada**; fora do tipo, conta como erro e o modelo é chamado de novo. É isso que torna "a resposta chega no tipo declarado" uma garantia, não uma esperança.
+- **Escrever os testes achou dois erros do verificador**: o literal `0` não servia de valor inicial de um laço com `next i + 1`; e os campos de um `case` eram ligados pelo nome, o que tornava impossível aninhar dois `match` sobre `Result` (os dois ligavam `error`). Agora os campos são ligados pela posição, como no Python.
+- **Uma falha precisa ser local antes de ser global.** Para o `try` funcionar, o erro de uma chamada deixou de parar a execução na hora: ele fica com a tarefa, e só para tudo se nada o capturar. Do mesmo jeito, uma tool que falha dentro de um agente vira uma observação para o modelo, e o agente continua.
+- **Latência do plano gratuito:** nessa execução, cada chamada levou de 3 a 35 s (antes, 1 a 2 s). O agente levou 3 min, quase todo esperando o provedor. Para agentes, o limite de ritmo do provedor pesa mais que tudo o resto.
 
 ### M4 (Q1): quanto paralelismo sai sozinho
 

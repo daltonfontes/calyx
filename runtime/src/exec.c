@@ -31,7 +31,13 @@
  * threads share them without locks; each thread allocates from its own
  * arena, and all are freed when the run ends.
  *
- * Still to come: failures as values (M5).
+ * M5 adds loops, `match`, `if`, operators, records, `try` and agents. A
+ * failure is local first: the task's context carries it, so `try` can turn
+ * it into a value; only a failure nobody catches stops the run. An agent is
+ * the ReAct cycle (D5): model with tools, tool calls in parallel, their
+ * results as observations, until the model answers or a limit is reached.
+ * Every turn and every tool call is a call with its own key, so agents are
+ * journaled, resumed and replayed like everything else.
  */
 #define _POSIX_C_SOURCE 200809L
 
@@ -93,6 +99,7 @@ struct pending {
     const char *key;
     int state;
     cx_value *value;
+    const char *error; /* P_FAILED: why */
     waiter *waiters;
 };
 
@@ -113,6 +120,7 @@ struct gexec {
     double *started;
     size_t nodes_left;
     pending *parent; /* the call that started this subgraph; NULL for the root */
+    int failed;      /* a node failed; the parent call already knows */
 };
 
 typedef struct {
@@ -129,10 +137,15 @@ struct worker {
     task_heap q;
 };
 
+/* Kinds of call. */
+enum { CALL_TOOL, CALL_MODEL, CALL_CHAT };
+
 /* A call handed to an I/O thread. */
 struct job {
     pending *p;
-    int is_model;
+    int is_model; /* CALL_MODEL or CALL_CHAT */
+    int raw;      /* CALL_CHAT: the answer is kept as the provider sent it */
+    const char *note;
     cx_value *spec;   /* the model or the tool */
     cx_value *prompt; /* for models */
     char *req;
@@ -193,9 +206,12 @@ typedef struct {
     task *t;
     gexec *g;
     cx_value *item;
-    char *instance;    /* key prefix: `path/node` or `path/node[j]` */
+    char *instance;    /* `path/node` or `path/node[j]` */
+    const char *scope; /* key prefix: the instance, plus loop turns */
     const char *node;  /* node name, for errors */
     const char *label; /* `node` or `node[j]`, for the trace */
+    cx_value **locals; /* loop values and `case` fields */
+    const char *failure; /* a failure not reported yet; `try` may catch it */
 } ctx;
 
 /* ----- small helpers ----------------------------------------------------- */
@@ -259,7 +275,20 @@ static void fail_locked(exec *x, const char *graph, const char *node, const char
     pthread_cond_broadcast(&x->io_cv);
 }
 
+/* A failure of this evaluation: `try` may catch it; otherwise the task
+ * reports it when evaluation ends. */
 static cx_value *failf(ctx *c, const char *f, ...) {
+    char msg[1024];
+    va_list ap;
+    va_start(ap, f);
+    vsnprintf(msg, sizeof msg, f, ap);
+    va_end(ap);
+    if (!c->failure) c->failure = cx_strndup(&c->w->arena, msg, strlen(msg));
+    return NULL;
+}
+
+/* A failure nothing may catch (a broken journal, an invalid IR): stops the run. */
+static cx_value *fatalf(ctx *c, const char *f, ...) {
     char msg[1024];
     va_list ap;
     va_start(ap, f);
@@ -377,6 +406,7 @@ static pending *new_pending(exec *x, cx_arena *a, const char *key, int state, cx
     p->key = cx_strndup(a, key, strlen(key));
     p->state = state;
     p->value = value;
+    p->error = NULL;
     p->waiters = NULL;
     ptab_insert(x, p);
     return p;
@@ -557,6 +587,76 @@ static void strip_fence(const char **s, size_t *len) {
     *len = (size_t)(end - p);
 }
 
+/*
+ * Does `v` fit `schema`? The subset the compiler emits: type, enum,
+ * properties, required, items, maxItems, minimum and anyOf. Models do not
+ * always respect the schema they were given (a variant without its
+ * fields); the answer must have the prompt's type before anyone uses it.
+ */
+static int conforms(const cx_value *v, const cx_value *schema, const char **why) {
+    if (!schema || schema->kind != CX_REC) return 1;
+    cx_value *any = cx_get(schema, "anyOf");
+    if (any) {
+        for (size_t i = 0; i < len_of(any); i++)
+            if (conforms(v, at(any, i), why)) return 1;
+        *why = "the answer matches none of the variants of its type";
+        return 0;
+    }
+    const char *type = cx_get_str(schema, "type", NULL);
+    if (type) {
+        int ok = strcmp(type, "string") == 0    ? v->kind == CX_STR
+                 : strcmp(type, "boolean") == 0 ? v->kind == CX_BOOL
+                 : strcmp(type, "array") == 0   ? v->kind == CX_LIST
+                 : strcmp(type, "object") == 0  ? v->kind == CX_REC
+                 : strcmp(type, "number") == 0  ? v->kind == CX_NUM
+                 : strcmp(type, "integer") == 0 ? v->kind == CX_NUM && v->u.num == (double)(long long)v->u.num
+                                                : 1;
+        if (!ok) {
+            *why = "a value of the answer has the wrong type";
+            return 0;
+        }
+    }
+    cx_value *options = cx_get(schema, "enum");
+    if (options) {
+        int found = 0;
+        for (size_t i = 0; i < len_of(options); i++) found |= cx_equal(v, at(options, i));
+        if (!found) {
+            *why = "a value of the answer is not one of the allowed ones";
+            return 0;
+        }
+    }
+    cx_value *min = cx_get(schema, "minimum");
+    if (min && v->kind == CX_NUM && v->u.num < min->u.num) {
+        *why = "a number of the answer is below its minimum";
+        return 0;
+    }
+    if (v->kind == CX_LIST) {
+        cx_value *max = cx_get(schema, "maxItems");
+        if (max && (double)v->u.list.len > max->u.num) {
+            *why = "a list of the answer is longer than its `max`";
+            return 0;
+        }
+        for (size_t i = 0; i < v->u.list.len; i++)
+            if (!conforms(v->u.list.items[i], cx_get(schema, "items"), why)) return 0;
+    }
+    if (v->kind == CX_REC) {
+        cx_value *required = cx_get(schema, "required");
+        for (size_t i = 0; i < len_of(required); i++) {
+            cx_value *f = cx_get(v, at(required, i)->u.str.s);
+            if (!f || f->kind == CX_NULL) {
+                *why = "a required field is missing from the answer";
+                return 0;
+            }
+        }
+        cx_value *props = cx_get(schema, "properties");
+        for (size_t i = 0; props && i < props->u.rec.len; i++) {
+            cx_value *f = cx_get(v, props->u.rec.keys[i]);
+            if (f && f->kind != CX_NULL && !conforms(f, props->u.rec.vals[i], why)) return 0;
+        }
+    }
+    return 1;
+}
+
 /* A model's answer as a value of the prompt's type, or NULL. */
 static cx_value *decode_model(cx_arena *a, cx_value *prompt, cx_value *ok, const char **why) {
     cx_value *t = cx_get(ok, "text");
@@ -567,6 +667,7 @@ static cx_value *decode_model(cx_arena *a, cx_value *prompt, cx_value *ok, const
     strip_fence(&s, &len);
     *why = NULL;
     cx_value *v = cx_parse(a, s, len, why);
+    if (v && !conforms(v, schema, why)) return NULL;
     if (v && cx_get_bool(prompt, "wrapped", 0)) {
         v = cx_get(v, "value");
         if (!v) *why = "missing `value`";
@@ -678,15 +779,19 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
         double hint = 0;
         if (ok) {
             const char *perr = NULL;
-            cx_value *v = j->is_model ? decode_model(a, j->prompt, ok, &perr)
-                                      : decode_tool(a, j->spec, ok);
+            cx_value *v = j->raw        ? ok
+                          : j->is_model ? decode_model(a, j->prompt, ok, &perr)
+                                        : decode_tool(a, j->spec, ok);
             if (j->is_model) {
                 pthread_mutex_lock(&x->mu);
                 account(x, name, ok);
                 pthread_mutex_unlock(&x->mu);
-                trace(x, j->label, "llm   %s(%s)  %.2f s  %.0f -> %.0f tokens%s", name,
-                      prompt_name, cx_get_num(ok, "ms", 0) / 1000.0,
-                      cx_get_num(ok, "input_tokens", 0), cx_get_num(ok, "output_tokens", 0),
+                size_t ncalls = len_of(cx_get(ok, "tool_calls"));
+                trace(x, j->label, "llm   %s(%s)%s%s  %.2f s  %.0f -> %.0f tokens%s%s", name,
+                      prompt_name, j->note ? "  " : "", j->note ? j->note : "",
+                      cx_get_num(ok, "ms", 0) / 1000.0, cx_get_num(ok, "input_tokens", 0),
+                      cx_get_num(ok, "output_tokens", 0),
+                      ncalls ? (ncalls == 1 ? "  -> 1 tool call" : "  -> tool calls") : "",
                       attempt > 1 ? "  (retry)" : "");
             } else {
                 trace(x, j->label, "%-5s %s  %.2f s%s%s", effect, name,
@@ -709,8 +814,8 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
             /* The answer does not match the prompt's type: ask again. */
             kind = "Decode";
             snprintf(why, why_len,
-                     "model `%s` with prompt `%s` failed: Decode: the answer is not valid JSON "
-                     "(%s)",
+                     "model `%s` with prompt `%s` failed: Decode: the answer does not have the "
+                     "prompt's type (%s)",
                      name, prompt_name, perr ? perr : "?");
         } else {
             cx_value *err = cx_get(ans, "error");
@@ -770,8 +875,9 @@ static void *io_main(void *arg) {
             j->p->state = P_DONE;
             j->p->value = v;
         } else {
+            /* The tasks that wait decide: `try` turns it into a value. */
             j->p->state = P_FAILED;
-            if (strcmp(why, "stopped") != 0) fail_locked(x, j->graph, j->node, why);
+            j->p->error = cx_strndup(a, why, strlen(why));
         }
         wake(x, NULL, j->p);
         check_stuck(x);
@@ -788,10 +894,10 @@ static void *io_main(void *arg) {
  * The value of a call: from memory or the journal if it finished, or
  * PENDING after handing it to an I/O thread. Takes the request text.
  */
-static cx_value *request(ctx *c, cx_value *e, int is_model, cx_value *spec, cx_value *prompt,
-                         cx_buf *req) {
+static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_value *prompt,
+                         cx_buf *req, const char *note) {
     exec *x = c->x;
-    const char *key = fmt(&c->w->arena, "%s#%zu", c->instance, index_of(e, "id"));
+    int is_model = kind != CALL_TOOL;
     char hash[65];
     cx_sha256_hex(req->data, req->len, hash);
     const char *name = cx_get_str(spec, is_model ? "id" : "name", "?");
@@ -807,6 +913,7 @@ static cx_value *request(ctx *c, cx_value *e, int is_model, cx_value *spec, cx_v
             add_waiter(&c->w->arena, p, c->t);
             result = PENDING;
         }
+        if (p->state == P_FAILED && !c->failure) c->failure = p->error;
         pthread_mutex_unlock(&x->mu);
         cx_buf_free(req);
         return result;
@@ -842,8 +949,9 @@ static cx_value *request(ctx *c, cx_value *e, int is_model, cx_value *spec, cx_v
         }
         if (hit) {
             const char *why = NULL;
-            cx_value *v = is_model ? decode_model(&c->w->arena, prompt, hit, &why)
-                                   : decode_tool(&c->w->arena, spec, hit);
+            cx_value *v = kind == CALL_CHAT ? hit
+                          : is_model        ? decode_model(&c->w->arena, prompt, hit, &why)
+                                            : decode_tool(&c->w->arena, spec, hit);
             if (!v) {
                 fail_locked(x, graph, c->node, "the journal's answer does not decode");
             } else {
@@ -866,6 +974,8 @@ static cx_value *request(ctx *c, cx_value *e, int is_model, cx_value *spec, cx_v
     if (!j) abort();
     j->p = p;
     j->is_model = is_model;
+    j->raw = kind == CALL_CHAT;
+    j->note = note;
     j->spec = spec;
     j->prompt = prompt;
     j->req = cx_buf_take(req);
@@ -884,6 +994,11 @@ static cx_value *request(ctx *c, cx_value *e, int is_model, cx_value *spec, cx_v
 
 static cx_value *eval(ctx *c, cx_value *e);
 
+/* The key of a call in this node instance: `scope#id`. */
+static const char *call_key(ctx *c, cx_value *e) {
+    return fmt(&c->w->arena, "%s#%zu", c->scope, index_of(e, "id"));
+}
+
 /* Evaluates every expression of `list` into `out`, so independent calls
  * start together. Returns NULL on error or PENDING from the caller. */
 #define EVAL_ALL(c, list, out)                                                          \
@@ -897,18 +1012,9 @@ static cx_value *eval(ctx *c, cx_value *e);
         if (waiting_) return PENDING;                                                   \
     } while (0)
 
-static cx_value *call_model(ctx *c, cx_value *e) {
-    exec *x = c->x;
-    cx_value *model = at(x->models, index_of(e, "model"));
-    cx_value *prompt = at(x->prompts, index_of(e, "prompt"));
-    if (!model || !prompt) return failf(c, "invalid IR: unknown model or prompt");
-    cx_value *args_e = cx_get(e, "args");
+/* A prompt's text, with each {path} replaced by its argument. */
+static cx_buf prompt_text(cx_value *prompt, cx_value **args, size_t n) {
     cx_value *params = cx_get(prompt, "params");
-    size_t n = len_of(args_e);
-    cx_value **args = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *args);
-    EVAL_ALL(c, args_e, args);
-
-    /* The prompt's text, with {paths} replaced by the arguments. */
     cx_buf text = {0};
     cx_value *parts = cx_get(prompt, "parts");
     for (size_t i = 0; i < len_of(parts); i++) {
@@ -926,6 +1032,19 @@ static cx_value *call_model(ctx *c, cx_value *e) {
         for (size_t k = 1; v && k < len_of(path); k++) v = cx_get(v, at(path, k)->u.str.s);
         render(&text, v);
     }
+    return text;
+}
+
+static cx_value *call_model(ctx *c, cx_value *e) {
+    exec *x = c->x;
+    cx_value *model = at(x->models, index_of(e, "model"));
+    cx_value *prompt = at(x->prompts, index_of(e, "prompt"));
+    if (!model || !prompt) return fatalf(c, "invalid IR: unknown model or prompt");
+    cx_value *args_e = cx_get(e, "args");
+    size_t n = len_of(args_e);
+    cx_value **args = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *args);
+    EVAL_ALL(c, args_e, args);
+    cx_buf text = prompt_text(prompt, args, n);
     cx_value *schema = cx_get(prompt, "schema");
     cx_buf req = {0};
     cx_buf_puts(&req, "{\"model\":");
@@ -938,12 +1057,12 @@ static cx_value *call_model(ctx *c, cx_value *e) {
     cx_write(&req, cx_get(model, "max_output"));
     cx_buf_puts(&req, ",\"timeout_ms\":300000}"); /* llm: 5 min per attempt (D22) */
     cx_buf_free(&text);
-    return request(c, e, 1, model, prompt, &req);
+    return request(c, call_key(c, e), CALL_MODEL, model, prompt, &req, NULL);
 }
 
 static cx_value *call_tool(ctx *c, cx_value *e) {
     cx_value *tool = at(c->x->tools, index_of(e, "tool"));
-    if (!tool) return failf(c, "invalid IR: unknown tool");
+    if (!tool) return fatalf(c, "invalid IR: unknown tool");
     const char *name = cx_get_str(tool, "name", "?");
     cx_value *params = cx_get(tool, "params");
     cx_value *args_e = cx_get(e, "args");
@@ -963,31 +1082,29 @@ static cx_value *call_tool(ctx *c, cx_value *e) {
     cx_buf_puts(&req, "},\"max_output\":");
     cx_write(&req, cx_get(tool, "max_output"));
     cx_buf_printf(&req, ",\"timeout_ms\":%.0f}", cx_get_num(tool, "timeout_ms", 30000));
-    return request(c, e, 0, tool, NULL, &req);
+    return request(c, call_key(c, e), CALL_TOOL, tool, NULL, &req, NULL);
 }
 
 /* A subgraph runs as tasks of its own; this task waits for its result. */
 static cx_value *call_graph(ctx *c, cx_value *e) {
     exec *x = c->x;
     cx_value *g = at(x->graphs, index_of(e, "graph"));
-    if (!g) return failf(c, "invalid IR: unknown graph");
+    if (!g) return fatalf(c, "invalid IR: unknown graph");
     cx_value *args_e = cx_get(e, "args");
     size_t n = len_of(args_e);
     if (n != len_of(cx_get(g, "params")))
-        return failf(c, "graph `%s` expects %zu argument(s)", cx_get_str(g, "name", "?"),
-                     len_of(cx_get(g, "params")));
+        return fatalf(c, "graph `%s` expects %zu argument(s)", cx_get_str(g, "name", "?"),
+                      len_of(cx_get(g, "params")));
     cx_value **args = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *args);
     EVAL_ALL(c, args_e, args);
-    const char *key = fmt(&c->w->arena, "%s#%zu", c->instance, index_of(e, "id"));
+    const char *key = call_key(c, e);
     cx_value *result = PENDING;
     pthread_mutex_lock(&x->mu);
     pending *p = ptab_get(x, key);
     if (!p) {
         if (c->g->depth + 1 >= MAX_GRAPH_DEPTH) {
-            fail_locked(x, cx_get_str(c->g->graph, "name", "?"), c->node,
-                        "graphs nested too deeply");
             pthread_mutex_unlock(&x->mu);
-            return NULL;
+            return failf(c, "graphs nested too deeply");
         }
         p = new_pending(x, &c->w->arena, key, P_INFLIGHT, NULL);
         add_waiter(&c->w->arena, p, c->t);
@@ -998,8 +1115,394 @@ static cx_value *call_graph(ctx *c, cx_value *e) {
         add_waiter(&c->w->arena, p, c->t);
     }
     if (p->state == P_DONE) result = p->value;
-    if (p->state == P_FAILED) result = NULL;
+    if (p->state == P_FAILED) {
+        result = NULL;
+        if (!c->failure) c->failure = p->error;
+    }
     pthread_mutex_unlock(&x->mu);
+    return result;
+}
+
+/* ----- operators ------------------------------------------------------------ */
+
+static cx_value *concat(cx_arena *a, cx_value *l, cx_value *r) {
+    if (l->kind == CX_STR) {
+        cx_buf b = {0};
+        cx_buf_put(&b, l->u.str.s, l->u.str.len);
+        cx_buf_put(&b, r->u.str.s, r->u.str.len);
+        cx_value *v = cx_str(a, b.data, b.len);
+        cx_buf_free(&b);
+        return v;
+    }
+    size_t n = l->u.list.len + r->u.list.len;
+    cx_value **items = cx_alloc(a, (n ? n : 1) * sizeof *items);
+    if (l->u.list.len) memcpy(items, l->u.list.items, l->u.list.len * sizeof *items);
+    if (r->u.list.len)
+        memcpy(items + l->u.list.len, r->u.list.items, r->u.list.len * sizeof *items);
+    return cx_list(a, items, n);
+}
+
+static int compare(const cx_value *l, const cx_value *r) {
+    if (l->kind == CX_NUM) return (l->u.num > r->u.num) - (l->u.num < r->u.num);
+    return strcmp(l->u.str.s, r->u.str.s);
+}
+
+static cx_value *binary(ctx *c, cx_value *e) {
+    const char *op = cx_get_str(e, "op", "");
+    cx_arena *a = &c->w->arena;
+    cx_value *l = eval(c, cx_get(e, "l"));
+    if (!l || l == PENDING) return l;
+    /* `and`/`or` stop early: the right side does not run (D32). */
+    if (strcmp(op, "and") == 0 && l->kind == CX_BOOL && !l->u.b) return l;
+    if (strcmp(op, "or") == 0 && l->kind == CX_BOOL && l->u.b) return l;
+    cx_value *r = eval(c, cx_get(e, "r"));
+    if (!r || r == PENDING) return r;
+    if (strcmp(op, "and") == 0 || strcmp(op, "or") == 0) return r;
+    if (strcmp(op, "==") == 0) return cx_bool(a, cx_equal(l, r));
+    if (strcmp(op, "!=") == 0) return cx_bool(a, !cx_equal(l, r));
+    int same_kind = l->kind == r->kind && (l->kind == CX_NUM || l->kind == CX_STR);
+    if (op[0] == '<' || op[0] == '>') {
+        if (!same_kind) return failf(c, "cannot compare these values with `%s`", op);
+        int k = compare(l, r);
+        int res = strcmp(op, "<") == 0    ? k < 0
+                  : strcmp(op, "<=") == 0 ? k <= 0
+                  : strcmp(op, ">") == 0  ? k > 0
+                                          : k >= 0;
+        return cx_bool(a, res);
+    }
+    if (strcmp(op, "+") == 0 && l->kind == r->kind && (l->kind == CX_STR || l->kind == CX_LIST))
+        return concat(a, l, r);
+    if (l->kind != CX_NUM || r->kind != CX_NUM)
+        return failf(c, "operator `%s` needs numbers", op);
+    double x = l->u.num, y = r->u.num;
+    switch (op[0]) {
+    case '+': return cx_num(a, x + y);
+    case '-': return cx_num(a, x - y);
+    case '*': return cx_num(a, x * y);
+    default:
+        if (y == 0) return failf(c, "division by zero");
+        return cx_num(a, x / y);
+    }
+}
+
+/* ----- choices and loops ----------------------------------------------------- */
+
+static const char *variant_name(const cx_value *v) {
+    if (!v) return NULL;
+    if (v->kind == CX_STR) return v->u.str.s;
+    return cx_get_str(v, "kind", NULL);
+}
+
+/* The case that matches `v`, with its fields bound; NULL if none. */
+static cx_value *pick_case(ctx *c, cx_value *e, cx_value *v) {
+    const char *name = variant_name(v);
+    cx_value *cases = cx_get(e, "cases");
+    for (size_t i = 0; i < len_of(cases); i++) {
+        cx_value *cs = at(cases, i);
+        cx_value *variant = cx_get(cs, "variant");
+        if (variant && variant->kind == CX_STR && (!name || strcmp(variant->u.str.s, name) != 0))
+            continue;
+        cx_value *binds = cx_get(cs, "binds");
+        for (size_t k = 0; k < len_of(binds); k++) {
+            cx_value *b = at(binds, k);
+            size_t slot = (size_t)at(b, 1)->u.num;
+            cx_value *field = cx_get(v, at(b, 0)->u.str.s);
+            c->locals[slot] = field ? field : cx_null(&c->w->arena);
+        }
+        return cs;
+    }
+    failf(c, "no `case` for `%s`", name ? name : "?");
+    return NULL;
+}
+
+enum { TAIL_NONE, TAIL_DONE, TAIL_NEXT };
+
+/* A loop body: its value and whether it said `done` or `next`. */
+static cx_value *eval_tail(ctx *c, cx_value *e, int *sig) {
+    const char *k = cx_get_str(e, "k", "");
+    if (strcmp(k, "done") == 0 || strcmp(k, "next") == 0) {
+        *sig = k[0] == 'd' ? TAIL_DONE : TAIL_NEXT;
+        return eval(c, cx_get(e, "v"));
+    }
+    if (strcmp(k, "match") == 0) {
+        cx_value *v = eval(c, cx_get(e, "v"));
+        if (!v || v == PENDING) return v;
+        cx_value *cs = pick_case(c, e, v);
+        return cs ? eval_tail(c, cx_get(cs, "body"), sig) : NULL;
+    }
+    if (strcmp(k, "if") == 0) {
+        cx_value *cond = eval(c, cx_get(e, "c"));
+        if (!cond || cond == PENDING) return cond;
+        return eval_tail(c, cx_get(e, cond->kind == CX_BOOL && cond->u.b ? "t" : "e"), sig);
+    }
+    return fatalf(c, "invalid IR: a loop body without `done` or `next`");
+}
+
+/* Each turn's calls are keyed by the turn: `scope#loop.turn`. */
+static cx_value *eval_loop(ctx *c, cx_value *e) {
+    cx_value *v = eval(c, cx_get(e, "init"));
+    if (!v || v == PENDING) return v;
+    size_t slot = index_of(e, "slot");
+    size_t id = index_of(e, "id");
+    double max = cx_get_num(e, "max", 1);
+    const char *outer = c->scope;
+    c->locals[slot] = v;
+    for (long turn = 0; turn < (long)max; turn++) {
+        c->scope = fmt(&c->w->arena, "%s#%zu.%ld", outer, id, turn);
+        int sig = TAIL_NONE;
+        cx_value *r = eval_tail(c, cx_get(e, "body"), &sig);
+        c->scope = outer;
+        if (!r || r == PENDING) return r;
+        if (sig == TAIL_DONE) return r;
+        c->locals[slot] = r;
+    }
+    cx_value *on_limit = cx_get(e, "on_limit");
+    if (on_limit && on_limit->kind == CX_STR) return failf(c, "%s", on_limit->u.str.s);
+    return c->locals[slot];
+}
+
+static cx_value *tagged(cx_arena *a, const char *kind, const char *field, cx_value *v) {
+    const char *keys[2] = {"kind", field};
+    cx_value *vals[2] = {cx_cstr(a, kind), v};
+    return cx_rec(a, keys, vals, 2);
+}
+
+/* `try`: a failure inside becomes `Failed(error)`; a value, `Ok(value)`. */
+static cx_value *eval_try(ctx *c, cx_value *e) {
+    const char *outer = c->failure;
+    c->failure = NULL;
+    cx_value *v = eval(c, cx_get(e, "v"));
+    const char *inner = c->failure;
+    c->failure = outer;
+    if (v == PENDING) return v;
+    if (v) return tagged(&c->w->arena, "Ok", "value", v);
+    /* A failure that stopped the run (a broken journal) is not caught. */
+    pthread_mutex_lock(&c->x->mu);
+    int stopping = c->x->stopping;
+    pthread_mutex_unlock(&c->x->mu);
+    if (stopping) return NULL;
+    return tagged(&c->w->arena, "Failed", "error", cx_cstr(&c->w->arena, inner ? inner : "failed"));
+}
+
+/* ----- agents ------------------------------------------------------------- */
+
+/* The tool definitions the model sees (OpenAI "function" format). */
+static void tool_defs(exec *x, cx_value *tools, cx_buf *b) {
+    cx_buf_putc(b, '[');
+    for (size_t i = 0; i < len_of(tools); i++) {
+        cx_value *t = at(x->tools, (size_t)at(tools, i)->u.num);
+        const char *name = cx_get_str(t, "name", "?");
+        if (i) cx_buf_putc(b, ',');
+        cx_buf_puts(b, "{\"type\":\"function\",\"function\":{\"name\":");
+        cx_buf_json_str(b, name, strlen(name));
+        cx_buf_puts(b, ",\"description\":");
+        const char *d = cx_get_str(t, "description", name);
+        cx_buf_json_str(b, d, strlen(d));
+        cx_buf_puts(b, ",\"parameters\":");
+        cx_write(b, cx_get(t, "schema"));
+        cx_buf_puts(b, "}}");
+    }
+    cx_buf_putc(b, ']');
+}
+
+static void user_message(cx_buf *msgs, const char *text) {
+    cx_buf_puts(msgs, ",{\"role\":\"user\",\"content\":");
+    cx_buf_json_str(msgs, text, strlen(text));
+    cx_buf_putc(msgs, '}');
+}
+
+/* One model call of the agent: the conversation so far, maybe with tools. */
+static cx_value *agent_turn(ctx *c, cx_value *model, cx_value *prompt, const char *key,
+                            cx_buf *msgs, const char *tools, const char *note) {
+    cx_buf req = {0};
+    cx_buf_puts(&req, "{\"model\":");
+    cx_write(&req, cx_get(model, "id"));
+    cx_buf_puts(&req, ",\"messages\":");
+    cx_buf_put(&req, msgs->data, msgs->len);
+    cx_buf_puts(&req, "],\"tools\":");
+    cx_buf_puts(&req, tools ? tools : "null");
+    cx_buf_puts(&req, ",\"max_output\":");
+    cx_write(&req, cx_get(model, "max_output"));
+    cx_buf_puts(&req, ",\"timeout_ms\":300000}");
+    return request(c, key, CALL_CHAT, model, prompt, &req, note);
+}
+
+/* The agent's answer, as a value of the task's type. */
+static cx_value *agent_answer(ctx *c, cx_value *model, cx_value *prompt, const char *base,
+                              const char *text) {
+    cx_value *schema = cx_get(prompt, "schema");
+    if (!schema || schema->kind == CX_NULL) return cx_cstr(&c->w->arena, text);
+    /* One more call turns the answer into the declared type. */
+    cx_buf p = {0};
+    cx_buf_puts(&p, "Rewrite the answer below in the requested JSON format, without adding "
+                    "anything.\n\n");
+    cx_buf_puts(&p, text);
+    cx_buf req = {0};
+    cx_buf_puts(&req, "{\"model\":");
+    cx_write(&req, cx_get(model, "id"));
+    cx_buf_puts(&req, ",\"prompt\":");
+    cx_buf_json_str(&req, p.data, p.len);
+    cx_buf_free(&p);
+    cx_buf_puts(&req, ",\"schema\":");
+    cx_write(&req, schema);
+    cx_buf_puts(&req, ",\"max_output\":");
+    cx_write(&req, cx_get(model, "max_output"));
+    cx_buf_puts(&req, ",\"timeout_ms\":300000}");
+    return request(c, fmt(&c->w->arena, "%s.format", base), CALL_MODEL, model, prompt, &req,
+                   "format");
+}
+
+/* `on turn_limit` / `on stuck`: fail, or ask for a final answer. */
+static cx_value *agent_limit(ctx *c, cx_value *e, const char *which, cx_value *model,
+                             cx_value *prompt, const char *base, cx_buf *msgs,
+                             const char *instruction) {
+    cx_value *action = cx_get(e, which);
+    if (action && action->kind == CX_STR) return failf(c, "%s", action->u.str.s);
+    user_message(msgs, instruction);
+    cx_value *ok = agent_turn(c, model, prompt, fmt(&c->w->arena, "%s.final", base), msgs, NULL,
+                              "final answer");
+    if (!ok || ok == PENDING) return ok;
+    return agent_answer(c, model, prompt, base, cx_get_str(ok, "text", ""));
+}
+
+/*
+ * The ReAct cycle (D5). Each turn sends the whole conversation; the
+ * assistant's message goes back exactly as it came (providers attach data
+ * to it). Tool calls of one turn run in parallel; a failed tool call is an
+ * observation for the model, not a failure of the run.
+ */
+static cx_value *call_agent(ctx *c, cx_value *e) {
+    exec *x = c->x;
+    cx_arena *a = &c->w->arena;
+    cx_value *model = at(x->models, index_of(e, "model"));
+    cx_value *prompt = at(x->prompts, index_of(e, "prompt"));
+    if (!model || !prompt) return fatalf(c, "invalid IR: unknown model or prompt");
+    cx_value *args_e = cx_get(e, "args");
+    size_t n = len_of(args_e);
+    cx_value **args = cx_alloc(a, (n ? n : 1) * sizeof *args);
+    EVAL_ALL(c, args_e, args);
+    cx_value *tools = cx_get(e, "tools");
+    cx_buf defs = {0};
+    tool_defs(x, tools, &defs);
+    const char *defs_s = fmt(a, "%s", defs.data);
+    cx_buf_free(&defs);
+    const char *base = call_key(c, e);
+
+    cx_buf task = prompt_text(prompt, args, n);
+    cx_buf msgs = {0};
+    cx_buf_puts(&msgs, "[{\"role\":\"user\",\"content\":");
+    cx_buf_json_str(&msgs, task.data ? task.data : "", task.len);
+    cx_buf_putc(&msgs, '}');
+    cx_buf_free(&task);
+
+    double max_turns = cx_get_num(e, "max_turns", 1);
+    const char *previous = NULL;
+    int repeats = 0;
+    cx_value *result = NULL;
+    for (long turn = 0;; turn++) {
+        if (turn >= (long)max_turns) {
+            result = agent_limit(c, e, "on_turn_limit", model, prompt, base, &msgs,
+                                 "You reached the limit of turns. Do not call tools anymore: "
+                                 "give your final answer now, with what you know.");
+            break;
+        }
+        cx_value *ok = agent_turn(c, model, prompt, fmt(a, "%s.t%ld", base, turn), &msgs, defs_s,
+                                  fmt(a, "turn %ld", turn + 1));
+        if (!ok || ok == PENDING) {
+            result = ok;
+            break;
+        }
+        cx_buf_putc(&msgs, ',');
+        cx_write(&msgs, cx_get(ok, "message"));
+        cx_value *calls = cx_get(ok, "tool_calls");
+        if (len_of(calls) == 0) {
+            result = agent_answer(c, model, prompt, base, cx_get_str(ok, "text", ""));
+            break;
+        }
+        /* Stuck: the same calls (tools not marked `repeatable`) three turns in a row. */
+        cx_buf sig = {0};
+        for (size_t i = 0; i < len_of(calls); i++) {
+            cx_value *call = at(calls, i);
+            const char *name = cx_get_str(call, "name", "?");
+            int repeatable = 0;
+            for (size_t k = 0; k < len_of(tools); k++) {
+                cx_value *t = at(x->tools, (size_t)at(tools, k)->u.num);
+                if (strcmp(cx_get_str(t, "name", ""), name) == 0)
+                    repeatable = cx_get_bool(t, "repeatable", 0);
+            }
+            if (repeatable) continue;
+            cx_buf_puts(&sig, name);
+            cx_write(&sig, cx_get(call, "arguments"));
+        }
+        const char *now_sig = fmt(a, "%s", sig.data ? sig.data : "");
+        cx_buf_free(&sig);
+        repeats = previous && now_sig[0] && strcmp(previous, now_sig) == 0 ? repeats + 1 : 0;
+        previous = now_sig;
+        if (repeats >= 2) {
+            result = agent_limit(c, e, "on_stuck", model, prompt, base, &msgs,
+                                 "You are repeating the same action with the same arguments. "
+                                 "Stop calling tools and give your final answer now.");
+            break;
+        }
+        int waiting = 0;
+        for (size_t i = 0; i < len_of(calls); i++) {
+            cx_value *call = at(calls, i);
+            const char *name = cx_get_str(call, "name", "?");
+            cx_value *tool = NULL;
+            for (size_t k = 0; k < len_of(tools); k++) {
+                cx_value *t = at(x->tools, (size_t)at(tools, k)->u.num);
+                if (strcmp(cx_get_str(t, "name", ""), name) == 0) tool = t;
+            }
+            cx_buf obs = {0};
+            if (!tool) {
+                cx_buf_printf(&obs, "error: there is no tool `%s`", name);
+            } else {
+                cx_buf req = {0};
+                cx_buf_puts(&req, "{\"tool\":");
+                cx_buf_json_str(&req, name, strlen(name));
+                cx_buf_puts(&req, ",\"args\":");
+                cx_value *arguments = cx_get(call, "arguments");
+                if (arguments && arguments->kind == CX_REC)
+                    cx_write(&req, arguments);
+                else
+                    cx_buf_puts(&req, "{}");
+                cx_buf_puts(&req, ",\"max_output\":");
+                cx_write(&req, cx_get(tool, "max_output"));
+                cx_buf_printf(&req, ",\"timeout_ms\":%.0f}", cx_get_num(tool, "timeout_ms", 30000));
+                const char *outer = c->failure;
+                c->failure = NULL;
+                cx_value *r = request(c, fmt(a, "%s.t%ld.c%zu", base, turn, i), CALL_TOOL, tool,
+                                      NULL, &req, NULL);
+                const char *why = c->failure;
+                c->failure = outer;
+                if (r == PENDING) {
+                    waiting = 1;
+                } else if (r) {
+                    render(&obs, r);
+                } else {
+                    pthread_mutex_lock(&x->mu);
+                    int stopping = x->stopping;
+                    pthread_mutex_unlock(&x->mu);
+                    if (stopping) {
+                        cx_buf_free(&msgs);
+                        return NULL;
+                    }
+                    cx_buf_printf(&obs, "error: %s", why ? why : "the tool failed");
+                }
+            }
+            cx_buf_puts(&msgs, ",{\"role\":\"tool\",\"tool_call_id\":");
+            cx_write(&msgs, cx_get(call, "id"));
+            cx_buf_puts(&msgs, ",\"content\":");
+            cx_buf_json_str(&msgs, obs.data ? obs.data : "", obs.len);
+            cx_buf_putc(&msgs, '}');
+            cx_buf_free(&obs);
+        }
+        if (waiting) {
+            result = PENDING;
+            break;
+        }
+    }
+    cx_buf_free(&msgs);
     return result;
 }
 
@@ -1011,9 +1514,13 @@ static cx_value *eval(ctx *c, cx_value *e) {
     if (strcmp(k, "node") == 0) {
         size_t i = index_of(e, "i");
         cx_value *v = i < c->g->n ? c->g->values[i] : NULL;
-        return v ? v : failf(c, "invalid IR: node used before it was computed");
+        return v ? v : fatalf(c, "invalid IR: node used before it was computed");
     }
     if (strcmp(k, "item") == 0) return c->item;
+    if (strcmp(k, "local") == 0) {
+        cx_value *v = c->locals[index_of(e, "i")];
+        return v ? v : fatalf(c, "invalid IR: local used before it was bound");
+    }
     if (strcmp(k, "field") == 0) {
         cx_value *base = eval(c, cx_get(e, "base"));
         if (!base || base == PENDING) return base;
@@ -1035,6 +1542,16 @@ static cx_value *eval(ctx *c, cx_value *e) {
         EVAL_ALL(c, items, vs);
         return cx_list(&c->w->arena, vs, n);
     }
+    if (strcmp(k, "record") == 0) {
+        cx_value *names = cx_get(e, "names");
+        cx_value *values = cx_get(e, "values");
+        size_t n = len_of(values);
+        cx_value **vs = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *vs);
+        const char **ks = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *ks);
+        EVAL_ALL(c, values, vs);
+        for (size_t i = 0; i < n; i++) ks[i] = at(names, i)->u.str.s;
+        return cx_rec(&c->w->arena, ks, vs, n);
+    }
     if (strcmp(k, "interp") == 0) {
         cx_value *parts = cx_get(e, "parts");
         size_t n = len_of(parts);
@@ -1053,20 +1570,54 @@ static cx_value *eval(ctx *c, cx_value *e) {
         cx_buf_free(&b);
         return s;
     }
+    if (strcmp(k, "bin") == 0) return binary(c, e);
+    if (strcmp(k, "un") == 0) {
+        cx_value *v = eval(c, cx_get(e, "v"));
+        if (!v || v == PENDING) return v;
+        if (strcmp(cx_get_str(e, "op", ""), "not") == 0)
+            return cx_bool(&c->w->arena, !(v->kind == CX_BOOL && v->u.b));
+        if (v->kind != CX_NUM) return failf(c, "`-` needs a number");
+        return cx_num(&c->w->arena, -v->u.num);
+    }
+    if (strcmp(k, "if") == 0) {
+        cx_value *cond = eval(c, cx_get(e, "c"));
+        if (!cond || cond == PENDING) return cond;
+        /* Only the branch taken runs (D32). */
+        return eval(c, cx_get(e, cond->kind == CX_BOOL && cond->u.b ? "t" : "e"));
+    }
+    if (strcmp(k, "match") == 0) {
+        cx_value *v = eval(c, cx_get(e, "v"));
+        if (!v || v == PENDING) return v;
+        cx_value *cs = pick_case(c, e, v);
+        return cs ? eval(c, cx_get(cs, "body")) : NULL;
+    }
+    if (strcmp(k, "loop") == 0) return eval_loop(c, e);
+    if (strcmp(k, "try") == 0) return eval_try(c, e);
+    if (strcmp(k, "agent") == 0) return call_agent(c, e);
     if (strcmp(k, "model") == 0) return call_model(c, e);
     if (strcmp(k, "tool") == 0) return call_tool(c, e);
     if (strcmp(k, "graph") == 0) return call_graph(c, e);
-    return failf(c, "invalid IR: unknown expression `%s`", k);
+    return fatalf(c, "invalid IR: unknown expression `%s`", k);
 }
 
 /* ----- workers -------------------------------------------------------------- */
+
+/* A node of a subgraph failed: the call that started the subgraph fails. */
+static void subgraph_failed(exec *x, worker *w, gexec *g, const char *node, const char *why) {
+    if (g->failed) return;
+    g->failed = 1;
+    g->parent->state = P_FAILED;
+    g->parent->error = fmt(&w->arena, "graph `%s` failed at node `%s`: %s",
+                           cx_get_str(g->graph, "name", "?"), node, why);
+    wake(x, w, g->parent);
+}
 
 static void run_task(worker *w, task *t) {
     exec *x = w->x;
     gexec *g = t->g;
     cx_value *node = at(g->nodes_ir, t->node);
     const char *name = cx_get_str(node, "name", "?");
-    ctx c = {x, w, t, g, NULL, NULL, name, name};
+    ctx c = {x, w, t, g, NULL, NULL, NULL, name, name, NULL, NULL};
     if (t->item < 0) {
         c.instance = fmt(&w->arena, "%s/%s", g->path, name);
     } else {
@@ -1074,6 +1625,11 @@ static void run_task(worker *w, task *t) {
         c.label = fmt(&w->arena, "%s[%ld]", name, t->item);
         c.item = at(g->lists[t->node], (size_t)t->item);
     }
+    c.scope = c.instance;
+    size_t nlocals = (size_t)cx_get_num(node, "nlocals", 0);
+    c.locals = cx_alloc(&w->arena, (nlocals ? nlocals : 1) * sizeof *c.locals);
+    memset(c.locals, 0, (nlocals ? nlocals : 1) * sizeof *c.locals);
+
     cx_value *over_e = cx_get(node, "over");
     int fan_out = over_e && over_e->kind != CX_NULL;
     cx_value *v = eval(&c, t->item < 0 && fan_out ? over_e : cx_get(node, "value"));
@@ -1091,9 +1647,19 @@ static void run_task(worker *w, task *t) {
         } else {
             t->state = T_WAITING;
         }
+    } else if (!v) {
+        t->state = T_DONE;
+        /* Nothing caught the failure: it fails the subgraph, or the run. */
+        if (!x->stopping) {
+            const char *why = c.failure ? c.failure : "unknown failure";
+            if (g->parent)
+                subgraph_failed(x, w, g, name, why);
+            else
+                fail_locked(x, cx_get_str(g->graph, "name", "?"), name, why);
+        }
     } else {
         t->state = T_DONE;
-        if (v && !x->stopping) {
+        if (!x->stopping && !g->failed) {
             if (t->item < 0 && fan_out) {
                 /* The list is ready: one task per item. */
                 size_t m = v->u.list.len;

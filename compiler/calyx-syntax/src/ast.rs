@@ -190,6 +190,82 @@ pub enum ExprKind {
         callee: Box<Expr>,
         args: Vec<Arg>,
     },
+    /// `a + b`, `a == b`, `a and b`. `op` is the operator's text.
+    Binary {
+        op: String,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    /// `not a`, `-a`.
+    Unary {
+        op: String,
+        value: Box<Expr>,
+    },
+    /// `if cond:` then-branch, `else:` else-branch.
+    If {
+        cond: Box<Expr>,
+        then: Box<Expr>,
+        els: Box<Expr>,
+    },
+    /// `match value:` followed by `case` lines.
+    Match {
+        value: Box<Expr>,
+        cases: Vec<Case>,
+    },
+    /// `loop var = init, max N:` body, optional `on limit: ...` (decision D5).
+    Loop {
+        var: Ident,
+        init: Box<Expr>,
+        max: u64,
+        body: Box<Expr>,
+        on_limit: OnLimit,
+    },
+    /// `done value`: ends a loop with this value.
+    Done(Box<Expr>),
+    /// `next value`: the next turn of a loop, carrying this value.
+    Next(Box<Expr>),
+    /// `try value`: `Ok(value)` or `Failed(error)` (decision D11).
+    Try(Box<Expr>),
+    /// `agent model:` with a block of properties (decision D5).
+    Agent(Box<AgentExpr>),
+}
+
+/// `case Variant(field, ...):` or `case _:`, and what it evaluates to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Case {
+    /// `None` for `_`.
+    pub variant: Option<Ident>,
+    /// Fields of the variant bound to names of the same name.
+    pub binds: Vec<Ident>,
+    pub body: Expr,
+    pub span: Span,
+}
+
+/// What a loop or an agent does when it reaches its limit.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OnLimit {
+    /// `last`: the loop ends with the last value it carried.
+    Last,
+    /// `final_answer`: the agent is asked for its answer one last time.
+    FinalAnswer,
+    /// `fail "reason"`: the run fails (or `try` gets `Failed`).
+    Fail(StrLit),
+    /// Not written. Loops then fail; agents must say (checked later).
+    Missing,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentExpr {
+    pub model: Ident,
+    /// `tools [a, b]`
+    pub tools: Vec<Ident>,
+    /// `max_turns N`
+    pub max_turns: Option<(u64, Span)>,
+    /// `task prompt(...)`
+    pub task: Option<Expr>,
+    pub on_turn_limit: OnLimit,
+    pub on_stuck: OnLimit,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

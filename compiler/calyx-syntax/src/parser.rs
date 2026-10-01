@@ -40,7 +40,7 @@ const DECLS: &[&str] = &["model", "tool", "type", "prompt", "graph"];
 
 /// Declarations planned for later milestones.
 const FUTURE_DECLS: &[(&str, &str)] = &[
-    ("def", "M5"),
+    ("def", "a later milestone"),
     ("message", "M6"),
     ("entity", "M6"),
     ("router", "a later milestone"),
@@ -48,11 +48,6 @@ const FUTURE_DECLS: &[(&str, &str)] = &[
 
 /// Statements and expressions planned for later milestones.
 const FUTURE_STMTS: &[(&str, &str)] = &[
-    ("agent", "M5"),
-    ("loop", "M5"),
-    ("match", "M5"),
-    ("if", "M5"),
-    ("try", "M5"),
     ("state", "M6"),
     ("receive", "M6"),
     ("ask", "M6"),
@@ -150,6 +145,22 @@ impl Parser<'_> {
             Diagnostic::error(code, msg, t.span)
                 .expected(expected)
                 .observed(observed),
+        );
+        Reported
+    }
+
+    fn error_here_at(
+        &mut self,
+        span: Span,
+        code: &'static str,
+        msg: &str,
+        expected: &str,
+        observed: &str,
+    ) -> Reported {
+        self.diags.push(
+            Diagnostic::error(code, msg, span)
+                .expected(expected)
+                .observed(format!("`{observed}`")),
         );
         Reported
     }
@@ -704,7 +715,7 @@ impl Parser<'_> {
         let start = self.tok().span;
         let name = self.ident("a type")?;
         if self.kind() == TokenKind::LParen {
-            return Err(self.unsupported(&format!("{}(...) types", name.name), "M5"));
+            return Err(self.unsupported(&format!("{}(...) types", name.name), "a later milestone"));
         }
         let mut args = Vec::new();
         if self.eat(TokenKind::LBracket) {
@@ -769,7 +780,7 @@ impl Parser<'_> {
             });
         }
         if self.kind() == TokenKind::Ident && self.nth_kind(1) == TokenKind::Comma {
-            return Err(self.unsupported("a, b = ... (destructuring)", "M5"));
+            return Err(self.unsupported("a, b = ... (destructuring)", "a later milestone"));
         }
         if self.kind() == TokenKind::Ident
             && self.nth_kind(1) == TokenKind::Ident
@@ -797,7 +808,7 @@ impl Parser<'_> {
             let value = self.expr()?;
             self.eat(TokenKind::Newline);
             if self.kind() != TokenKind::Dedent {
-                return Err(self.unsupported("multi-line `for each` bodies", "M5"));
+                return Err(self.unsupported("multi-line `for each` bodies", "a later milestone"));
             }
             self.advance();
             value
@@ -847,6 +858,174 @@ impl Parser<'_> {
             let w = self.word().to_owned();
             return Err(self.unsupported(&w, "M6"));
         }
+        self.or_expr()
+    }
+
+    /// Is the current word used as a keyword (followed by what it applies
+    /// to), rather than as a name (`next.x`, `done(...)`, `f(match)`)?
+    fn keyword(&self, word: &str) -> bool {
+        self.is_word(word)
+            && !matches!(
+                self.nth_kind(1),
+                TokenKind::LParen
+                    | TokenKind::Dot
+                    | TokenKind::Comma
+                    | TokenKind::RParen
+                    | TokenKind::RBracket
+                    | TokenKind::Eq
+                    | TokenKind::Newline
+                    | TokenKind::Eof
+            )
+    }
+
+    fn binary(&self, op: &str, left: Expr, right: Expr) -> Expr {
+        let span = Span {
+            start: left.span.start,
+            end: right.span.end,
+        };
+        Expr {
+            kind: ExprKind::Binary {
+                op: op.to_owned(),
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+            span,
+        }
+    }
+
+    fn or_expr(&mut self) -> PResult<Expr> {
+        let mut e = self.and_expr()?;
+        while self.is_word("or") {
+            self.advance();
+            let r = self.and_expr()?;
+            e = self.binary("or", e, r);
+        }
+        Ok(e)
+    }
+
+    fn and_expr(&mut self) -> PResult<Expr> {
+        let mut e = self.not_expr()?;
+        while self.is_word("and") {
+            self.advance();
+            let r = self.not_expr()?;
+            e = self.binary("and", e, r);
+        }
+        Ok(e)
+    }
+
+    fn not_expr(&mut self) -> PResult<Expr> {
+        // `not` is never a name, so `not (a or b)` is the operator.
+        if self.is_word("not") && (self.keyword("not") || self.nth_kind(1) == TokenKind::LParen) {
+            let start = self.advance().span;
+            let value = self.not_expr()?;
+            return Ok(Expr {
+                span: self.span_from(start),
+                kind: ExprKind::Unary {
+                    op: "not".into(),
+                    value: Box::new(value),
+                },
+            });
+        }
+        self.cmp_expr()
+    }
+
+    fn cmp_expr(&mut self) -> PResult<Expr> {
+        let e = self.add_expr()?;
+        let op = match self.kind() {
+            TokenKind::EqEq => "==",
+            TokenKind::Ne => "!=",
+            TokenKind::Lt => "<",
+            TokenKind::Le => "<=",
+            TokenKind::Gt => ">",
+            TokenKind::Ge => ">=",
+            _ => return Ok(e),
+        };
+        self.advance();
+        let r = self.add_expr()?;
+        Ok(self.binary(op, e, r))
+    }
+
+    fn add_expr(&mut self) -> PResult<Expr> {
+        let mut e = self.mul_expr()?;
+        loop {
+            let op = match self.kind() {
+                TokenKind::Plus => "+",
+                TokenKind::Minus => "-",
+                _ => return Ok(e),
+            };
+            self.advance();
+            let r = self.mul_expr()?;
+            e = self.binary(op, e, r);
+        }
+    }
+
+    fn mul_expr(&mut self) -> PResult<Expr> {
+        let mut e = self.unary_expr()?;
+        loop {
+            let op = match self.kind() {
+                TokenKind::Star => "*",
+                TokenKind::Slash => "/",
+                _ => return Ok(e),
+            };
+            self.advance();
+            let r = self.unary_expr()?;
+            e = self.binary(op, e, r);
+        }
+    }
+
+    fn unary_expr(&mut self) -> PResult<Expr> {
+        if self.kind() == TokenKind::Minus {
+            let start = self.advance().span;
+            let value = self.unary_expr()?;
+            return Ok(Expr {
+                span: self.span_from(start),
+                kind: ExprKind::Unary {
+                    op: "-".into(),
+                    value: Box::new(value),
+                },
+            });
+        }
+        if self.keyword("if") {
+            return self.if_expr();
+        }
+        if self.keyword("match") {
+            return self.match_expr();
+        }
+        if self.keyword("loop") {
+            return self.loop_expr();
+        }
+        if self.keyword("agent") {
+            return self.agent_expr();
+        }
+        for (word, make) in [
+            ("done", ExprKind::Done as fn(Box<Expr>) -> ExprKind),
+            ("next", ExprKind::Next),
+        ] {
+            if self.keyword(word) {
+                let start = self.advance().span;
+                let value = self.expr()?;
+                return Ok(Expr {
+                    span: self.span_from(start),
+                    kind: make(Box::new(value)),
+                });
+            }
+        }
+        if self.is_word("try") && (self.nth_kind(1) == TokenKind::Colon || self.keyword("try")) {
+            let start = self.advance().span;
+            let value = if self.kind() == TokenKind::Colon {
+                self.body()?.0
+            } else {
+                self.expr()?
+            };
+            return Ok(Expr {
+                span: self.span_from(start),
+                kind: ExprKind::Try(Box::new(value)),
+            });
+        }
+        self.postfix()
+    }
+
+    fn postfix(&mut self) -> PResult<Expr> {
         let mut e = self.primary()?;
         loop {
             match self.kind() {
@@ -877,14 +1056,258 @@ impl Parser<'_> {
                         span,
                     };
                 }
-                k if is_operator(k) => {
+                TokenKind::AndAnd | TokenKind::OrOr | TokenKind::Bang => {
+                    let word = match self.kind() {
+                        TokenKind::AndAnd => "and",
+                        TokenKind::OrOr => "or",
+                        _ => "not",
+                    };
+                    return Err(self.error_here(
+                        "E0100",
+                        "syntax error",
+                        &format!("the word `{word}`"),
+                    ));
+                }
+                TokenKind::PlusPlus | TokenKind::Percent | TokenKind::DotDot => {
                     let t = self.tok();
                     let op = self.text_of(t).to_owned();
-                    return Err(self.unsupported(&format!("operator {op}"), "M5"));
+                    return Err(self.unsupported(&format!("operator {op}"), "a later milestone"));
                 }
                 _ => return Ok(e),
             }
         }
+    }
+
+    /// `: expr` on the same line, or `:` and an indented line. Returns the
+    /// expression and whether it was an indented block (then its `Dedent`
+    /// was consumed).
+    fn body(&mut self) -> PResult<(Expr, bool)> {
+        self.expect(TokenKind::Colon, "`:`")?;
+        if !self.eat(TokenKind::Newline) {
+            return Ok((self.expr()?, false));
+        }
+        self.expect(TokenKind::Indent, "an indented line")?;
+        let e = self.expr()?;
+        self.eat(TokenKind::Newline);
+        if self.kind() != TokenKind::Dedent {
+            return Err(self.error_here(
+                "E0108",
+                "this block holds a single expression",
+                "the end of the block",
+            ));
+        }
+        self.advance();
+        Ok((e, true))
+    }
+
+    /// After an inline body, the line must end before what follows.
+    fn after_body(&mut self, block: bool) -> PResult<()> {
+        if !block {
+            self.expect(TokenKind::Newline, "a line break")?;
+        }
+        Ok(())
+    }
+
+    fn if_expr(&mut self) -> PResult<Expr> {
+        let start = self.advance().span;
+        let cond = self.expr()?;
+        let (then, block) = self.body()?;
+        self.after_body(block)?;
+        self.expect_word("else")?;
+        let (els, _) = self.body()?;
+        Ok(Expr {
+            span: self.span_from(start),
+            kind: ExprKind::If {
+                cond: Box::new(cond),
+                then: Box::new(then),
+                els: Box::new(els),
+            },
+        })
+    }
+
+    fn match_expr(&mut self) -> PResult<Expr> {
+        let start = self.advance().span;
+        let value = self.expr()?;
+        self.block_start("the `case` lines")?;
+        let mut cases = Vec::new();
+        while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
+            let case_start = self.expect_word("case")?.span;
+            let name = self.ident("a variant name, or `_`")?;
+            let mut binds = Vec::new();
+            if self.eat(TokenKind::LParen) {
+                loop {
+                    if self.eat(TokenKind::RParen) {
+                        break;
+                    }
+                    binds.push(self.ident("a field name")?);
+                    if !self.eat(TokenKind::Comma) {
+                        self.expect(TokenKind::RParen, "`,` or `)`")?;
+                        break;
+                    }
+                }
+            }
+            let (body, block) = self.body()?;
+            self.after_body(block)?;
+            let variant = (name.name != "_").then_some(name);
+            cases.push(Case {
+                variant,
+                binds,
+                body,
+                span: self.span_from(case_start),
+            });
+        }
+        self.eat(TokenKind::Dedent);
+        Ok(Expr {
+            span: self.span_from(start),
+            kind: ExprKind::Match {
+                value: Box::new(value),
+                cases,
+            },
+        })
+    }
+
+    /// `last`, `final_answer` or `fail "reason"`.
+    fn on_limit(&mut self) -> PResult<OnLimit> {
+        if self.is_word("last") {
+            self.advance();
+            return Ok(OnLimit::Last);
+        }
+        if self.is_word("final_answer") {
+            self.advance();
+            return Ok(OnLimit::FinalAnswer);
+        }
+        if self.is_word("fail") {
+            self.advance();
+            let t = self.tok();
+            if !matches!(t.kind, TokenKind::Str | TokenKind::LongStr) {
+                return Err(self.error_here("E0100", "syntax error", "the reason, in quotes"));
+            }
+            self.advance();
+            return Ok(OnLimit::Fail(self.str_lit(t)));
+        }
+        Err(self.error_here(
+            "E0100",
+            "syntax error",
+            "`last`, `final_answer` or `fail \"reason\"`",
+        ))
+    }
+
+    fn loop_expr(&mut self) -> PResult<Expr> {
+        let start = self.advance().span;
+        let var = self.ident("the name of the value the loop carries")?;
+        self.expect(TokenKind::Eq, "`=` and the first value")?;
+        let init = self.expr()?;
+        self.expect(TokenKind::Comma, "`, max N` (a loop needs a limit)")?;
+        self.expect_word("max")?;
+        let t = self.expect(TokenKind::Int, "the maximum number of turns")?;
+        let max = self.int_value(t);
+        self.block_start("the body of the loop")?;
+        let body = self.expr()?;
+        if self.tokens[self.pos.saturating_sub(1)].kind != TokenKind::Dedent {
+            self.end_of_line()?;
+        }
+        let mut on_limit = OnLimit::Missing;
+        if self.is_word("on") {
+            self.advance();
+            self.expect_word("limit")?;
+            self.expect(TokenKind::Colon, "`:`")?;
+            on_limit = self.on_limit()?;
+            self.end_of_line()?;
+        }
+        if self.kind() != TokenKind::Dedent {
+            return Err(self.error_here(
+                "E0108",
+                "a loop's body is one expression, then `on limit: ...`",
+                "the end of the loop",
+            ));
+        }
+        self.advance();
+        Ok(Expr {
+            span: self.span_from(start),
+            kind: ExprKind::Loop {
+                var,
+                init: Box::new(init),
+                max,
+                body: Box::new(body),
+                on_limit,
+            },
+        })
+    }
+
+    fn agent_expr(&mut self) -> PResult<Expr> {
+        let start = self.advance().span;
+        let model = self.ident("the model the agent uses")?;
+        self.block_start("the agent's properties")?;
+        let mut agent = AgentExpr {
+            model,
+            tools: Vec::new(),
+            max_turns: None,
+            task: None,
+            on_turn_limit: OnLimit::Missing,
+            on_stuck: OnLimit::Missing,
+            span: start,
+        };
+        while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
+            let key = self.ident("an agent property")?;
+            match key.name.as_str() {
+                "tools" => {
+                    self.expect(TokenKind::LBracket, "`[` and the tools")?;
+                    loop {
+                        if self.eat(TokenKind::RBracket) {
+                            break;
+                        }
+                        let tool = self.ident("a tool")?;
+                        if self.kind() == TokenKind::LParen {
+                            return Err(self.unsupported("lending resources to tools", "M6"));
+                        }
+                        agent.tools.push(tool);
+                        if !self.eat(TokenKind::Comma) {
+                            self.expect(TokenKind::RBracket, "`,` or `]`")?;
+                            break;
+                        }
+                    }
+                }
+                "max_turns" => {
+                    let t = self.expect(TokenKind::Int, "the maximum number of turns")?;
+                    agent.max_turns = Some((self.int_value(t), t.span));
+                }
+                "task" => agent.task = Some(self.expr()?),
+                "on" => {
+                    let which = self.ident("`turn_limit` or `stuck`")?;
+                    self.expect(TokenKind::Colon, "`:`")?;
+                    let action = self.on_limit()?;
+                    match which.name.as_str() {
+                        "turn_limit" => agent.on_turn_limit = action,
+                        "stuck" => agent.on_stuck = action,
+                        _ => {
+                            self.diags.push(
+                                Diagnostic::error("E0108", "unknown agent event", which.span)
+                                    .expected("`on turn_limit` or `on stuck`")
+                                    .observed(format!("`on {}`", which.name)),
+                            );
+                        }
+                    }
+                }
+                "compact" => return Err(self.unsupported("compact", "a later milestone")),
+                other => {
+                    let r = self.error_here_at(
+                        key.span,
+                        "E0108",
+                        "unknown agent property",
+                        "`tools`, `max_turns`, `task`, `on turn_limit` or `on stuck`",
+                        other,
+                    );
+                    return Err(r);
+                }
+            }
+            self.end_of_line()?;
+        }
+        self.eat(TokenKind::Dedent);
+        agent.span = self.span_from(start);
+        Ok(Expr {
+            span: agent.span,
+            kind: ExprKind::Agent(Box::new(agent)),
+        })
     }
 
     fn args(&mut self) -> PResult<Vec<Arg>> {
@@ -964,7 +1387,13 @@ impl Parser<'_> {
                     span: self.span_from(t.span),
                 })
             }
-            TokenKind::LBrace => Err(self.unsupported("`{...}` literals", "M5")),
+            TokenKind::LParen => {
+                self.advance();
+                let inner = self.expr()?;
+                self.expect(TokenKind::RParen, "`)`")?;
+                Ok(inner)
+            }
+            TokenKind::LBrace => Err(self.unsupported("`{...}` literals", "a later milestone")),
             _ => Err(self.error_here("E0102", "expected an expression", "a value or a call")),
         }
     }
@@ -1012,27 +1441,6 @@ impl Parser<'_> {
             span: t.span,
         }
     }
-}
-
-fn is_operator(k: TokenKind) -> bool {
-    use TokenKind::*;
-    matches!(
-        k,
-        Plus | PlusPlus
-            | Minus
-            | Star
-            | Slash
-            | Percent
-            | EqEq
-            | Ne
-            | Lt
-            | Gt
-            | Le
-            | Ge
-            | AndAnd
-            | OrOr
-            | DotDot
-    )
 }
 
 #[cfg(test)]
@@ -1118,12 +1526,106 @@ graph research(topic: Text) -> List[Text]:
 
     #[test]
     fn future_constructs_name_their_milestone() {
-        let (_, diags) = parse(
-            "graph g() -> Text:\n    a = agent claude:\n        max_turns 10\n    return a\n",
-        );
+        let (_, diags) = parse("graph g() -> Text:\n    a = ask Mem(u).Recall(x)\n    return a\n");
         assert_eq!(diags.len(), 1, "{diags:#?}");
         assert_eq!(diags[0].code, "E0101");
-        assert!(diags[0].message.contains("M5"));
+        assert!(diags[0].message.contains("M6"));
+    }
+
+    fn graph_value(src: &str) -> Expr {
+        let p = parse_ok(src);
+        let Decl::Graph(g) = &p.decls[0] else {
+            panic!()
+        };
+        match &g.body[0] {
+            Stmt::Node { value, .. } => value.clone(),
+            Stmt::Return(e) => e.clone(),
+            Stmt::Limits(_) => panic!(),
+        }
+    }
+
+    #[test]
+    fn operators_follow_precedence() {
+        let e = graph_value("graph g() -> Bool:\n    return a + b * c > d and not e\n");
+        let ExprKind::Binary { op, left, .. } = &e.kind else {
+            panic!("{e:?}")
+        };
+        assert_eq!(op, "and");
+        let ExprKind::Binary { op, left, .. } = &left.kind else {
+            panic!()
+        };
+        assert_eq!(op, ">");
+        let ExprKind::Binary { op, right, .. } = &left.kind else {
+            panic!()
+        };
+        assert_eq!(op, "+");
+        assert!(matches!(&right.kind, ExprKind::Binary { op, .. } if op == "*"));
+    }
+
+    #[test]
+    fn loop_with_match_done_next_and_on_limit() {
+        let e = graph_value(
+            "graph g(d: Text) -> Text:\n    final = loop text = d, max 3:\n        match m(revise(text)):\n            case Approved:\n                done text\n            case Rejected(feedback): next m(rewrite(text, feedback))\n        on limit: last\n    return final\n",
+        );
+        let ExprKind::Loop {
+            var,
+            max,
+            body,
+            on_limit,
+            ..
+        } = &e.kind
+        else {
+            panic!("{e:?}")
+        };
+        assert_eq!(var.name, "text");
+        assert_eq!(*max, 3);
+        assert_eq!(*on_limit, OnLimit::Last);
+        let ExprKind::Match { cases, .. } = &body.kind else {
+            panic!()
+        };
+        assert_eq!(cases.len(), 2);
+        assert!(matches!(cases[0].body.kind, ExprKind::Done(_)));
+        assert_eq!(cases[1].binds[0].name, "feedback");
+        assert!(matches!(cases[1].body.kind, ExprKind::Next(_)));
+    }
+
+    #[test]
+    fn if_else_blocks_and_inline() {
+        parse_ok(
+            "graph g(a: Nat) -> Text:\n    x = if a > 1:\n        \"big\"\n    else:\n        \"small\"\n    return x\n",
+        );
+        parse_ok(
+            "graph g(a: Nat) -> Text:\n    x = if a > 1: \"big\"\n    else: \"small\"\n    return x\n",
+        );
+    }
+
+    #[test]
+    fn agent_block_inside_for_each() {
+        let p = parse_ok(
+            "graph g(qs: List[Text]) -> List[Text]:\n    found = for each q in qs:\n        agent claude:\n            tools [web_search]\n            max_turns 10\n            task investigate(q)\n            on turn_limit: final_answer\n            on stuck: fail \"stuck\"\n    return found\n",
+        );
+        let Decl::Graph(g) = &p.decls[0] else {
+            panic!()
+        };
+        let Stmt::Node { value, .. } = &g.body[0] else {
+            panic!()
+        };
+        let ExprKind::Agent(a) = &value.kind else {
+            panic!("{value:?}")
+        };
+        assert_eq!(a.tools[0].name, "web_search");
+        assert_eq!(a.max_turns.map(|m| m.0), Some(10));
+        assert_eq!(a.on_turn_limit, OnLimit::FinalAnswer);
+        assert!(matches!(a.on_stuck, OnLimit::Fail(_)));
+    }
+
+    #[test]
+    fn try_inline_and_keywords_as_names() {
+        let e = graph_value("graph g(x: Text) -> Text:\n    r = try f(x)\n    return r\n");
+        assert!(matches!(e.kind, ExprKind::Try(_)));
+        // `next` followed by `(` or `.` is a name, not a keyword.
+        let e = graph_value("graph g(x: Text) -> Text:\n    return next.x\n");
+        assert!(matches!(e.kind, ExprKind::Field { .. }));
     }
 
     #[test]

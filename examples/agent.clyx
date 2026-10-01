@@ -1,0 +1,67 @@
+# agent.clyx
+# Um agente que pesquisa (ReAct: o modelo decide quando buscar, lê os
+# resultados e decide de novo), e um laço de revisão com match.
+#
+#   calyx run examples/agent.clyx --fake-models --question "..."   # sem rede
+#   GEMINI_API_KEY=... calyx run examples/agent.clyx --question "..."
+
+model gemini = "gemini-3.5-flash-lite":
+    max_output 2000 tokens
+
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 4000 tokens
+    retry_on [Timeout, RateLimit]
+    description "Busca na web. Devolve trechos de páginas com a fonte de cada um."
+
+type Review = Approved | Rejected(feedback: Text)
+
+prompt investigate(question: Text) -> Text:
+    """
+    Responda à pergunta abaixo. Use a busca quantas vezes precisar, e cite as
+    fontes que usar. Quando tiver informação suficiente, responda sem chamar
+    mais ferramentas.
+
+    Pergunta: {question}
+    """
+
+prompt review(question: Text, answer: Text) -> Review:
+    """
+    Avalie se a resposta abaixo responde à pergunta e cita fontes.
+    Aprove (Approved) se sim; senão, rejeite (Rejected) dizendo o que falta.
+
+    Pergunta: {question}
+    Resposta: {answer}
+    """
+
+prompt improve(answer: Text, feedback: Text) -> Text:
+    """
+    Melhore a resposta abaixo seguindo o comentário do revisor.
+
+    Comentário: {feedback}
+
+    Resposta:
+    {answer}
+    """
+
+graph ask(question: Text) -> Text:
+    limits threads 4, budget 1 USD
+
+    # O ciclo ReAct: modelo -> busca -> observação -> modelo, até responder.
+    draft = agent gemini:
+        tools [web_search]
+        max_turns 6
+        task investigate(question)
+        on turn_limit: final_answer
+        on stuck: final_answer
+
+    # Revisão com limite: aprova, ou reescreve com o comentário (até 2 vezes).
+    final = loop answer = draft, max 2:
+        match gemini(review(question, answer)):
+            case Approved:
+                done answer
+            case Rejected(feedback):
+                next gemini(improve(answer, feedback))
+        on limit: last
+
+    return final

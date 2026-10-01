@@ -1,0 +1,25 @@
+# M5 errors: each reported once, with what was expected.
+model m = "fake-model"
+
+tool web_search(query: Text) -> Text:
+    effect read
+
+type Review = Approved | Rejected(feedback: Text)
+
+prompt revise(text: Text) -> Review:
+    """Revise: {text}"""
+
+graph g(q: Text) -> Text:
+    a = agent m:
+        tools [web_search, nope]
+        task revise(q)
+    b = match m(revise(q)):
+        case Approved: "a"
+        case Rejeted(x): "b"
+    c = loop t = q, max 2:
+        t + "x"
+    d = done q
+    e = if q: 1
+    else: "x"
+    f = q + 1
+    return a

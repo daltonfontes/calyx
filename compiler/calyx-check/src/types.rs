@@ -1,4 +1,4 @@
-//! Types of the M1 subset and the assignability relation.
+//! Types and the assignability relation.
 
 use std::fmt;
 
@@ -20,6 +20,8 @@ pub enum Ty {
     Map(Box<Ty>, Box<Ty>),
     /// A type declared with `type`.
     User(String),
+    /// What `try` gives: `Ok(value: T)` or `Failed(error: Text)` (D11).
+    Result(Box<Ty>),
     /// Poison: produced after an error, compatible with everything, so one
     /// mistake does not cascade into many diagnostics.
     Error,
@@ -69,6 +71,7 @@ impl fmt::Display for Ty {
             Ty::List(t, Some(n)) => write!(f, "List[{t}] max {n}"),
             Ty::Map(k, v) => write!(f, "Map[{k}, {v}]"),
             Ty::User(n) => f.write_str(n),
+            Ty::Result(t) => write!(f, "Result[{t}]"),
             Ty::Error => f.write_str("?"),
         }
     }
@@ -89,6 +92,7 @@ pub fn assignable(from: &Ty, to: &Ty) -> bool {
                 }
         }
         (Ty::Map(k1, v1), Ty::Map(k2, v2)) => assignable(k1, k2) && assignable(v1, v2),
+        (Ty::Result(a), Ty::Result(b)) => assignable(a, b),
         _ => from == to,
     }
 }
