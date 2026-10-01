@@ -17,12 +17,20 @@ type Fact:
     topic: Text
     content: Text
 
+# Uma função pura: sem efeitos, pode ser usada em qualquer lugar,
+# inclusive nos handlers.
+def about(f: Fact, topic: Text) -> Bool:
+    return lower(topic) in lower(f.topic) or lower(topic) in lower(f.content)
+
 entity UserMemory(key user: Text):
     state facts: List[Fact] = []
     state conversations: Nat = 0
 
     on Recall() -> List[Fact]:
         return facts
+
+    on About(topic: Text) -> List[Fact]:
+        return [f for f in facts if about(f, topic)]
 
     on Remember(learned: List[Fact]):
         next facts = facts + learned

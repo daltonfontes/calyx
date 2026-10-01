@@ -1,9 +1,6 @@
 # Constructs from later milestones say when they arrive.
 model claude = "m"
 
-def check(x: Text) -> Bool:
-    return x
-
 graph g(q: Text) -> Text:
     a = race first where it == q:
         one: q

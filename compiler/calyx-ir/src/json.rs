@@ -74,6 +74,16 @@ impl Program {
         list(&mut o, &self.graphs, graph);
         o.push_str(",\"entities\":");
         list(&mut o, &self.entities, entity);
+        o.push_str(",\"defs\":");
+        list(&mut o, &self.defs, |o, d| {
+            o.push_str("{\"name\":");
+            string(o, &d.name);
+            o.push_str(",\"params\":");
+            strings(o, &d.params);
+            o.push_str(&format!(",\"nlocals\":{},\"body\":", d.nlocals));
+            expr(o, &d.body, &mut 0);
+            o.push('}');
+        });
         o.push('}');
         o
     }
@@ -356,6 +366,44 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
                 &all,
                 ids,
             );
+        }
+        Expr::Bool(b) => o.push_str(&format!("{{\"k\":\"bool\",\"v\":{b}}}")),
+        Expr::Let { slot, value, body } => {
+            o.push_str(&format!("{{\"k\":\"let\",\"slot\":{slot},\"v\":"));
+            expr(o, value, ids);
+            o.push_str(",\"body\":");
+            expr(o, body, ids);
+            o.push('}');
+        }
+        Expr::Comprehension {
+            slot,
+            over,
+            body,
+            cond,
+        } => {
+            o.push_str(&format!("{{\"k\":\"comp\",\"slot\":{slot},\"over\":"));
+            expr(o, over, ids);
+            o.push_str(",\"body\":");
+            expr(o, body, ids);
+            o.push_str(",\"cond\":");
+            match cond {
+                Some(c) => expr(o, c, ids),
+                None => o.push_str("null"),
+            }
+            o.push('}');
+        }
+        // Pure: no call id (nothing goes to the journal).
+        Expr::Def { def, args } => {
+            o.push_str(&format!("{{\"k\":\"def\",\"def\":{def},\"args\":"));
+            list(o, args, |o, e| expr(o, e, ids));
+            o.push('}');
+        }
+        Expr::Builtin { name, args } => {
+            o.push_str("{\"k\":\"builtin\",\"name\":");
+            string(o, name);
+            o.push_str(",\"args\":");
+            list(o, args, |o, e| expr(o, e, ids));
+            o.push('}');
         }
         Expr::State(field) => {
             o.push_str("{\"k\":\"state\",\"field\":");

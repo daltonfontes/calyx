@@ -54,7 +54,20 @@ A analogia mais próxima é o **SQL**: você declara o que quer, e o banco decid
 
 ## Estado do projeto
 
-O **discovery** está concluído (35 decisões fechadas). Na implementação, os marcos M0 (estrutura), M1 (`calyx check` para o subconjunto inicial) M2 (`calyx run`: o runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP) M3 (diário: uma execução interrompida continua sem refazer nenhuma chamada concluída), M4 (paralelismo derivado do grafo, com limites e prioridade pelo caminho crítico) M5 (`agent`, `loop`, `match`, `if`, `try`: o ciclo ReAct funciona com o Gemini) M6a (escritas externas seguras: chave de idempotência, políticas para `write once` de resultado incerto, precondições conferidas pela tool, `after`) M6b (sandboxes: o agente trabalha numa cópia do repositório, com empréstimos `reads`/`edits` verificados e snapshots para desfazer e retomar) e M6c (entidades: estado entre execuções, uma mudança por vez por chave, cada mensagem aplicada uma vez) estão concluídos. Na medida Q2, o compilador pega 28 de 41 bugs de estado antes de rodar, e 35 de 41 nunca causam dano. A Calyx se instala como um binário só, e `calyx build` gera executáveis autocontidos (D35). O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
+O **discovery** está concluído (35 decisões fechadas). Na implementação, estes marcos estão concluídos:
+
+- **M0:** estrutura do repositório.
+- **M1:** `calyx check` para o subconjunto inicial.
+- **M2:** `calyx run`. O runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP.
+- **M3:** diário. Uma execução interrompida continua sem refazer nenhuma chamada concluída.
+- **M4:** paralelismo derivado do grafo, com limites e prioridade pelo caminho crítico.
+- **M5:** `agent`, `loop`, `match`, `if` e `try`. O ciclo ReAct funciona com o Gemini.
+- **M6a:** escritas externas seguras: chave de idempotência, políticas para `write once` de resultado incerto, precondições conferidas pela tool e `after`.
+- **M6b:** sandboxes. O agente trabalha numa cópia do repositório, com empréstimos `reads`/`edits` verificados e snapshots para desfazer e retomar.
+- **M6c:** entidades: estado entre execuções, uma mudança por vez por chave, cada mensagem aplicada uma vez.
+- **M7:** camada pura: `def`, `true`/`false`, listas por compreensão, `in` e funções embutidas.
+
+Na medida Q2, o compilador pega 28 de 41 bugs de estado antes de rodar, e 35 de 41 nunca causam dano. A Calyx se instala como um binário só, e `calyx build` gera executáveis autocontidos (D35). Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
 
 ## Como instalar
 
