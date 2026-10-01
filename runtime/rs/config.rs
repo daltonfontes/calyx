@@ -9,6 +9,10 @@
 //!
 //! [tools.web_search]
 //! command = ["python3", "tools/fake_search.py"]   # relative to this file
+//!
+//! [prices."gemini-3.5-flash-lite"]   # USD per million tokens (illustrative)
+//! input = 0.10
+//! output = 0.40
 //! ```
 //!
 //! The program pins the model id (decision D23); the configuration only
@@ -46,6 +50,8 @@ pub struct ToolServer {
 pub struct Config {
     pub providers: Vec<Provider>,
     pub tools: HashMap<String, ToolServer>,
+    /// Price per model id, in USD per million tokens: (input, output).
+    pub prices: HashMap<String, (f64, f64)>,
     /// Where the configuration came from, for messages.
     pub path: Option<PathBuf>,
 }
@@ -155,6 +161,21 @@ impl Config {
                         );
                     }
                 }
+                "prices" => {
+                    for (model, v) in section(value, "prices")? {
+                        let price = |k: &str| {
+                            v.get(k)
+                                .and_then(|x| x.as_float().or(x.as_integer().map(|i| i as f64)))
+                                .ok_or_else(|| {
+                                    format!(
+                                        "prices.\"{model}\" needs `{k} = <USD per million tokens>`"
+                                    )
+                                })
+                        };
+                        cfg.prices
+                            .insert(model.clone(), (price("input")?, price("output")?));
+                    }
+                }
                 other => return Err(format!("unknown section `{other}`")),
             }
         }
@@ -231,6 +252,16 @@ mod tests {
         assert_eq!(t.command, ["python3", "search.py"]);
         assert_eq!(t.remote_name.as_deref(), Some("search"));
         assert_eq!(t.dir, Path::new("/p"));
+    }
+
+    #[test]
+    fn parses_prices() {
+        let cfg = Config::parse(
+            "[prices.\"gemini-x\"]\ninput = 0.1\noutput = 2\n",
+            Path::new("."),
+        )
+        .unwrap();
+        assert_eq!(cfg.prices["gemini-x"], (0.1, 2.0));
     }
 
     #[test]

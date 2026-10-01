@@ -81,10 +81,19 @@ pub fn call(
         .send(body.to_string());
     let mut resp = result.map_err(transport_error)?;
     let status = resp.status().as_u16();
+    let retry_after = resp
+        .headers()
+        .get("retry-after")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.trim().parse::<f64>().ok());
     let text = resp.body_mut().read_to_string().map_err(transport_error)?;
     let ms = started.elapsed().as_millis() as u64;
     if status != 200 {
-        return Err(status_error(status, &text));
+        let mut e = status_error(status, &text);
+        if let Some(secs) = retry_after {
+            e.retry_after_ms = Some((secs * 1000.0) as u64);
+        }
+        return Err(e);
     }
     let v: Value = serde_json::from_str(&text)
         .map_err(|e| IoError::new("Decode", format!("invalid JSON from the provider: {e}")))?;
@@ -135,7 +144,26 @@ fn status_error(status: u16, body: &str) -> IoError {
         500..=599 => "Unavailable",
         _ => "BadRequest",
     };
-    IoError::new(kind, format!("HTTP {status}: {message}"))
+    let mut e = IoError::new(kind, format!("HTTP {status}: {message}"));
+    e.retry_after_ms = retry_hint(&message);
+    e
+}
+
+/// "Please retry in 21.66s" (Gemini puts the wait in the message).
+fn retry_hint(message: &str) -> Option<u64> {
+    let lower = message.to_ascii_lowercase();
+    let rest = &lower[lower.find("retry in ")? + "retry in ".len()..];
+    let number: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let secs: f64 = number.parse().ok()?;
+    let unit = &rest[number.len()..];
+    Some(if unit.starts_with("ms") {
+        secs as u64
+    } else {
+        (secs * 1000.0) as u64
+    })
 }
 
 /// Fake models for tests of the retry policy: `fake-unavailable` always
@@ -153,8 +181,17 @@ pub fn fake_failure(model: &str) -> Option<IoError> {
     }
 }
 
-/// A deterministic answer shaped by the schema. No network.
+/// A deterministic answer shaped by the schema. No network. A model named
+/// `fake-slow-<ms>` waits that long first, to measure parallelism.
 pub fn fake(req: &ModelRequest) -> Answer {
+    let started = Instant::now();
+    if let Some(ms) = req
+        .model
+        .strip_prefix("fake-slow-")
+        .and_then(|n| n.parse::<u64>().ok())
+    {
+        std::thread::sleep(Duration::from_millis(ms));
+    }
     let first_line = req
         .prompt
         .lines()
@@ -169,7 +206,7 @@ pub fn fake(req: &ModelRequest) -> Answer {
         input_tokens: (req.prompt.len() / 4) as u64,
         output_tokens: (text.len() / 4) as u64,
         text,
-        ms: 0,
+        ms: started.elapsed().as_millis() as u64,
     }
 }
 
@@ -230,6 +267,11 @@ mod tests {
         assert_eq!(e.kind, "Unavailable");
         assert_eq!(e.message, "HTTP 503: high demand");
         assert_eq!(status_error(429, "").kind, "RateLimit");
+        let quota = status_error(
+            429,
+            r#"[{"error":{"message":"Quota exceeded. Please retry in 21.66s."}}]"#,
+        );
+        assert_eq!(quota.retry_after_ms, Some(21_660));
         assert_eq!(status_error(400, "{}").kind, "BadRequest");
     }
 }

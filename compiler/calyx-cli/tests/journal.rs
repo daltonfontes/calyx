@@ -157,11 +157,10 @@ fn replay_of_an_interrupted_run_stops_where_the_journal_ends() {
     let id = d.only_run();
     let replay = d.calyx(&["replay", &id], None);
     assert_eq!(replay.status.code(), Some(3));
+    // Calls run in parallel, so which ones finished before the crash varies.
     let err = text(&replay.stderr);
-    assert!(
-        err.contains("replay: call `g/answers[1]#0` is not in the journal"),
-        "{err}"
-    );
+    assert!(err.contains("replay: call `g/"), "{err}");
+    assert!(err.contains("is not in the journal"), "{err}");
 }
 
 #[test]

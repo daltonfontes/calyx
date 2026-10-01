@@ -181,6 +181,22 @@ pub struct Node {
     pub over: Option<Expr>,
     /// What the node computes (for a fan-out: for each item).
     pub value: Option<Expr>,
+    /// Estimated seconds from the start of this node to the end of the
+    /// graph along its longest path: the scheduler runs higher ranks first
+    /// (decision D24). Set by [`Graph::rank_nodes`].
+    pub rank: f64,
+}
+
+/// What `limits ...` sets on a graph (decision D3). The programmer limits
+/// concurrency; the runtime creates it.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Limits {
+    /// Calls (models and tools) in flight at once.
+    pub threads: Option<u64>,
+    /// Calls started per second.
+    pub rate_per_s: Option<u64>,
+    /// Maximum cost of the run: amount and currency.
+    pub budget: Option<(f64, String)>,
 }
 
 /// A compiled graph: the template the runtime unfolds.
@@ -195,6 +211,62 @@ pub struct Graph {
     /// Nodes in an order where every node comes after its inputs.
     pub nodes: Vec<Node>,
     pub output: Option<NodeId>,
+    pub limits: Limits,
+}
+
+impl Graph {
+    /// Estimated duration of one node, in seconds: the calls in its
+    /// expressions (3 s per model or graph call, 1 s per tool call). Without
+    /// expressions, an estimate from its effect.
+    fn weight(n: &Node) -> f64 {
+        fn calls(e: &Expr) -> f64 {
+            match e {
+                Expr::Model { args, .. } | Expr::Graph { args, .. } => {
+                    3.0 + args.iter().map(calls).sum::<f64>()
+                }
+                Expr::Tool { args, .. } => 1.0 + args.iter().map(calls).sum::<f64>(),
+                Expr::Field(base, _) => calls(base),
+                Expr::List(items) => items.iter().map(calls).sum(),
+                Expr::Interp(parts) => parts
+                    .iter()
+                    .map(|p| match p {
+                        Part::Expr(e) => calls(e),
+                        Part::Lit(_) => 0.0,
+                    })
+                    .sum(),
+                _ => 0.0,
+            }
+        }
+        if n.value.is_some() || n.over.is_some() {
+            return n.over.as_ref().map_or(0.0, calls) + n.value.as_ref().map_or(0.0, calls);
+        }
+        match (&n.kind, n.effect) {
+            (NodeKind::Call { .. }, _) => 3.0,
+            (_, Effect::Pure) => 0.0,
+            (_, Effect::Llm) => 3.0,
+            (_, Effect::Sandbox) => 5.0,
+            (_, Effect::Read | Effect::Write | Effect::WriteOnce) => 1.0,
+        }
+    }
+
+    /// Sets each node's rank: its weight plus the largest rank among the
+    /// nodes that read it. Nodes come after their inputs, so one backward
+    /// pass is enough (linear in the size of the graph).
+    pub fn rank_nodes(&mut self) {
+        let mut rank: Vec<f64> = self.nodes.iter().map(Self::weight).collect();
+        for i in (0..self.nodes.len()).rev() {
+            for input in self.nodes[i].inputs.clone() {
+                let j = input.0 as usize;
+                let via = Self::weight(&self.nodes[j]) + rank[i];
+                if via > rank[j] {
+                    rank[j] = via;
+                }
+            }
+        }
+        for (n, r) in self.nodes.iter_mut().zip(rank) {
+            n.rank = r;
+        }
+    }
 }
 
 /// A whole program.
@@ -272,6 +344,38 @@ mod tests {
         assert_eq!(Effect::WriteOnce.join(Effect::Sandbox), Effect::WriteOnce);
     }
 
+    fn node(id: u32, effect: Effect, inputs: &[u32]) -> Node {
+        Node {
+            id: NodeId(id),
+            name: format!("n{id}"),
+            ty: "Text".into(),
+            kind: NodeKind::Pure,
+            fan_out: None,
+            effect,
+            inputs: inputs.iter().map(|&i| NodeId(i)).collect(),
+            over: None,
+            value: None,
+            rank: 0.0,
+        }
+    }
+
+    #[test]
+    fn ranks_follow_the_longest_path() {
+        // n0 (llm) -> n1 (read) -> n3 (llm); n0 -> n2 (pure) -> n3
+        let mut g = Graph {
+            nodes: vec![
+                node(0, Effect::Llm, &[]),
+                node(1, Effect::Read, &[0]),
+                node(2, Effect::Pure, &[0]),
+                node(3, Effect::Llm, &[1, 2]),
+            ],
+            ..Graph::default()
+        };
+        g.rank_nodes();
+        let ranks: Vec<f64> = g.nodes.iter().map(|n| n.rank).collect();
+        assert_eq!(ranks, vec![7.0, 4.0, 3.0, 3.0]);
+    }
+
     #[test]
     fn displays_a_graph() {
         let g = Graph {
@@ -292,8 +396,10 @@ mod tests {
                 inputs: vec![],
                 over: None,
                 value: None,
+                rank: 0.0,
             }],
             output: Some(NodeId(0)),
+            limits: Limits::default(),
         };
         assert_eq!(
             g.to_string(),

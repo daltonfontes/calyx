@@ -52,6 +52,11 @@ pub struct RunOptions {
     pub mode: Mode,
     /// The source file, recorded in the journal to find it again.
     pub program: Option<PathBuf>,
+    /// One worker and one call at a time: the same order on every run.
+    pub deterministic: bool,
+    /// Replaces the program's `budget` (in USD), e.g. to continue a run
+    /// that used it up.
+    pub budget_usd: Option<f64>,
 }
 
 /// Runs `graph` of a compiled program (the IR in JSON) with `args` (a JSON
@@ -71,6 +76,8 @@ pub fn run(
             Mode::Replay => "replay",
         },
         "program": opts.program.as_ref().map(|p| p.display().to_string()),
+        "deterministic": opts.deterministic,
+        "budget_usd": opts.budget_usd,
     });
     io::configure(opts.config, opts.fake_models);
     let c = |s: &str| CString::new(s).map_err(|_| "text contains NUL".to_owned());

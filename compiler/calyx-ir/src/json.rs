@@ -4,7 +4,7 @@
 //! are objects with a kind `k`; names are already indices into the
 //! program's `models`, `tools`, `prompts` and `graphs`.
 
-use crate::{Effect, Expr, Graph, Model, Node, Part, Program, Prompt, PromptPart, Tool};
+use crate::{Effect, Expr, Graph, Limits, Model, Node, Part, Program, Prompt, PromptPart, Tool};
 
 /// Format version, checked by the runtime.
 pub const IR_VERSION: u32 = 1;
@@ -133,6 +133,25 @@ fn graph(o: &mut String, g: &Graph) {
     list(o, &g.nodes, node);
     o.push_str(",\"output\":");
     opt_u64(o, g.output.map(|n| u64::from(n.0)));
+    o.push_str(",\"limits\":");
+    limits(o, &g.limits);
+    o.push('}');
+}
+
+fn limits(o: &mut String, l: &Limits) {
+    o.push_str("{\"threads\":");
+    opt_u64(o, l.threads);
+    o.push_str(",\"rate_per_s\":");
+    opt_u64(o, l.rate_per_s);
+    o.push_str(",\"budget\":");
+    match &l.budget {
+        Some((amount, unit)) => {
+            o.push_str(&format!("{{\"amount\":{amount:?},\"unit\":"));
+            string(o, unit);
+            o.push('}');
+        }
+        None => o.push_str("null"),
+    }
     o.push('}');
 }
 
@@ -143,6 +162,11 @@ fn node(o: &mut String, n: &Node) {
     string(o, &n.ty);
     o.push_str(",\"effect\":");
     effect(o, n.effect);
+    o.push_str(",\"inputs\":");
+    list(o, &n.inputs, |o, i| o.push_str(&i.0.to_string()));
+    o.push_str(&format!(",\"rank\":{:?}", n.rank));
+    // Call ids start at 0 in each expression: the list and the items are
+    // separate places in the realized graph (`node#k` and `node[j]#k`).
     o.push_str(",\"over\":");
     opt_expr(o, n.over.as_ref());
     o.push_str(",\"value\":");
@@ -152,22 +176,29 @@ fn node(o: &mut String, n: &Node) {
 
 fn opt_expr(o: &mut String, e: Option<&Expr>) {
     match e {
-        Some(e) => expr(o, e),
+        Some(e) => expr(o, e, &mut 0),
         None => o.push_str("null"),
     }
 }
 
-fn call(o: &mut String, kind: &str, fields: &[(&str, usize)], args: &[Expr]) {
-    o.push_str(&format!("{{\"k\":\"{kind}\""));
+/// A call gets an id after its arguments (post-order), so ids do not
+/// depend on which calls happen to finish first. The runtime keys calls in
+/// the journal by node instance and id.
+fn call(o: &mut String, kind: &str, fields: &[(&str, usize)], args: &[Expr], ids: &mut usize) {
+    let mut a = String::new();
+    list(&mut a, args, |o, e| expr(o, e, ids));
+    let id = *ids;
+    *ids += 1;
+    o.push_str(&format!("{{\"k\":\"{kind}\",\"id\":{id}"));
     for (name, v) in fields {
         o.push_str(&format!(",\"{name}\":{v}"));
     }
     o.push_str(",\"args\":");
-    list(o, args, expr);
+    o.push_str(&a);
     o.push('}');
 }
 
-fn expr(o: &mut String, e: &Expr) {
+fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
     match e {
         Expr::Text(s) => {
             o.push_str("{\"k\":\"text\",\"v\":");
@@ -181,14 +212,14 @@ fn expr(o: &mut String, e: &Expr) {
         Expr::Item => o.push_str("{\"k\":\"item\"}"),
         Expr::Field(base, name) => {
             o.push_str("{\"k\":\"field\",\"base\":");
-            expr(o, base);
+            expr(o, base, ids);
             o.push_str(",\"name\":");
             string(o, name);
             o.push('}');
         }
         Expr::List(items) => {
             o.push_str("{\"k\":\"list\",\"items\":");
-            list(o, items, expr);
+            list(o, items, |o, e| expr(o, e, ids));
             o.push('}');
         }
         Expr::Interp(parts) => {
@@ -201,7 +232,7 @@ fn expr(o: &mut String, e: &Expr) {
                 }
                 Part::Expr(e) => {
                     o.push_str("{\"expr\":");
-                    expr(o, e);
+                    expr(o, e, ids);
                     o.push('}');
                 }
             });
@@ -211,9 +242,15 @@ fn expr(o: &mut String, e: &Expr) {
             model,
             prompt,
             args,
-        } => call(o, "model", &[("model", *model), ("prompt", *prompt)], args),
-        Expr::Tool { tool, args } => call(o, "tool", &[("tool", *tool)], args),
-        Expr::Graph { graph, args } => call(o, "graph", &[("graph", *graph)], args),
+        } => call(
+            o,
+            "model",
+            &[("model", *model), ("prompt", *prompt)],
+            args,
+            ids,
+        ),
+        Expr::Tool { tool, args } => call(o, "tool", &[("tool", *tool)], args, ids),
+        Expr::Graph { graph, args } => call(o, "graph", &[("graph", *graph)], args, ids),
     }
 }
 
@@ -236,15 +273,20 @@ mod tests {
             &Expr::Model {
                 model: 0,
                 prompt: 1,
-                args: vec![Expr::Field(
-                    Box::new(Expr::Node(crate::NodeId(2))),
-                    "q".into(),
-                )],
+                args: vec![
+                    Expr::Field(Box::new(Expr::Node(crate::NodeId(2))), "q".into()),
+                    Expr::Tool {
+                        tool: 0,
+                        args: vec![Expr::Item],
+                    },
+                ],
             },
+            &mut 0,
         );
+        // The tool (an argument) gets id 0, the model call id 1.
         assert_eq!(
             o,
-            r#"{"k":"model","model":0,"prompt":1,"args":[{"k":"field","base":{"k":"node","i":2},"name":"q"}]}"#
+            r#"{"k":"model","id":1,"model":0,"prompt":1,"args":[{"k":"field","base":{"k":"node","i":2},"name":"q"},{"k":"tool","id":0,"tool":0,"args":[{"k":"item"}]}]}"#
         );
     }
 }

@@ -144,7 +144,7 @@ impl Lower<'_> {
                     stmts.insert(&name.name, (fan_out, value));
                 }
                 Stmt::Return(e) => ret = Some(e),
-                Stmt::Limits(_) => {}
+                Stmt::Limits(entries) => g.limits = limits(entries),
             }
         }
         for n in &mut g.nodes {
@@ -165,6 +165,7 @@ impl Lower<'_> {
                 None => n.value = Some(self.expr(value, &scope)),
             }
         }
+        g.rank_nodes();
     }
 
     fn expr(&self, e: &Expr, scope: &Scope) -> ir::Expr {
@@ -393,6 +394,33 @@ fn ir_string(out: &mut String, s: &str) {
         }
     }
     out.push('"');
+}
+
+/// `limits threads 8, rate 50/s, budget 2 USD` (already checked).
+fn limits(entries: &[(Ident, Expr)]) -> ir::Limits {
+    let mut l = ir::Limits::default();
+    for (key, value) in entries {
+        match (key.name.as_str(), &value.kind) {
+            ("threads", ExprKind::Int { value, .. }) => l.threads = Some(*value),
+            ("rate", ExprKind::Int { value, unit }) => {
+                // `50/s`, `600/min`: stored per second, rounded up.
+                let per = match unit.as_deref() {
+                    Some("/min") => 60,
+                    Some("/h") => 3600,
+                    _ => 1,
+                };
+                l.rate_per_s = Some(value.div_ceil(per).max(1));
+            }
+            ("budget", ExprKind::Int { value, unit }) => {
+                l.budget = Some((*value as f64, unit.clone().unwrap_or_default()));
+            }
+            ("budget", ExprKind::Float { value, unit }) => {
+                l.budget = Some((*value, unit.clone().unwrap_or_default()));
+            }
+            _ => {}
+        }
+    }
+    l
 }
 
 fn is_text(t: &TypeExpr) -> bool {

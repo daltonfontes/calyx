@@ -12,3 +12,13 @@
 # Cada tool roda num servidor MCP (decisão D34). Caminhos relativos a este arquivo.
 [tools.web_search]
 command = ["python3", "tools/fake_search.py"]
+
+# Preços por modelo, em USD por milhão de tokens, para `limits budget`.
+# Confira os valores do seu provedor; sem preço, o orçamento não conta o modelo.
+#
+#   [prices."gemini-3.5-flash-lite"]   # valores ilustrativos
+#   input = 0.10
+#   output = 0.40
+#
+# Plano gratuito com limite de requisições? Limite o ritmo no grafo:
+#   limits rate 15/min

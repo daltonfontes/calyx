@@ -673,6 +673,7 @@ impl<'p> Cx<'_, 'p> {
                 inputs: deps[i].iter().filter_map(|d| ids.get(d).copied()).collect(),
                 over: None,
                 value: None,
+                rank: 0.0,
             });
         }
 
@@ -719,6 +720,7 @@ impl<'p> Cx<'_, 'p> {
                         inputs: refs.iter().filter_map(|d| ids.get(d).copied()).collect(),
                         over: None,
                         value: None,
+                        rank: 0.0,
                     });
                     output = Some(id);
                 }
@@ -789,6 +791,7 @@ impl<'p> Cx<'_, 'p> {
             effect: Some(effect),
             nodes,
             output,
+            limits: ir::Limits::default(),
         }
     }
 

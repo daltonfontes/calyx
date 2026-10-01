@@ -184,6 +184,15 @@ limits threads 8, rate 50/s, budget 2 USD, memory 4 GB
 
 Todos opcionais. O programador **limita** a concorrência, nunca a cria.
 
+| Limite | Significado | Padrão |
+|---|---|---|
+| `threads N` | Chamadas (de modelo e de tool) em andamento ao mesmo tempo | 8 |
+| `rate N/s`, `N/min`, `N/h` | Chamadas iniciadas por unidade de tempo (ex.: `rate 15/min` para o plano gratuito do Gemini) | sem limite |
+| `budget N USD` | Custo máximo da execução; os preços por modelo vêm do `calyx.toml`. Esgotado, a execução para e pode continuar com `calyx resume <id> --budget <maior>` | sem limite |
+| `memory` | *(ainda não aplicado)* | — |
+
+Os limites que valem são os do grafo executado; os de subgrafos ainda são ignorados.
+
 ### 5.2 Passos e valores
 
 | Forma | Significado |
@@ -422,6 +431,16 @@ O efeito de um nó é **inferido**: o maior efeito de tudo o que ele chama. Orde
 - **E/S nunca bloqueia um worker:** a chamada vira um pedido pendente, e o worker segue.
 - Ramos não escolhidos não rodam; o que deixou de ser necessário é cancelado (D32).
 
+**Como está implementado (M4):**
+
+- **Tarefas:** cada passo é uma tarefa, e cada item de um `for each` também. Uma tarefa fica pronta quando os passos que ela lê terminam.
+- **Workers:** um por núcleo (no máximo 8), cada um com uma fila em ordem de prioridade; sem trabalho, um worker pega da fila dos outros.
+- **Prioridade:** o compilador calcula para cada passo o caminho mais longo até o fim do grafo, estimando 3 s por chamada de modelo ou subgrafo e 1 s por chamada de tool. Workers e chamadas esperando vaga seguem essa ordem; em empate, a ordem de criação.
+- **Chamadas:** um worker nunca espera a rede. A chamada vai para uma thread de E/S (no máximo `threads` ao mesmo tempo), e a tarefa para ali. Quando a resposta chega, a tarefa roda de novo desde o início; as chamadas que já terminaram vêm da memória, pelas mesmas chaves do diário. Assim não é preciso guardar pilha de C durante a espera.
+- **Dentro de um passo:** argumentos independentes são avaliados juntos, então chamadas independentes num mesmo passo também saem em paralelo.
+- **Ordem dos resultados:** a de `for each`, nunca a de término (D7). O resultado é o mesmo com uma ou muitas threads; `--deterministic` roda uma chamada por vez, sempre na mesma ordem.
+- **Numa falha:** nada novo começa; as chamadas em andamento terminam e entram no diário antes de a execução parar.
+
 ### 9.3 Diário e recuperação (D6, D14, D20)
 
 - Uma entrada **por chamada** de modelo ou tool, mais timers, mensagens recebidas e escolhas não-determinísticas (vencedor de `race`, modelo do roteador).
@@ -483,9 +502,9 @@ Mensagens de erro estruturadas, com **esperado**, **observado** e **local**, par
 |---|---|
 | `calyx check` | Verifica o programa (meta: até 1 s), sem gerar código |
 | `calyx build` | Emite um arquivo C (runtime + grafo + efeitos) e compila para um binário nativo |
-| `calyx run` | Executa um grafo: `calyx run arquivo.clyx --param valor`. Hoje roda numa thread; depois, `--deterministic` (uma thread) e `--threads N` |
+| `calyx run` | Executa um grafo: `calyx run arquivo.clyx --param valor`. Chamadas independentes rodam em paralelo; `--deterministic` roda uma por vez; `--budget` troca o orçamento |
 | `calyx fmt` | Formata o código |
-| `calyx resume` | Continua uma execução interrompida ou que falhou: `calyx resume <id>`. Chamadas já no diário não são feitas (nem pagas) de novo |
+| `calyx resume` | Continua uma execução interrompida ou que falhou: `calyx resume <id>`. Chamadas já no diário não são feitas (nem pagas) de novo. `--budget` aumenta um orçamento esgotado |
 | `calyx replay` | Reexecuta a partir de um diário, sem chamar modelos nem tools: `calyx replay <id>` |
 | `calyx runs` | Lista as execuções, com estado (`finished`, `failed`, `interrupted`), chamadas e retomadas |
 | `calyx trace` | Mostra o grafo realizado, custos e latências por nó |
@@ -505,12 +524,22 @@ command = ["python3", "tools/search.py"] # relativo ao calyx.toml
 name = "search"                          # opcional: nome da tool no servidor
 ```
 
+Preços (para `budget`), em USD por milhão de tokens:
+
+```toml
+[prices."gemini-3.5-flash-lite"]   # valores ilustrativos: use os da tabela do provedor
+input = 0.10
+output = 0.40
+```
+
+Sem preço para um modelo, as chamadas dele não contam no orçamento, e o runtime avisa.
+
 Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*` / `o3*` / `o4*` (`OPENAI_API_KEY`), `nvidia/*` (`NVIDIA_API_KEY`). Identificadores que começam com `fake` (e a opção `--fake-models`) usam um modelo falso, sem rede, que responde no formato do tipo do prompt.
 
 ### 11.2 Como o runtime chama modelos e tools
 
 - **Modelo:** o prompt é preenchido com os argumentos (texto como está; listas, um item por linha; registros, em JSON). Se o prompt não devolve `Text`, o tipo de saída vira um **JSON Schema** enviado junto, e a resposta é decodificada nesse tipo; uma resposta que não decodifica conta como erro temporário.
-- **Novas tentativas:** erros temporários (`Timeout`, `RateLimit`, `Unavailable`, `Network`) de modelos são repetidos até 4 tentativas, esperando 1 s, 2 s e 4 s (o dobro para `RateLimit`). Tools repetem só os erros listados em `retry_on`; `write once` nunca repete (D2).
+- **Novas tentativas:** erros temporários (`Timeout`, `RateLimit`, `Unavailable`, `Network`) de modelos são repetidos até 4 tentativas, esperando 1 s, 2 s e 4 s (o dobro para `RateLimit`), ou mais, se o provedor pedir (cabeçalho `Retry-After` ou "retry in N s" na mensagem, até 60 s). Tools repetem só os erros listados em `retry_on`; `write once` nunca repete (D2).
 - **Saída de tools:** cortada em `max_output` (D16).
 - **Falha:** se um passo falha depois das tentativas, a execução para com o grafo, o passo e o motivo. Falha como valor (`try`, D11) chega no M5.
 
