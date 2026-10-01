@@ -8,7 +8,7 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D2 | Tipos de efeito | ✅ **Decidido:** `pure`, `llm`, `read`, `write`, `write once` (com política obrigatória); arestas de ordem entre escritas |
 | D3 | Threads e conversa | ✅ **Decidido:** threads = execução paralela derivada pelo runtime; `conversation` = valor; compactação explícita com verificação de orçamento |
 | D4 | Quanto dinamismo permitir | Dinamismo limitado e verificável |
-| D5 | Ciclos no grafo | Permitidos, com limite obrigatório |
+| D5 | Ciclos no grafo | Laço com valores carregados e limite obrigatório; ciclo só no template, execução desenrolada (DAG); ver [ReAct como ciclo](06-react-como-ciclo.md) |
 | D6 | Unidade de recuperação | Diário de nós concluídos (event sourcing) |
 | D7 | Junção de ramos paralelos | Lista ordenada por padrão; redutores declarados |
 | D8 | Template / realized graph / trace | Os três são conceitos de primeira classe |

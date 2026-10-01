@@ -13,3 +13,4 @@ O projeto está na fase de **discovery**: ainda não há implementação. O obje
 | [Decisões](docs/discovery/03-decisoes.md) | Decisões de design, com opções e recomendação |
 | [Teste no papel](docs/discovery/04-teste-no-papel.md) | 8 workflows reais usados para testar a hipótese |
 | [Temporal](docs/discovery/05-temporal.md) | Leitura do Temporal (execução durável) e impacto nas decisões de recuperação |
+| [ReAct como ciclo](docs/discovery/06-react-como-ciclo.md) | Como representar o laço de raciocínio e ação como o primeiro ciclo do grafo |
