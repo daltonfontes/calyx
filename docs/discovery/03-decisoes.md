@@ -18,7 +18,7 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D12 | Corrida e cancelamento | ✅ **Decidido:** `race` explícito; vencedor gravado no diário; cancelamento cooperativo entre nós (`llm`/`read` abandonados, `write` termina antes de valer). Compensação (saga) fica para uma versão futura |
 | D13 | Ambiente da execução (sandbox) | Efeitos na sandbox recuperáveis por snapshot, restaurado junto com o diário; isolamento entre ramos por validação do conjunto de leitura a cada escrita (STORM), preferida a cópia + merge |
 | D14 | Tempo e execuções longas | ✅ **Decidido:** timers no diário; suspender = gravar o estado e liberar a memória; retomar = reconstruir a partir do diário; diário ligado à versão do template |
-| D15 | Concorrência entre execuções | Chave de negócio (no máximo uma execução aberta por chave); recurso compartilhado tem uma execução dona, e as outras enviam mensagens a ela |
+| D15 | Concorrência entre execuções | Chave de negócio (no máximo uma execução aberta por chave); recurso compartilhado tem uma entidade dona; handlers de leitura rodam em paralelo, de escrita são exclusivos (ver [concorrência](13-concorrencia.md)) |
 | D16 | Tamanho máximo da saída das tools | Tools declaram o máximo, ou o runtime trunca |
 | D17 | Recursão de subgrafos | Permitida com parâmetro que decresce a cada chamada |
 | D18 | Rodadas (barreira) | Construção explícita para ramos que trocam informação |
@@ -27,13 +27,16 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D21 | Mensagens para uma execução em andamento | Mensagens tipadas e consultas de estado; mensagens recebidas vão para o diário |
 | D22 | Timeouts | ✅ **Decidido:** obrigatórios em nós com efeito externo; padrão por tentativa: `llm` 5 min, `read` 30 s, `write`/`write once` 60 s, `sandbox` 10 min; cada tool pode sobrescrever |
 | D23 | Versionamento de templates | ✅ **Decidido:** cada versão é um binário; execuções terminam na versão em que começaram; migram só se o compilador provar que os grafos são compatíveis |
-| D24 | Escalonamento | Lista com prioridade pelo caminho crítico; durações estimadas pelo compilador e refinadas pelo histórico de traces |
+| D24 | Escalonamento | Lista com prioridade pelo caminho crítico (garantia de Graham: até 2× o ótimo); durações estimadas pelo compilador e refinadas pelo histórico; memória como limite opcional |
 | D25 | Invariantes entre ramos | Recursos: resolvido por afinidade (D26); valores: validação declarada na junção, violação produz valor `conflito` |
 | D26 | Recursos afins | ✅ **Decidido:** sandbox, orçamento e capacidades `write once` têm um dono por vez; dividir entre ramos é explícito e verificado; sintaxe `reads` / `edits` (sem `&` / `&mut`). Ver [Bend](08-bend.md) |
 | D27 | Camadas da linguagem | ✅ **Decidido:** camada de grafo (`node`, efeitos, diário) + camada pura pequena (`let`, `fn`), recalculável. Ver [sintaxe](09-sintaxe.md) |
 | D28 | Chamada ao modelo | ✅ **Decidido:** forma única `modelo(prompt)`, ou `modelo(prompt, continue: conversa)` devolvendo `.value` e `.conversation`; `continue: new` começa uma conversa |
 | D29 | Precondições no efeito | `requires { ... }` na chamada de um efeito, na camada pura; a tool valida sobre o estado atual na mesma transação; falha vira valor (ver [SVBE](10-svbe.md)) |
 | D30 | Roteamento de modelo | Construção `router` que escolhe entre modelos por política, usando orçamento e histórico do diário; escolha gravada no diário (ver [mapa da orquestração](11-mapa-orquestracao.md)) |
+| D31 | Execução paralela | N workers com roubo de trabalho (da ponta mais antiga); E/S nunca bloqueia um worker; contadores atômicos de dependência (ver [concorrência](13-concorrencia.md)) |
+| D32 | Avaliação de ramos | Nós de ramos não escolhidos nunca rodam; resultados que deixaram de ser necessários são cancelados; sem execução especulativa por padrão |
+| D33 | Impasse entre entidades | O compilador recusa ciclos de `ask`; `send` pode formar ciclos |
 
 As decisões D11 a D19 surgiram no [teste no papel](04-teste-no-papel.md), onde estão descritas com os workflows que as motivaram. As propostas de D11, D12, D14 e D15 foram revisadas, e D20 a D23 surgiram, na leitura do [Temporal](05-temporal.md).
 

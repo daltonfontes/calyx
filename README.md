@@ -20,3 +20,4 @@ O projeto está na fase de **discovery**: ainda não há implementação. O obje
 | [SVBE](docs/discovery/10-svbe.md) | Consistência de estado entre agentes concorrentes: validação semântica no momento do efeito |
 | [Mapa da orquestração](docs/discovery/11-mapa-orquestracao.md) | Onde a Calyx está na pilha de orquestração de agentes, e o que falta |
 | [Arquitetura do runtime](docs/discovery/12-arquitetura-runtime.md) | Compilador e runtime nativos com modelo de atores; princípio de rodar e compilar rápido |
+| [Concorrência](docs/discovery/13-concorrencia.md) | Os três problemas da concorrência (descobrir, executar, estado) e o modelo de concorrência da Calyx |
