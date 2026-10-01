@@ -22,6 +22,8 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
         graphs: HashMap::new(),
         types: HashMap::new(),
         unit_variants: HashMap::new(),
+        variant_owners: HashMap::new(),
+        tools_with_max_output: HashSet::new(),
         graph_effects: HashMap::new(),
     };
     cx.collect(program);
@@ -63,9 +65,13 @@ struct GraphSig {
     ret: Ty,
 }
 
+/// A variant and its fields, in order.
+type VariantSig = (String, Vec<(String, Ty)>);
+
 enum UserType {
     Record(Vec<(String, Ty)>),
-    Variants,
+    /// Each variant with its fields.
+    Variants(Vec<VariantSig>),
     Alias(Ty),
 }
 
@@ -78,6 +84,10 @@ struct Cx<'a, 'p> {
     types: HashMap<&'p str, UserType>,
     /// Variants without fields, usable as values: `Optimist` is a `Role`.
     unit_variants: HashMap<&'p str, &'p str>,
+    /// The types that declare each variant name (for constructors).
+    variant_owners: HashMap<&'p str, Vec<&'p str>>,
+    /// Tools that declare `max_output` (agents may only use those, D16).
+    tools_with_max_output: HashSet<String>,
     graph_effects: HashMap<String, Effect>,
 }
 
@@ -122,7 +132,8 @@ impl<'p> Cx<'_, 'p> {
                 }
                 Decl::Type(t) => {
                     // Placeholder so types can refer to each other by name.
-                    self.types.insert(&t.name.name, UserType::Variants);
+                    self.types
+                        .insert(&t.name.name, UserType::Variants(Vec::new()));
                 }
                 _ => {}
             }
@@ -139,13 +150,19 @@ impl<'p> Cx<'_, 'p> {
                 let ut = match &t.ty.kind {
                     TypeKind::Record(fields) => UserType::Record(self.fields(fields)),
                     TypeKind::Variants(vs) => {
+                        let mut out = Vec::new();
                         for v in vs {
-                            self.fields(&v.fields);
+                            let fields = self.fields(&v.fields);
                             if v.fields.is_empty() {
                                 self.unit_variants.insert(&v.name.name, &t.name.name);
                             }
+                            self.variant_owners
+                                .entry(&v.name.name)
+                                .or_default()
+                                .push(&t.name.name);
+                            out.push((v.name.name.clone(), fields));
                         }
-                        UserType::Variants
+                        UserType::Variants(out)
                     }
                     TypeKind::Named { .. } => UserType::Alias(self.ty(&t.ty)),
                 };
@@ -291,7 +308,15 @@ impl<'p> Cx<'_, 'p> {
             }
             match key {
                 "effect" => effect = self.effect_words(&p.value, p.span),
-                "max_output" => self.prop_int(p, &["tokens"], "a number of tokens, e.g. `4000 tokens`"),
+                "max_output" => {
+                    self.tools_with_max_output.insert(t.name.name.clone());
+                    self.prop_int(p, &["tokens"], "a number of tokens, e.g. `4000 tokens`")
+                }
+                "description" => {
+                    if !matches!(p.value.as_slice(), [Expr { kind: ExprKind::Str(_), .. }]) {
+                        self.bad_prop(p, "a text that tells a model what the tool does");
+                    }
+                }
                 "timeout" => self.prop_int(
                     p,
                     &["ms", "s", "min", "h", "days"],
@@ -341,7 +366,7 @@ impl<'p> Cx<'_, 'p> {
                 }
                 _ => self.push(
                     err("E0301", "unknown tool property", p.key.span)
-                        .expected("`effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `checks` or `repeatable`")
+                        .expected("`effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `checks`, `repeatable` or `description`")
                         .observed(format!("`{key}`")),
                 ),
             }
@@ -485,7 +510,7 @@ impl<'p> Cx<'_, 'p> {
     // ----- graphs -----------------------------------------------------------
 
     /// Orders graphs so callees are checked before callers. Recursion is
-    /// planned for M5 (decision D17) and reported here.
+    /// planned for a later milestone (decision D17) and reported here.
     fn graph_order(&mut self, program: &'p Program) -> Vec<&'p GraphDecl> {
         let graphs: Vec<&GraphDecl> = program
             .decls
@@ -539,7 +564,7 @@ impl<'p> Cx<'_, 'p> {
                 self.push(
                     err(
                         "E0101",
-                        "recursive graphs are not supported yet (planned for M5)",
+                        "recursive graphs are not supported yet (planned for a later milestone)",
                         span,
                     )
                     .observed(format!(
@@ -674,6 +699,7 @@ impl<'p> Cx<'_, 'p> {
                 over: None,
                 value: None,
                 rank: 0.0,
+                nlocals: 0,
             });
         }
 
@@ -721,6 +747,7 @@ impl<'p> Cx<'_, 'p> {
                         over: None,
                         value: None,
                         rank: 0.0,
+                        nlocals: 0,
                     });
                     output = Some(id);
                 }
@@ -842,7 +869,7 @@ impl<'p> Cx<'_, 'p> {
                     "nodes depend on each other in a cycle",
                     locals[stuck[0]].name.span,
                 )
-                .expected("a graph without cycles (use `loop` for repetition, planned for M5)")
+                .expected("a graph without cycles (use `loop` for repetition)")
                 .observed(names.join(", ")),
             );
             order.extend(stuck);
@@ -957,6 +984,475 @@ impl<'p> Cx<'_, 'p> {
             }
             ExprKind::Call { callee, args } => self.call(e, callee, args, gc),
             ExprKind::Error => Typed::pure(Ty::Error),
+            ExprKind::Binary { op, left, right } => self.binary(op, left, right, e.span, gc),
+            ExprKind::Unary { op, value } => {
+                let t = self.expr(value, gc);
+                let ok = match op.as_str() {
+                    "not" => matches!(t.ty, Ty::Bool | Ty::Error),
+                    _ => is_number(&t.ty) || matches!(t.ty, Ty::Money | Ty::Duration),
+                };
+                if !ok {
+                    self.push(
+                        err("E0613", "operator does not apply to this type", e.span)
+                            .expected(if op == "not" { "a `Bool`" } else { "a number" })
+                            .observed(format!("`{}`", t.ty)),
+                    );
+                }
+                let ty = match (op.as_str(), &t.ty) {
+                    ("not", _) => Ty::Bool,
+                    (_, Ty::Nat | Ty::IntLit) => Ty::Int,
+                    (_, other) => other.clone(),
+                };
+                Typed {
+                    ty,
+                    kind: NodeKind::Pure,
+                    effect: t.effect,
+                }
+            }
+            ExprKind::If { cond, then, els } => {
+                let c = self.expr(cond, gc);
+                self.expect_bool(&c.ty, cond.span);
+                let a = self.expr(then, gc);
+                let b = self.expr(els, gc);
+                let ty = self.same_type(&a.ty, &b.ty, els.span);
+                Typed {
+                    ty,
+                    kind: NodeKind::Other("if".into()),
+                    effect: c.effect.join(a.effect).join(b.effect),
+                }
+            }
+            ExprKind::Match { value, cases } => {
+                let (v, branches) = self.match_cases(value, cases, e.span, gc);
+                let mut effect = v.effect;
+                let mut ty: Option<Ty> = None;
+                for (case, inner) in cases.iter().zip(branches) {
+                    let t = self.expr(&case.body, &inner);
+                    effect = effect.join(t.effect);
+                    ty = Some(match ty {
+                        None => t.ty,
+                        Some(first) => self.same_type(&first, &t.ty, case.body.span),
+                    });
+                }
+                Typed {
+                    ty: ty.unwrap_or(Ty::Error),
+                    kind: NodeKind::Other("match".into()),
+                    effect,
+                }
+            }
+            ExprKind::Loop {
+                var,
+                init,
+                body,
+                on_limit,
+                ..
+            } => {
+                let i = self.expr(init, gc);
+                // `loop i = 0`: the value is an `Int`, not just the literal.
+                let var_ty = if i.ty == Ty::IntLit {
+                    Ty::Int
+                } else {
+                    i.ty.clone()
+                };
+                let mut inner = gc.clone();
+                self.bind(&mut inner, var, var_ty.clone());
+                let mut lp = LoopCx {
+                    var_ty: var_ty.clone(),
+                    done_ty: None,
+                };
+                let effect = self.tail(body, &inner, &mut lp);
+                let ty = lp.done_ty.clone().unwrap_or_else(|| var_ty.clone());
+                match on_limit {
+                    OnLimit::Last => {
+                        if !assignable(&lp.var_ty, &ty) {
+                            self.push(
+                                err(
+                                    "E0623",
+                                    "`on limit: last` needs `done` and the loop value to have the same type",
+                                    e.span,
+                                )
+                                .expected(format!("`{ty}`"))
+                                .observed(format!("`{}`", lp.var_ty)),
+                            );
+                        }
+                    }
+                    OnLimit::FinalAnswer => self.push(
+                        err("E0629", "`final_answer` is for agents", e.span)
+                            .expected("`on limit: last` or `on limit: fail \"reason\"`"),
+                    ),
+                    OnLimit::Fail(_) | OnLimit::Missing => {}
+                }
+                Typed {
+                    ty,
+                    kind: NodeKind::Other("loop".into()),
+                    effect: i.effect.join(effect),
+                }
+            }
+            ExprKind::Done(v) | ExprKind::Next(v) => {
+                let word = if matches!(e.kind, ExprKind::Done(_)) {
+                    "done"
+                } else {
+                    "next"
+                };
+                self.push(
+                    err(
+                        "E0624",
+                        format!("`{word}` outside the end of a loop body"),
+                        e.span,
+                    )
+                    .expected("`done` or `next` as what a loop's body (or one of its cases) gives"),
+                );
+                let t = self.expr(v, gc);
+                Typed::pure(t.ty)
+            }
+            ExprKind::Try(v) => {
+                let t = self.expr(v, gc);
+                Typed {
+                    ty: Ty::Result(Box::new(t.ty)),
+                    kind: NodeKind::Other("try".into()),
+                    effect: t.effect,
+                }
+            }
+            ExprKind::Agent(a) => self.agent(a, gc),
+        }
+    }
+
+    // ----- M5: operators, choices, loops, agents ----------------------------
+
+    fn expect_bool(&mut self, ty: &Ty, span: Span) {
+        if !matches!(ty, Ty::Bool | Ty::Error) {
+            self.push(
+                err("E0614", "condition is not a `Bool`", span)
+                    .expected("`Bool`")
+                    .observed(format!("`{ty}`")),
+            );
+        }
+    }
+
+    /// Both branches must give the same type; the result is the first.
+    fn same_type(&mut self, first: &Ty, other: &Ty, span: Span) -> Ty {
+        if assignable(other, first) {
+            return first.clone();
+        }
+        if assignable(first, other) {
+            return other.clone();
+        }
+        self.push(
+            err("E0615", "branches give different types", span)
+                .expected(format!("`{first}`"))
+                .observed(format!("`{other}`")),
+        );
+        first.clone()
+    }
+
+    /// Adds a name bound by a loop or a `case`; it must not hide another.
+    fn bind(&mut self, gc: &mut GraphCx, name: &Ident, ty: Ty) {
+        if gc.scope.contains_key(&name.name) || self.is_global(&name.name) {
+            self.push(
+                err("E0501", "name already used", name.span)
+                    .expected("a name not used by a parameter, node or declaration")
+                    .observed(format!("`{}`", name.name)),
+            );
+        }
+        gc.scope.insert(name.name.clone(), ty);
+    }
+
+    fn binary(&mut self, op: &str, left: &Expr, right: &Expr, span: Span, gc: &GraphCx) -> Typed {
+        let l = self.expr(left, gc);
+        let r = self.expr(right, gc);
+        let effect = l.effect.join(r.effect);
+        let (a, b) = (&l.ty, &r.ty);
+        let ty = match op {
+            "and" | "or" => {
+                self.expect_bool(a, left.span);
+                self.expect_bool(b, right.span);
+                Some(Ty::Bool)
+            }
+            "==" | "!=" => (assignable(a, b) || assignable(b, a)).then_some(Ty::Bool),
+            "<" | "<=" | ">" | ">=" => {
+                let ordered = |t: &Ty| {
+                    is_number(t) || matches!(t, Ty::Money | Ty::Duration | Ty::Text | Ty::Date)
+                };
+                (ordered(a) && (assignable(a, b) || assignable(b, a))).then_some(Ty::Bool)
+            }
+            "+" | "-" | "*" | "/" => arithmetic(op, a, b),
+            _ => None,
+        };
+        let ty = match ty {
+            Some(t) => t,
+            None if matches!(a, Ty::Error) || matches!(b, Ty::Error) => Ty::Error,
+            None => {
+                self.push(
+                    err(
+                        "E0613",
+                        format!("operator `{op}` does not apply to these types"),
+                        span,
+                    )
+                    .observed(format!("`{a}` {op} `{b}`")),
+                );
+                Ty::Error
+            }
+        };
+        Typed {
+            ty,
+            kind: NodeKind::Pure,
+            effect,
+        }
+    }
+
+    /// The variants of a type that `match` can take apart.
+    fn variants_of(&self, ty: &Ty) -> Option<Vec<VariantSig>> {
+        match ty {
+            Ty::Result(t) => Some(vec![
+                ("Ok".into(), vec![("value".into(), (**t).clone())]),
+                ("Failed".into(), vec![("error".into(), Ty::Text)]),
+            ]),
+            Ty::User(n) => match self.types.get(n.as_str()) {
+                Some(UserType::Variants(vs)) => Some(vs.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Checks the cases of a `match` and returns the scope of each body.
+    fn match_cases(
+        &mut self,
+        value: &Expr,
+        cases: &[Case],
+        span: Span,
+        gc: &GraphCx,
+    ) -> (Typed, Vec<GraphCx>) {
+        let v = self.expr(value, gc);
+        let variants = self.variants_of(&v.ty);
+        if variants.is_none() && !matches!(v.ty, Ty::Error) {
+            self.push(
+                err("E0616", "`match` needs a value with variants", value.span)
+                    .expected("a type declared as `A | B(...)`, or the result of `try`")
+                    .observed(format!("`{}`", v.ty)),
+            );
+        }
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut wildcard = false;
+        let mut scopes = Vec::new();
+        for case in cases {
+            let mut inner = gc.clone();
+            match (&case.variant, &variants) {
+                (None, _) => wildcard = true,
+                (Some(name), Some(vs)) => {
+                    match vs.iter().find(|(n, _)| *n == name.name) {
+                        None => self.push(
+                            err("E0617", "not a variant of this type", name.span)
+                                .expected(format!(
+                                    "one of {}",
+                                    vs.iter()
+                                        .map(|(n, _)| format!("`{n}`"))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ))
+                                .observed(format!("`{}`", name.name)),
+                        ),
+                        Some((_, fields)) => {
+                            if !seen.insert(name.name.clone()) {
+                                self.push(
+                                    err("E0620", "variant matched twice", name.span)
+                                        .observed(format!("`{}`", name.name)),
+                                );
+                            }
+                            // Fields are bound by position, like Python's
+                            // `case Point(x, y)`; `_` skips one.
+                            if case.binds.len() > fields.len() {
+                                self.push(
+                                    err(
+                                        "E0618",
+                                        "more names than the variant has fields",
+                                        case.span,
+                                    )
+                                    .expected(format!(
+                                        "at most {}: {}",
+                                        fields.len(),
+                                        fields
+                                            .iter()
+                                            .map(|(f, _)| format!("`{f}`"))
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                    ))
+                                    .observed(format!("{} names", case.binds.len())),
+                                );
+                            }
+                            for (b, field) in case.binds.iter().zip(fields.iter()) {
+                                if b.name != "_" {
+                                    self.bind(&mut inner, b, field.1.clone());
+                                }
+                            }
+                            for b in case.binds.iter().skip(fields.len()) {
+                                inner.scope.insert(b.name.clone(), Ty::Error);
+                            }
+                        }
+                    }
+                }
+                (Some(_), None) => {
+                    for b in &case.binds {
+                        inner.scope.insert(b.name.clone(), Ty::Error);
+                    }
+                }
+            }
+            scopes.push(inner);
+        }
+        if let Some(vs) = &variants
+            && !wildcard
+        {
+            let missing: Vec<String> = vs
+                .iter()
+                .filter(|(n, _)| !seen.contains(n))
+                .map(|(n, _)| format!("`{n}`"))
+                .collect();
+            if !missing.is_empty() {
+                self.push(
+                    err("E0619", "`match` does not cover every variant", span)
+                        .expected("a `case` for each variant, or `case _`")
+                        .observed(format!("missing {}", missing.join(", "))),
+                );
+            }
+        }
+        (v, scopes)
+    }
+
+    /// A loop body: `done`/`next` at its end, possibly inside `match`/`if`.
+    fn tail(&mut self, e: &Expr, gc: &GraphCx, lp: &mut LoopCx) -> Effect {
+        match &e.kind {
+            ExprKind::Done(v) => {
+                let t = self.expr(v, gc);
+                lp.done_ty = Some(match lp.done_ty.take() {
+                    None => t.ty,
+                    Some(first) => self.same_type(&first, &t.ty, v.span),
+                });
+                t.effect
+            }
+            ExprKind::Next(v) => {
+                let t = self.expr(v, gc);
+                if !assignable(&t.ty, &lp.var_ty) {
+                    self.push(
+                        err("E0622", "`next` gives a value of another type", v.span)
+                            .expected(format!("`{}`, like the loop's first value", lp.var_ty))
+                            .observed(format!("`{}`", t.ty)),
+                    );
+                }
+                t.effect
+            }
+            ExprKind::Match { value, cases } => {
+                let (v, scopes) = self.match_cases(value, cases, e.span, gc);
+                let mut effect = v.effect;
+                for (case, inner) in cases.iter().zip(scopes) {
+                    effect = effect.join(self.tail(&case.body, &inner, lp));
+                }
+                effect
+            }
+            ExprKind::If { cond, then, els } => {
+                let c = self.expr(cond, gc);
+                self.expect_bool(&c.ty, cond.span);
+                c.effect
+                    .join(self.tail(then, gc, lp))
+                    .join(self.tail(els, gc, lp))
+            }
+            _ => {
+                self.push(
+                    err(
+                        "E0621",
+                        "a loop's body must end in `done` or `next`",
+                        e.span,
+                    )
+                    .expected("`done value` to finish, or `next value` for another turn"),
+                );
+                self.expr(e, gc).effect
+            }
+        }
+    }
+
+    fn agent(&mut self, a: &AgentExpr, gc: &GraphCx) -> Typed {
+        let model = a.model.name.as_str();
+        let mut effect = Effect::Llm;
+        if !self.models.contains_key(model) {
+            self.push(
+                err("E0602", "unknown model", a.model.span)
+                    .expected("a model declared with `model`")
+                    .observed(format!("`{model}`")),
+            );
+        }
+        for t in &a.tools {
+            match self.tools.get(t.name.as_str()) {
+                None => self.push(
+                    err("E0626", "not a tool", t.span)
+                        .expected("a tool declared with `tool`")
+                        .observed(format!("`{}`", t.name)),
+                ),
+                Some(sig) => {
+                    effect = effect.join(sig.effect);
+                    if !self.tools_with_max_output.contains(t.name.as_str()) {
+                        // An agent reads the whole output into the
+                        // conversation: it must be bounded (decision D16).
+                        self.push(
+                            err(
+                                "E0627",
+                                "a tool used by an agent needs `max_output`",
+                                t.span,
+                            )
+                            .expected("`max_output N tokens` in the tool's declaration")
+                            .observed(format!("`{}` without it", t.name)),
+                        );
+                    }
+                }
+            }
+        }
+        match a.max_turns {
+            None => self.push(
+                err("E0628", "an agent needs `max_turns`", a.span)
+                    .expected("`max_turns N`: the most model calls it may make"),
+            ),
+            Some((0, span)) => {
+                self.push(err("E0628", "`max_turns` must be at least 1", span).observed("`0`"))
+            }
+            Some(_) => {}
+        }
+        for (event, action) in [("turn_limit", &a.on_turn_limit), ("stuck", &a.on_stuck)] {
+            match action {
+                OnLimit::FinalAnswer | OnLimit::Fail(_) => {}
+                OnLimit::Missing => self.push(
+                    err(
+                        "E0629",
+                        format!("an agent must say what happens `on {event}`"),
+                        a.span,
+                    )
+                    .expected(format!(
+                        "`on {event}: final_answer` or `on {event}: fail \"reason\"`"
+                    )),
+                ),
+                OnLimit::Last => self.push(err("E0629", "`last` is for loops", a.span).expected(
+                    format!("`on {event}: final_answer` or `on {event}: fail \"reason\"`"),
+                )),
+            }
+        }
+        let ty = match &a.task {
+            None => {
+                self.push(
+                    err("E0628", "an agent needs a `task`", a.span)
+                        .expected("`task some_prompt(...)`"),
+                );
+                Ty::Error
+            }
+            Some(task) => {
+                let arg = [Arg {
+                    name: None,
+                    value: task.clone(),
+                }];
+                let t = self.model_call(model, task, &arg, gc);
+                effect = effect.join(t.effect);
+                t.ty
+            }
+        };
+        Typed {
+            ty,
+            kind: NodeKind::Other(format!("agent {model}")),
+            effect,
         }
     }
 
@@ -985,11 +1481,55 @@ impl<'p> Cx<'_, 'p> {
             );
             return Typed::pure(Ty::Error);
         }
+        if let Some(UserType::Record(fields)) = self.types.get(n) {
+            let fields = fields.clone();
+            let effect = self.construct(n, &fields, args, e.span, gc);
+            return Typed {
+                ty: Ty::User(n.to_owned()),
+                kind: NodeKind::Pure,
+                effect,
+            };
+        }
+        if let Some(owners) = self.variant_owners.get(n).cloned() {
+            if owners.len() > 1 {
+                self.push(
+                    err(
+                        "E0630",
+                        "variant name declared by several types",
+                        callee.span,
+                    )
+                    .observed(format!("`{n}` in {}", owners.join(", "))),
+                );
+                return Typed::pure(Ty::Error);
+            }
+            let owner = owners[0];
+            let fields = match self.types.get(owner) {
+                Some(UserType::Variants(vs)) => vs
+                    .iter()
+                    .find(|(v, _)| v == n)
+                    .map(|(_, f)| f.clone())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            if fields.is_empty() {
+                self.push(
+                    err("E0625", "this variant has no fields", e.span)
+                        .expected(format!("`{n}`, without parentheses")),
+                );
+                return Typed::pure(Ty::User(owner.to_owned()));
+            }
+            let effect = self.construct(n, &fields, args, e.span, gc);
+            return Typed {
+                ty: Ty::User(owner.to_owned()),
+                kind: NodeKind::Pure,
+                effect,
+            };
+        }
         if self.types.contains_key(n) {
             self.push(
                 err(
-                    "E0101",
-                    "building values of a declared type is not supported yet (planned for M5)",
+                    "E0625",
+                    "values of this type are built from its variants",
                     callee.span,
                 )
                 .observed(format!("`{n}(...)`")),
@@ -1025,6 +1565,64 @@ impl<'p> Cx<'_, 'p> {
         Typed::pure(Ty::Error)
     }
 
+    /// `Name(field=value, ...)`: every field, by name. A single field may
+    /// also be given by position.
+    fn construct(
+        &mut self,
+        name: &str,
+        fields: &[(String, Ty)],
+        args: &[Arg],
+        span: Span,
+        gc: &GraphCx,
+    ) -> Effect {
+        let mut effect = Effect::Pure;
+        let mut given: HashSet<String> = HashSet::new();
+        for (i, a) in args.iter().enumerate() {
+            let t = self.expr(&a.value, gc);
+            effect = effect.join(t.effect);
+            let field = match &a.name {
+                Some(f) => fields.iter().find(|(n, _)| *n == f.name),
+                None if fields.len() == 1 && i == 0 => fields.first(),
+                None => {
+                    self.push(
+                        err("E0625", "fields are given by name", a.value.span)
+                            .expected(format!("`{name}(field=value, ...)`")),
+                    );
+                    continue;
+                }
+            };
+            let Some((fname, fty)) = field else {
+                let shown = a.name.as_ref().map_or(String::new(), |n| n.name.clone());
+                self.push(
+                    err("E0612", "unknown argument", a.value.span)
+                        .expected(format!("a field of `{name}`"))
+                        .observed(format!("`{shown}`")),
+                );
+                continue;
+            };
+            given.insert(fname.clone());
+            if !assignable(&t.ty, fty) {
+                self.push(
+                    err("E0608", "argument has the wrong type", a.value.span)
+                        .expected(format!("`{fty}` for `{fname}`"))
+                        .observed(format!("`{}`", t.ty)),
+                );
+            }
+        }
+        let missing: Vec<String> = fields
+            .iter()
+            .filter(|(f, _)| !given.contains(f))
+            .map(|(f, _)| format!("`{f}`"))
+            .collect();
+        if !missing.is_empty() {
+            self.push(
+                err("E0625", format!("`{name}` is missing fields"), span)
+                    .observed(format!("missing {}", missing.join(", "))),
+            );
+        }
+        effect
+    }
+
     fn model_call(&mut self, model: &str, e: &Expr, args: &[Arg], gc: &GraphCx) -> Typed {
         let mut prompt_call = None;
         for a in args {
@@ -1032,7 +1630,7 @@ impl<'p> Cx<'_, 'p> {
                 Some(n) if n.name == "continue" => self.push(
                     err(
                         "E0101",
-                        "`continue=` is not supported yet (planned for M5)",
+                        "`continue=` is not supported yet (planned for a later milestone)",
                         n.span,
                     )
                     .observed("`continue=`"),
@@ -1166,9 +1764,15 @@ struct Local<'p> {
     value: &'p Expr,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct GraphCx {
     scope: HashMap<String, Ty>,
+}
+
+/// What a loop body's `done` and `next` are checked against.
+struct LoopCx {
+    var_ty: Ty,
+    done_ty: Option<Ty>,
 }
 
 struct Typed {
@@ -1197,6 +1801,32 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
             ExprKind::Call { callee, args } => {
                 walk(callee, f);
                 args.iter().for_each(|a| walk(&a.value, f));
+            }
+            ExprKind::Binary { left, right, .. } => {
+                walk(left, f);
+                walk(right, f);
+            }
+            ExprKind::Unary { value, .. }
+            | ExprKind::Done(value)
+            | ExprKind::Next(value)
+            | ExprKind::Try(value) => walk(value, f),
+            ExprKind::If { cond, then, els } => {
+                walk(cond, f);
+                walk(then, f);
+                walk(els, f);
+            }
+            ExprKind::Match { value, cases } => {
+                walk(value, f);
+                cases.iter().for_each(|c| walk(&c.body, f));
+            }
+            ExprKind::Loop { init, body, .. } => {
+                walk(init, f);
+                walk(body, f);
+            }
+            ExprKind::Agent(a) => {
+                if let Some(t) = &a.task {
+                    walk(t, f);
+                }
             }
             _ => {}
         }
@@ -1239,7 +1869,70 @@ fn collect_refs(e: &Expr, bound: Option<&str>, index: &HashMap<&str, usize>, out
         ExprKind::Call { args, .. } => args
             .iter()
             .for_each(|a| collect_refs(&a.value, bound, index, out)),
+        ExprKind::Binary { left, right, .. } => {
+            collect_refs(left, bound, index, out);
+            collect_refs(right, bound, index, out);
+        }
+        ExprKind::Unary { value, .. }
+        | ExprKind::Done(value)
+        | ExprKind::Next(value)
+        | ExprKind::Try(value) => collect_refs(value, bound, index, out),
+        ExprKind::If { cond, then, els } => {
+            for x in [cond, then, els] {
+                collect_refs(x, bound, index, out);
+            }
+        }
+        ExprKind::Match { value, cases } => {
+            collect_refs(value, bound, index, out);
+            for c in cases {
+                collect_refs(&c.body, bound, index, out);
+            }
+        }
+        ExprKind::Loop { init, body, .. } => {
+            collect_refs(init, bound, index, out);
+            collect_refs(body, bound, index, out);
+        }
+        ExprKind::Agent(a) => {
+            if let Some(t) = &a.task {
+                collect_refs(t, bound, index, out);
+            }
+        }
         ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Error => {}
+    }
+}
+
+fn is_number(t: &Ty) -> bool {
+    matches!(t, Ty::Nat | Ty::Int | Ty::Float | Ty::IntLit)
+}
+
+/// Type of `a op b` for `+ - * /`, or `None` if the operator does not apply.
+fn arithmetic(op: &str, a: &Ty, b: &Ty) -> Option<Ty> {
+    let num = |a: &Ty, b: &Ty| -> Ty {
+        match (a, b) {
+            (Ty::Float, _) | (_, Ty::Float) => Ty::Float,
+            _ if op == "/" => Ty::Float,
+            (Ty::IntLit, Ty::IntLit) => Ty::IntLit,
+            (Ty::Nat | Ty::IntLit, Ty::Nat | Ty::IntLit) if op != "-" => Ty::Nat,
+            _ => Ty::Int,
+        }
+    };
+    match (op, a, b) {
+        (_, x, y) if is_number(x) && is_number(y) => Some(num(x, y)),
+        ("+" | "-", Ty::Money, Ty::Money) | ("+" | "-", Ty::Duration, Ty::Duration) => {
+            Some(a.clone())
+        }
+        ("*" | "/", Ty::Money | Ty::Duration, y) if is_number(y) => Some(a.clone()),
+        ("*", x, Ty::Money | Ty::Duration) if is_number(x) => Some(b.clone()),
+        ("+", Ty::Text, Ty::Text) => Some(Ty::Text),
+        ("+", Ty::List(x, m), Ty::List(y, n)) if assignable(y, x) || assignable(x, y) => {
+            let max = match (m, n) {
+                (Some(m), Some(n)) => Some(m + n),
+                _ => None,
+            };
+            let elem = if assignable(y, x) { x } else { y };
+            Some(Ty::List(elem.clone(), max))
+        }
+        _ => None,
     }
 }
 

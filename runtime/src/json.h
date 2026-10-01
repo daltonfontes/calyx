@@ -58,6 +58,11 @@ cx_value *cx_num(cx_arena *a, double n);
 cx_value *cx_str(cx_arena *a, const char *s, size_t len);
 cx_value *cx_cstr(cx_arena *a, const char *s);
 cx_value *cx_list(cx_arena *a, cx_value **items, size_t len);
+/* A record; keys and values are copied (the keys must outlive it). */
+cx_value *cx_rec(cx_arena *a, const char **keys, cx_value **vals, size_t len);
+
+/* Deep equality: same kind and same contents (records: same fields, any order). */
+int cx_equal(const cx_value *x, const cx_value *y);
 
 /* Field of a record, or NULL. */
 cx_value *cx_get(const cx_value *rec, const char *key);

@@ -98,6 +98,8 @@ fn model_call(req: &Value) -> Result<Value, IoError> {
     let r = llm::ModelRequest {
         model: req["model"].as_str().unwrap_or_default().to_owned(),
         prompt: req["prompt"].as_str().unwrap_or_default().to_owned(),
+        messages: req.get("messages").filter(|m| !m.is_null()).cloned(),
+        tools: req.get("tools").filter(|t| !t.is_null()).cloned(),
         schema: req.get("schema").filter(|s| !s.is_null()).cloned(),
         max_output: req["max_output"].as_u64(),
         timeout_ms: req["timeout_ms"].as_u64().unwrap_or(300_000),
@@ -134,6 +136,8 @@ fn model_call(req: &Value) -> Result<Value, IoError> {
         "input_tokens": answer.input_tokens,
         "output_tokens": answer.output_tokens,
         "cost_usd": cost,
+        "message": answer.message,
+        "tool_calls": answer.tool_calls,
         "ms": answer.ms,
     }}))
 }

@@ -1,13 +1,13 @@
-error[E0101]: `def` is not supported yet (planned for M5)
+error[E0101]: `def` is not supported yet (planned for a later milestone)
 - observed : `def`
 Location: m1_future.clyx:4:1
 
-error[E0101]: `agent` is not supported yet (planned for M5)
-- observed : `agent`
+error[E0101]: `race` is not supported yet (planned for a later milestone)
+- observed : `race`
 Location: m1_future.clyx:8:9
 
-error[E0101]: `loop` is not supported yet (planned for M5)
-- observed : `loop`
+error[E0101]: `rounds` is not supported yet (planned for a later milestone)
+- observed : `rounds`
 Location: m1_future.clyx:10:9
 
 error[E0101]: `after` is not supported yet (planned for M6)

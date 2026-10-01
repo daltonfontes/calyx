@@ -100,6 +100,7 @@ tool NOME(parametros) -> Tipo:
     on_uncertain verify(f(...)) | pause | accept_loss   # obrigatório para `write once`
     checks TipoDeEstado                  # estado validável no momento do efeito (D29)
     repeatable                           # repetir com os mesmos argumentos é legítimo (D5)
+    description "texto"                  # o que a tool faz, para modelos que a chamam (agentes)
 ```
 
 **Implementação (D34):** a tool roda num servidor **MCP** separado, escrito em qualquer linguagem. A declaração `tool` é o **contrato** que a Calyx verifica e que o runtime aplica (efeito, limites, timeout, retentativa, idempotência, precondições). O nome da tool e o servidor que a implementa são ligados no `calyx.toml` (seção 11.1).
@@ -227,7 +228,15 @@ match expr:
         ...
 ```
 
-`match` precisa cobrir todas as variantes. **Passos de um ramo não escolhido nunca rodam** (D32).
+`match` precisa cobrir todas as variantes (ou ter `case _`). **Passos de um ramo não escolhido nunca rodam** (D32).
+
+- Os nomes de um `case` ligam os campos **pela posição**, como no Python: `case Rejected(f)` liga o primeiro campo a `f`; `_` ignora um campo. Um nome não pode esconder outro (parâmetro, passo ou nome de um `case` de fora).
+- Cada ramo é uma expressão, na mesma linha ou indentada; todos dão o mesmo tipo.
+- `if` exige `else` (é uma expressão: sempre dá um valor). A condição é um `Bool`.
+
+**Operadores:** `+ - * /` para números (e `Money`, `Duration`); `+` também junta textos e listas; `== !=` para valores do mesmo tipo; `< <= > >=` para números, dinheiro, durações e textos; `and`, `or`, `not` para `Bool` (`and`/`or` não avaliam o lado direito quando não precisam). Parênteses agrupam.
+
+**Construir valores:** `Ponto(x=1, y=2)` para registros e `Rejected(feedback="...")` para variantes, sempre com os campos pelo nome (um campo único pode ir pela posição). Uma variante sem campos é o próprio nome: `Approved`.
 
 ### 5.5 Laço (D5)
 
@@ -239,7 +248,11 @@ final = loop x = valor_inicial, max N:
     on limit: last | fail "motivo"
 ```
 
-O limite é obrigatório. `on limit` define o que acontece se ele for atingido.
+O limite é obrigatório. `on limit` define o que acontece se ele for atingido; sem ele, o laço falha.
+
+- O corpo é **uma expressão** que termina em `done` ou `next`, diretamente ou em cada ramo de um `match` ou `if` (o compilador confere).
+- `next` precisa ter o tipo do valor inicial; `on limit: last` exige que `done` dê o mesmo tipo.
+- Cada volta é um lugar próprio no grafo realizado: as chamadas da volta `k` têm chaves `passo#laço.k#…` no diário, então um laço interrompido retoma na volta em que estava.
 
 ### 5.6 Rodadas (D18)
 
@@ -266,6 +279,17 @@ resultado = agent modelo:
 
 `agent` é atalho: o compilador o expande num ciclo explícito `modelo → tools → observação`. As variantes `turn_limit` e `stuck` (mesma tool, mesmos argumentos, repetidamente) são obrigatórias.
 
+**Como está implementado (M5):**
+
+- **Chamada de tools nativa do provedor** (*function calling* no formato da OpenAI). O esquema dos argumentos vem dos parâmetros da tool; a descrição, da propriedade `description` da tool.
+- **Toda volta manda a conversa inteira.** A mensagem do modelo volta **exatamente como veio**: provedores anexam dados a ela (a assinatura de raciocínio do Gemini) que precisam voltar.
+- **Tools pedidas numa mesma volta rodam em paralelo.** Uma tool que falha vira uma observação ("error: ...") para o modelo, não uma falha da execução.
+- **`stuck`:** as mesmas chamadas (tool e argumentos) em três voltas seguidas; tools marcadas `repeatable` não contam.
+- **`final_answer`:** uma última chamada, sem tools, pedindo a resposta com o que o agente já sabe.
+- **Tipo da resposta:** se o `task` não devolve `Text`, uma chamada a mais converte a resposta final para o tipo do prompt.
+- **Exigências do compilador:** toda tool usada por um agente declara `max_output` (D16); `max_turns`, `task`, `on turn_limit` e `on stuck` são obrigatórios; `compact` e o empréstimo de recursos ficam para depois.
+- **Diário:** cada volta e cada chamada de tool têm a sua chave (`passo#agente.t2`, `passo#agente.t2.c0`), então um agente interrompido retoma na volta em que estava, e o `replay` reproduz a conversa inteira sem chamar nada.
+
 ### 5.8 Corrida (D12)
 
 ```
@@ -286,6 +310,10 @@ falhas = lista.failed()
 ```
 
 O compilador obriga a tratar `Failed` antes de usar o valor.
+
+- O tipo de `try e` é `Result[T]`, com as variantes `Ok(value: T)` e `Failed(error: Text)`, desmontadas com `match`.
+- Também existe na forma de bloco: `try:` seguido da expressão indentada.
+- `try` captura falhas de chamadas (depois das novas tentativas), de subgrafos, de laços que atingem o limite com `fail` e de agentes. Não captura falhas que precisam parar a execução: diário corrompido, programa diferente na retomada, `write once` com resultado incerto.
 
 ### 5.10 Ordem entre efeitos (D2)
 
@@ -538,7 +566,9 @@ Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*`
 
 ### 11.2 Como o runtime chama modelos e tools
 
-- **Modelo:** o prompt é preenchido com os argumentos (texto como está; listas, um item por linha; registros, em JSON). Se o prompt não devolve `Text`, o tipo de saída vira um **JSON Schema** enviado junto, e a resposta é decodificada nesse tipo; uma resposta que não decodifica conta como erro temporário.
+- **Modelo:** o prompt é preenchido com os argumentos (texto como está; listas, um item por linha; registros, em JSON). Se o prompt não devolve `Text`, o tipo de saída vira um **JSON Schema** enviado junto, e a resposta é decodificada nesse tipo.
+- **A resposta é conferida contra o tipo** (tipos, campos obrigatórios, valores permitidos, `max` de listas, variantes). Modelos nem sempre respeitam o esquema que recebem; uma resposta fora do tipo conta como erro temporário e o modelo é chamado de novo.
+- **Variantes:** um tipo só com variantes sem campos (`Optimist | Skeptic`) vira um texto com um dos nomes; um tipo com campos vira um objeto com `kind` e os campos daquela variante, com uma alternativa por variante no esquema (`anyOf`).
 - **Novas tentativas:** erros temporários (`Timeout`, `RateLimit`, `Unavailable`, `Network`) de modelos são repetidos até 4 tentativas, esperando 1 s, 2 s e 4 s (o dobro para `RateLimit`), ou mais, se o provedor pedir (cabeçalho `Retry-After` ou "retry in N s" na mensagem, até 60 s). Tools repetem só os erros listados em `retry_on`; `write once` nunca repete (D2).
 - **Saída de tools:** cortada em `max_output` (D16).
 - **Falha:** se um passo falha depois das tentativas, a execução para com o grafo, o passo e o motivo. Falha como valor (`try`, D11) chega no M5.

@@ -15,6 +15,11 @@ use crate::io::IoError;
 pub struct ModelRequest {
     pub model: String,
     pub prompt: String,
+    /// The whole conversation, for agents. Without it, the request is one
+    /// user message with `prompt`.
+    pub messages: Option<Value>,
+    /// Tools the model may call (OpenAI "function" definitions).
+    pub tools: Option<Value>,
     /// JSON Schema of the answer; `None` for plain text.
     pub schema: Option<Value>,
     pub max_output: Option<u64>,
@@ -23,6 +28,12 @@ pub struct ModelRequest {
 
 pub struct Answer {
     pub text: String,
+    /// The assistant message as the provider sent it. Agents send it back
+    /// unchanged in the next turn: providers attach data to it (Gemini's
+    /// `thought_signature`) that must come back.
+    pub message: Value,
+    /// Calls the model asked for: `{"id", "name", "arguments"}`.
+    pub tool_calls: Vec<Value>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub ms: u64,
@@ -56,10 +67,15 @@ pub fn call(
             ),
         )
     })?;
-    let mut body = json!({
-        "model": req.model,
-        "messages": [{"role": "user", "content": req.prompt}],
-    });
+    let messages = req
+        .messages
+        .clone()
+        .unwrap_or_else(|| json!([{"role": "user", "content": req.prompt}]));
+    let mut body = json!({"model": req.model, "messages": messages});
+    if let Some(tools) = &req.tools {
+        body["tools"] = tools.clone();
+        body["tool_choice"] = json!("auto");
+    }
     if let Some(n) = req.max_output {
         body["max_tokens"] = json!(n);
     }
@@ -108,8 +124,27 @@ pub fn call(
             ),
         ));
     }
+    let message = choice["message"].clone();
+    let tool_calls = message["tool_calls"]
+        .as_array()
+        .map(|calls| {
+            calls
+                .iter()
+                .map(|c| {
+                    let raw = c["function"]["arguments"].as_str().unwrap_or("{}");
+                    json!({
+                        "id": c["id"],
+                        "name": c["function"]["name"],
+                        "arguments": serde_json::from_str::<Value>(raw).unwrap_or(json!({})),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(Answer {
         text: content.to_owned(),
+        message,
+        tool_calls,
         input_tokens: v["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
         output_tokens: v["usage"]["completion_tokens"].as_u64().unwrap_or(0),
         ms,
@@ -192,25 +227,84 @@ pub fn fake(req: &ModelRequest) -> Answer {
     {
         std::thread::sleep(Duration::from_millis(ms));
     }
-    let first_line = req
-        .prompt
-        .lines()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("");
+    // With a conversation, the task is its first user message.
+    let messages = req.messages.as_ref().and_then(Value::as_array);
+    let task = messages
+        .and_then(|m| m.iter().find(|m| m["role"] == "user"))
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or(&req.prompt);
+    let first_line = task.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
     let summary: String = first_line.chars().take(60).collect();
-    let text = match &req.schema {
-        Some(schema) => fake_value(schema, &summary, 0).to_string(),
-        None => format!("[resposta falsa para: {summary}]"),
+    let observations = messages.map_or(0, |m| m.iter().filter(|m| m["role"] == "tool").count());
+    let size = req.prompt.len() + messages.map_or(0, |m| m.len() * 40);
+
+    // An agent turn: call the first tool, or answer.
+    let first_tool = req
+        .tools
+        .as_ref()
+        .and_then(|t| t.get(0))
+        .map(|t| &t["function"]);
+    let call = first_tool.and_then(|f| {
+        let name = f["name"].as_str()?.to_owned();
+        let args = |text: String| fake_value(&f["parameters"], &text, 0).to_string();
+        match req.model.as_str() {
+            // Always the same call: the runtime must notice it is stuck.
+            "fake-stuck" => Some((name, args(summary.clone()))),
+            // A new call every turn: it runs into `max_turns`.
+            "fake-busy" => Some((name, args(format!("{summary} #{observations}")))),
+            _ if observations == 0 => Some((name, args(summary.clone()))),
+            _ => None,
+        }
+    });
+    let (text, message, tool_calls) = match call {
+        Some((name, arguments)) => {
+            let id = format!("call_{observations}");
+            let message = json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{"id": id, "type": "function",
+                                "function": {"name": name, "arguments": arguments}}],
+            });
+            let parsed: Value = serde_json::from_str(&arguments).unwrap_or(json!({}));
+            let calls = vec![json!({"id": id, "name": name, "arguments": parsed})];
+            (String::new(), message, calls)
+        }
+        None => {
+            let text = match &req.schema {
+                Some(schema) => fake_value(schema, &summary, 0).to_string(),
+                None if observations > 0 => {
+                    format!("[resposta falsa para: {summary}] (com {observations} observação(ões))")
+                }
+                None => format!("[resposta falsa para: {summary}]"),
+            };
+            let message = json!({"role": "assistant", "content": text});
+            (text, message, Vec::new())
+        }
     };
     Answer {
-        input_tokens: (req.prompt.len() / 4) as u64,
+        input_tokens: (size / 4) as u64,
         output_tokens: (text.len() / 4) as u64,
         text,
+        message,
+        tool_calls,
         ms: started.elapsed().as_millis() as u64,
     }
 }
 
 fn fake_value(schema: &Value, summary: &str, n: usize) -> Value {
+    if let Some(alternatives) = schema["anyOf"].as_array() {
+        // The first variant, unless the text asks for another one by name
+        // (tests use this to reach every case of a `match`).
+        let chosen = alternatives
+            .iter()
+            .find(|a| {
+                a["properties"]["kind"]["enum"][0]
+                    .as_str()
+                    .is_some_and(|k| summary.contains(&format!("[{k}]")))
+            })
+            .unwrap_or(&alternatives[0]);
+        return fake_value(chosen, summary, n);
+    }
     if let Some(options) = schema["enum"].as_array() {
         return options.first().cloned().unwrap_or(Value::Null);
     }
@@ -248,6 +342,8 @@ mod tests {
         let req = ModelRequest {
             model: "fake".into(),
             prompt: "\nDivida o tema\n".into(),
+            messages: None,
+            tools: None,
             schema: Some(json!({
                 "type": "object",
                 "properties": {"questions": {"type": "array", "items": {"type": "string"}, "maxItems": 2}},

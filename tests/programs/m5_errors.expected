@@ -1,0 +1,58 @@
+error[E0628]: an agent needs `max_turns`
+- expected : `max_turns N`: the most model calls it may make
+Location: m5_errors.clyx:13:9
+
+error[E0629]: an agent must say what happens `on turn_limit`
+- expected : `on turn_limit: final_answer` or `on turn_limit: fail "reason"`
+Location: m5_errors.clyx:13:9
+
+error[E0629]: an agent must say what happens `on stuck`
+- expected : `on stuck: final_answer` or `on stuck: fail "reason"`
+Location: m5_errors.clyx:13:9
+
+error[E0627]: a tool used by an agent needs `max_output`
+- expected : `max_output N tokens` in the tool's declaration
+- observed : `web_search` without it
+Location: m5_errors.clyx:14:16
+
+error[E0626]: not a tool
+- expected : a tool declared with `tool`
+- observed : `nope`
+Location: m5_errors.clyx:14:28
+
+error[E0619]: `match` does not cover every variant
+- expected : a `case` for each variant, or `case _`
+- observed : missing `Rejected`
+Location: m5_errors.clyx:16:9
+
+error[E0617]: not a variant of this type
+- expected : one of `Approved`, `Rejected`
+- observed : `Rejeted`
+Location: m5_errors.clyx:18:14
+
+error[E0621]: a loop's body must end in `done` or `next`
+- expected : `done value` to finish, or `next value` for another turn
+Location: m5_errors.clyx:20:9
+
+error[E0624]: `done` outside the end of a loop body
+- expected : `done` or `next` as what a loop's body (or one of its cases) gives
+Location: m5_errors.clyx:21:9
+
+error[E0614]: condition is not a `Bool`
+- expected : `Bool`
+- observed : `Text`
+Location: m5_errors.clyx:22:12
+
+error[E0615]: branches give different types
+- expected : `Int`
+- observed : `Text`
+Location: m5_errors.clyx:23:11
+
+error[E0613]: operator `+` does not apply to these types
+- observed : `Text` + `Int`
+Location: m5_errors.clyx:24:9
+
+error[E0610]: returned value has the wrong type
+- expected : `Text`
+- observed : `Review`
+Location: m5_errors.clyx:25:12

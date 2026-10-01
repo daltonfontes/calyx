@@ -57,10 +57,10 @@ for line in sys.stdin:
     elif method == "tools/call":
         args = msg["params"].get("arguments", {})
         query = args.get("query", "")
-        if query == "__big__":
+        if "__big__" in query:
             # Large outputs test how the journal stores big answers (by hash, D20).
             answer(msg_id, {"content": [{"type": "text", "text": "x" * 10000}]})
-        elif query == "__fail__":
+        elif "__fail__" in query:
             answer(msg_id, {"content": [{"type": "text", "text": "falha simulada"}], "isError": True})
         else:
             answer(msg_id, {"content": [{"type": "text", "text": search(query)}]})
