@@ -1,6 +1,6 @@
 # Especificação da Calyx (rascunho v0)
 
-**Status:** rascunho consolidado ao fim do discovery. Reúne as 33 decisões de [`docs/discovery/03-decisoes.md`](../discovery/03-decisoes.md) num lugar só. Onde a sintaxe ainda é provisória, isso está indicado.
+**Status:** rascunho consolidado ao fim do discovery. Reúne as 34 decisões de [`docs/discovery/03-decisoes.md`](../discovery/03-decisoes.md) num lugar só. Onde a sintaxe ainda é provisória, isso está indicado.
 
 A Calyx é uma linguagem para programar agentes de IA como **grafos**. O programador escreve o grafo; o compilador verifica as garantias; o runtime extrai a concorrência, recupera falhas e registra tudo.
 
@@ -97,6 +97,8 @@ tool NOME(parametros) -> Tipo {
   repeatable                              // repetir com os mesmos argumentos é legítimo (D5)
 }
 ```
+
+**Implementação (D34):** a tool roda num servidor **MCP** separado, escrito em qualquer linguagem. A declaração `tool` é o **contrato** que a Calyx verifica e que o runtime aplica (efeito, limites, timeout, retentativa, idempotência, precondições). O nome da tool e o servidor que a implementa são ligados na configuração do projeto *(formato a definir no M2)*.
 
 ### 4.4 Tipos
 

@@ -1,0 +1,14 @@
+[package]
+name = "calyx-check"
+description = "Verifier for Calyx programs, usable from Rust and, as a static library, from the C runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# rlib for the CLI; staticlib so the C runtime links the same verifier (decision D10).
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+calyx-syntax = { path = "../calyx-syntax" }

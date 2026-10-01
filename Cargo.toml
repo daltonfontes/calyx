@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = [
+    "compiler/calyx-syntax",
+    "compiler/calyx-check",
+    "compiler/calyx-ir",
+    "compiler/calyx-cli",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/daltonfontes/calyx"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"

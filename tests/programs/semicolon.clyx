@@ -1,0 +1,4 @@
+graph g(topic: Text) -> Text {
+  node plan = claude(split_topic(topic));
+  return plan
+}

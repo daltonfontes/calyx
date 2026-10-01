@@ -1,6 +1,6 @@
 # Decisões de design
 
-Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, o que a literatura faz e uma recomendação. Todas as decisões estão fechadas (✅). A especificação consolidada está em [`docs/spec/calyx.md`](../spec/calyx.md).
+Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, o que a literatura faz e uma recomendação. Todas as decisões estão fechadas (✅). A D34 surgiu ao montar o [plano de implementação](../roadmap.md). A especificação consolidada está em [`docs/spec/calyx.md`](../spec/calyx.md).
 
 | # | Decisão | Recomendação preliminar |
 |---|---|---|
@@ -37,6 +37,7 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D31 | Execução paralela | ✅ **Decidido:** N workers com roubo de trabalho (da ponta mais antiga); E/S nunca bloqueia um worker; contadores atômicos de dependência (ver [concorrência](13-concorrencia.md)) |
 | D32 | Avaliação de ramos | ✅ **Decidido:** nós de ramos não escolhidos nunca rodam; resultados que deixaram de ser necessários são cancelados; sem execução especulativa por padrão |
 | D33 | Impasse entre entidades | ✅ **Decidido:** o compilador recusa ciclos de `ask`; `send` pode formar ciclos |
+| D34 | Implementação das tools | ✅ **Decidido:** tools rodam como servidores **MCP** (Model Context Protocol), em qualquer linguagem; o código Calyx só declara o contrato (efeito, `max_output`, timeout, idempotência, política); o runtime em C fala o protocolo |
 
 As decisões D11 a D19 surgiram no [teste no papel](04-teste-no-papel.md), onde estão descritas com os workflows que as motivaram. As propostas de D11, D12, D14 e D15 foram revisadas, e D20 a D23 surgiram, na leitura do [Temporal](05-temporal.md).
 

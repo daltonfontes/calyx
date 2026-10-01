@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Lint
+        run: make lint
+
+      - name: Test (Rust compiler + C runtime)
+        run: make test
+
+      - name: Check every example with the CLI
+        run: |
+          cargo build --release
+          for f in examples/teste.clyx examples/workflows/*.clyx; do
+            ./target/release/calyx check "$f" --time
+          done

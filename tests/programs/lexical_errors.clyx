@@ -1,0 +1,10 @@
+// Several lexical errors in one file: all of them are reported.
+tool read_file(box: &Sandbox, path: Text) -> Text {
+  effect read
+}
+
+graph g() -> Text {
+  node a = "caminho\q"
+  node b = "sem fim
+  return a
+}

@@ -54,7 +54,31 @@ A analogia mais próxima é o **SQL**: você declara o que quer, e o banco decid
 
 ## Estado do projeto
 
-O **discovery** está concluído (33 decisões fechadas); ainda não há implementação. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
+O **discovery** está concluído (34 decisões fechadas). A implementação começou: o marco M0 (estrutura do repositório) está concluído. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
+
+## Como compilar e testar
+
+Requisitos: Rust (stable) e um compilador C.
+
+```sh
+make test     # testes do compilador (Rust) e do runtime (C)
+make lint     # rustfmt + clippy
+cargo run -p calyx-cli -- check examples/teste.clyx --time
+```
+
+| Pasta | Conteúdo |
+|---|---|
+| `compiler/calyx-syntax` | Fonte, diagnósticos estruturados e lexer |
+| `compiler/calyx-check` | O verificador; também compilado como biblioteca estática para o runtime |
+| `compiler/calyx-ir` | Representação intermediária (o template do grafo) |
+| `compiler/calyx-cli` | O comando `calyx` |
+| `runtime/` | Runtime em C, que liga o verificador em Rust |
+| `tests/programs/` | Programas de teste com os diagnósticos esperados (`.expected`) |
+| `examples/` | Programas de exemplo; todos precisam passar no `check` |
+
+## Plano de implementação
+
+[`docs/roadmap.md`](docs/roadmap.md): marcos de implementação, começando por uma fatia vertical (parser → check → runtime) para provar o modelo de execução.
 
 ## Especificação
 
