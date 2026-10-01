@@ -5,8 +5,10 @@ name: Release
 #
 # Pushing a tag `vX.Y.Z` (matching the version in Cargo.toml) publishes a
 # GitHub release with one archive per target and its checksum, which
-# install.sh downloads. Running it by hand, or on a pull request that
-# changes the release, only builds and keeps the archives as artifacts.
+# install.sh downloads. Running it by hand with a `tag` does the same,
+# creating the tag on the commit it ran on. Without a tag, or on a pull
+# request that changes the release, it only builds and keeps the archives
+# as artifacts.
 
 on:
   push:
@@ -18,11 +20,17 @@ on:
       - "install.sh"
       - "compiler/calyx-cli/src/bundle.rs"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create and publish (e.g. v0.1.0); empty only builds"
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 env:
+  TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
   # Without it, macOS binaries require the runner's own (latest) macOS.
   MACOSX_DEPLOYMENT_TARGET: "11.0"
 
@@ -68,12 +76,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y qemu-user
 
       - name: Check that the tag matches the version
-        if: startsWith(github.ref, 'refs/tags/')
+        if: env.TAG != ''
         shell: bash
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          if [ "${GITHUB_REF_NAME}" != "v$version" ]; then
-            echo "tag ${GITHUB_REF_NAME} does not match version $version in Cargo.toml"
+          if [ "$TAG" != "v$version" ]; then
+            echo "tag $TAG does not match version $version in Cargo.toml"
             exit 1
           fi
 
@@ -121,7 +129,7 @@ jobs:
 
   publish:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.ref_type == 'tag' || inputs.tag != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -143,4 +151,5 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+        # Creates the tag on this commit when it does not exist yet.
+        run: gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "$TAG" --generate-notes
