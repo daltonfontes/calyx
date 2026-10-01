@@ -36,8 +36,9 @@ Cada marco termina com algo que roda e com uma medida ligada a uma pergunta de p
 | M0 | ✅ Concluído: workspace Rust (`calyx-syntax`, `calyx-check`, `calyx-ir`, `calyx-cli`), lexer completo com diagnósticos estruturados, verificador ligado ao runtime em C como biblioteca estática, testes de referência, CI |
 | M1 | ✅ Concluído: parser com recuperação de erros; verificação de nomes, tipos, variáveis dos prompts, contratos das tools, limites, estrutura do grafo (ciclos, `return`) e efeitos (inferência e limite declarado); geração da representação intermediária (`calyx check --ir`); construções de marcos futuros reportadas com o marco em que chegam |
 | M2 | ✅ Concluído: `calyx run`. A IR passou a levar as expressões, os modelos, as tools e os prompts (com o JSON Schema da resposta), e sai em JSON (`calyx check --ir-json`). Interpretador em C (valores imutáveis numa arena, fan-out na ordem da lista, novas tentativas por efeito, rastro). Camada de E/S em Rust: modelos pela API no formato da OpenAI (Gemini, NVIDIA, OpenAI e outros), tools por MCP via stdio, `calyx.toml`, modelos falsos para testes. Tudo numa biblioteca estática só |
-| M3 | Próximo |
-| M4–M6 | Não iniciados |
+| M3 | ✅ Concluído: diário por execução (`.calyx/runs/<id>/`), uma entrada por chamada com chave estável e hash do pedido, conteúdos grandes por hash, `begin` para `write once`, hash do programa (D23). `calyx resume`, `calyx replay`, `calyx runs`. Quedas simuladas nos testes (`CALYX_CRASH_AFTER`) |
+| M4 | Próximo |
+| M5–M6 | Não iniciados |
 
 ## Medidas
 
@@ -56,6 +57,21 @@ Programas sintéticos (grafos de 21 nós com fan-out), binário de release, máq
 - **Otimizações possíveis, ainda não necessárias:** cerca de 20% das instruções são alocação (`malloc`/`free`) e 5% são o hash padrão de `HashMap`. Trocar o hash por um mais rápido e reduzir cópias de texto deve reduzir o tempo do arquivo grande.
 
 Para repetir: `cargo run --release -p calyx-check --example phases -- arquivo.clyx`.
+
+### M3 (Q3): quanto trabalho é refeito depois de uma falha
+
+`examples/research.clyx` com `gemini-3.5-flash-lite`, tema "baterias de sódio". O processo foi encerrado abruptamente (como um `kill -9`) logo depois da 5ª chamada, e retomado com `calyx resume`:
+
+| | Antes da queda | Na retomada |
+|---|---|---|
+| Chamadas feitas | 3 de modelo, 2 de tool (3,0 s) | 4 de modelo, 3 de tool (4,7 s) |
+| Tirado do diário | — | 5 (todas as concluídas) |
+| **Chamadas refeitas** | — | **0** |
+
+- **Resposta à Q3: nada do que terminou é refeito.** O que se perde numa queda é só a chamada em andamento naquele instante. Recomeçar do zero teria pago de novo 3 chamadas de modelo (652 tokens de entrada, 316 de saída) e uns 3 s.
+- **O resultado é o mesmo de uma execução sem queda:** os testes comparam a saída de uma execução retomada com a de uma que nunca caiu.
+- **Custo do diário:** cerca de 1 ms por execução (25 ms com diário, 24 ms sem, com modelos falsos). O `fsync` em lote é o que mantém esse custo baixo.
+- **Limite atual:** chamadas que estavam em andamento são refeitas; com paralelismo (M4) podem ser várias ao mesmo tempo. Escritas `write once` interrompidas não são refeitas: a execução para (M6 traz as políticas `on_uncertain`).
 
 ### M2: primeira execução de ponta a ponta
 

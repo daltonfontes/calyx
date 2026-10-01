@@ -1,2 +1,5 @@
 /target/
 /runtime/build/
+
+# Run directories with journals (calyx run)
+.calyx/

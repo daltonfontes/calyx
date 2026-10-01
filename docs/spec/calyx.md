@@ -429,6 +429,17 @@ O efeito de um nó é **inferido**: o maior efeito de tudo o que ele chama. Orde
 - **Suspender, retomar e se recuperar de uma queda são a mesma operação:** reconstruir o estado a partir do diário.
 - Armazenamento: formato próprio em arquivo local; PostgreSQL depois, para várias máquinas.
 
+**Como está implementado (M3):**
+
+- Cada execução tem um diretório `.calyx/runs/<id>/` (no diretório atual) com `journal.jsonl`, uma linha JSON por entrada, e `blobs/`, com as respostas acima de 4 KB guardadas pelo SHA-256 do conteúdo.
+- **Chave de cada chamada:** o lugar dela no grafo realizado: grafo, passo, item do fan-out e posição dentro do passo (`research/answers[2]#1`; num subgrafo, `research/x#0/sub/y#0`). Não depende da ordem em que as chamadas rodaram, então continua valendo com paralelismo (M4).
+- Cada entrada guarda também o **hash do pedido**. Na retomada, um pedido diferente sob a mesma chave significa que a execução não é determinística, e ela para em vez de misturar resultados.
+- O diário guarda o **hash do programa compilado**. Uma execução só continua com o mesmo programa (D23); se o código mudou, a retomada é recusada.
+- Só respostas aceitas entram no diário (uma resposta que não decodifica no tipo do prompt é pedida de novo e não é gravada).
+- **Durabilidade:** cada entrada chega ao sistema operacional antes da próxima chamada começar, então uma queda do processo não perde nada já concluído. O `fsync` (que protege também de queda de energia) roda no máximo uma vez por segundo, e sempre antes de escritas externas e no fim.
+- **`write once`:** uma entrada `begin` é gravada (com `fsync`) antes da chamada. Se a execução cai entre o `begin` e o fim da chamada, o resultado é desconhecido: a retomada **não repete** a chamada e para, à espera das políticas `on_uncertain` (M6).
+- Uma linha cortada no meio por uma queda é descartada na retomada.
+
 ### 9.4 Atores do runtime (D10)
 
 | Ator | Papel |
@@ -474,7 +485,9 @@ Mensagens de erro estruturadas, com **esperado**, **observado** e **local**, par
 | `calyx build` | Emite um arquivo C (runtime + grafo + efeitos) e compila para um binário nativo |
 | `calyx run` | Executa um grafo: `calyx run arquivo.clyx --param valor`. Hoje roda numa thread; depois, `--deterministic` (uma thread) e `--threads N` |
 | `calyx fmt` | Formata o código |
-| `calyx replay` | Reexecuta a partir de um diário, sem chamar modelos nem tools |
+| `calyx resume` | Continua uma execução interrompida ou que falhou: `calyx resume <id>`. Chamadas já no diário não são feitas (nem pagas) de novo |
+| `calyx replay` | Reexecuta a partir de um diário, sem chamar modelos nem tools: `calyx replay <id>` |
+| `calyx runs` | Lista as execuções, com estado (`finished`, `failed`, `interrupted`), chamadas e retomadas |
 | `calyx trace` | Mostra o grafo realizado, custos e latências por nó |
 
 ### 11.1 Configuração do projeto (`calyx.toml`)

@@ -24,16 +24,22 @@ const char *calyx_runtime_version(void);
  */
 int calyx_runtime_verify(const char *src, size_t len, char **diagnostics_json);
 
-/* Flag for calyx_run(): one line per node and effect on stderr. */
-#define CALYX_RUN_TRACE 1
-
 /*
  * Runs `graph` of a compiled program. `args_json` is a JSON object mapping
- * each parameter to its value. Returns {"ok": value} or {"error": message}
- * as JSON, to be released with calyx_run_free(). Effects go through the
- * I/O layer (calyx_io.h), configured by calyx.toml.
+ * each parameter to its value. `options_json` may be NULL or an object:
+ *
+ *   "trace": true        one line per node and call on stderr
+ *   "journal": "dir"     the run's directory (journal.jsonl, blobs/)
+ *   "mode": "new" | "resume" | "replay"
+ *                        new run; resume one, taking finished calls from
+ *                        its journal; or replay it from the journal only
+ *   "program": "path"    recorded in the journal, to find the source again
+ *
+ * Returns {"ok": value} or {"error": message} as JSON, to be released with
+ * calyx_run_free(). Effects go through the I/O layer (calyx_io.h).
  */
-char *calyx_run(const char *ir_json, const char *graph, const char *args_json, int flags);
+char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
+                const char *options_json);
 void calyx_run_free(char *s);
 
 #ifdef __cplusplus

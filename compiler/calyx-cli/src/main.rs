@@ -3,8 +3,13 @@
 //! Exit codes: 0 = ok, 1 = the program has errors, 2 = usage or I/O error,
 //! 3 = the execution failed.
 
+mod runs;
+
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
+
+use calyx_runtime::Mode;
 
 const USAGE: &str = "\
 usage: calyx <command> [options]
@@ -15,15 +20,24 @@ commands:
       --ir prints the compiled graph template when there are no errors;
       --ir-json prints it in the JSON form the runtime loads.
   run <file.clyx> [--graph NAME] [--fake-models] [--quiet] [--config FILE]
-                 [--PARAM VALUE ...]
+                 [--no-journal] [--PARAM VALUE ...]
       Check and run a graph. Each parameter of the graph is passed as
-      `--name value` (e.g. --topic \"energia solar\").
+      `--name value` (e.g. --topic \"energia solar\"). Every call is
+      recorded in the run's journal, in .calyx/runs/<id>/.
       --graph chooses the graph (default: the only one, or `main`).
       --fake-models answers every model call with fake values shaped by the
       prompt's type, with no network or API key.
       --quiet hides the trace (one line per node and effect, on stderr).
       --config uses this calyx.toml instead of looking for one next to the
       program and in its parent directories.
+      --no-journal runs without a journal (nothing can be resumed).
+  resume <run> [--fake-models] [--quiet] [--config FILE]
+      Continue an interrupted or failed run. Calls already in its journal
+      are taken from it, not made (or paid for) again.
+  replay <run> [--quiet]
+      Run again using only the journal: no model or tool is called.
+  runs
+      List the runs in .calyx/runs.
   version
       Print the version.
 ";
@@ -33,6 +47,9 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("check") => check(&args[1..]),
         Some("run") => run(&args[1..]),
+        Some("resume") => rerun(&args[1..], Mode::Resume),
+        Some("replay") => rerun(&args[1..], Mode::Replay),
+        Some("runs") => list_runs(),
         Some("version" | "--version" | "-V") => {
             println!("calyx {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -112,6 +129,7 @@ fn run(args: &[String]) -> ExitCode {
     let mut config_path = None;
     let mut fake_models = false;
     let mut quiet = false;
+    let mut journal = true;
     let mut values: Vec<(String, String)> = Vec::new();
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -121,35 +139,27 @@ fn run(args: &[String]) -> ExitCode {
                 None => return usage_error("--graph expects a name"),
             },
             "--config" => match it.next() {
-                Some(c) => config_path = Some(std::path::PathBuf::from(c)),
+                Some(c) => config_path = Some(PathBuf::from(c)),
                 None => return usage_error("--config expects a file"),
             },
             "--fake-models" => fake_models = true,
             "--quiet" => quiet = true,
+            "--no-journal" => journal = false,
             a if a.starts_with("--") => match it.next() {
                 Some(v) => values.push((a[2..].to_owned(), v.clone())),
                 None => return usage_error(&format!("`{a}` expects a value")),
             },
-            a if file.is_none() => file = Some(a.to_owned()),
+            a if file.is_none() => file = Some(PathBuf::from(a)),
             _ => return usage_error("run takes a single file"),
         }
     }
     let Some(file) = file else {
         return usage_error("run needs a file");
     };
-    let text = match std::fs::read_to_string(&file) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("calyx: cannot read `{file}`: {e}");
-            return ExitCode::from(2);
-        }
+    let program = match compile(&file) {
+        Ok(p) => p,
+        Err(code) => return code,
     };
-    let report = calyx_check::check(&file, &text);
-    if report.has_errors() {
-        print!("{}", report.render());
-        return ExitCode::from(1);
-    }
-    let program = &report.ir;
 
     let names: Vec<&str> = program.graphs.iter().map(|g| g.name.as_str()).collect();
     let graph = match graph {
@@ -190,34 +200,146 @@ fn run(args: &[String]) -> ExitCode {
         }
     }
 
-    let config = match config_path {
-        Some(path) => calyx_runtime::Config::load(&path),
-        None => {
-            let dir = std::path::Path::new(&file)
-                .parent()
-                .filter(|d| !d.as_os_str().is_empty())
-                .unwrap_or(std::path::Path::new("."));
-            calyx_runtime::Config::discover(dir)
-        }
-    };
-    let config = match config {
+    let config = match load_config(&file, config_path.as_deref()) {
         Ok(c) => c,
+        Err(code) => return code,
+    };
+    let id = journal.then(runs::new_id);
+    let opts = calyx_runtime::RunOptions {
+        config,
+        fake_models,
+        trace: !quiet,
+        journal: id.as_deref().map(runs::dir),
+        mode: Mode::New,
+        program: Some(std::fs::canonicalize(&file).unwrap_or(file)),
+    };
+    if let Some(id) = &id {
+        eprintln!("calyx: run {id}");
+    }
+    execute(
+        &program,
+        &graph,
+        serde_json::Value::Object(args),
+        opts,
+        id.as_deref(),
+    )
+}
+
+/// `calyx resume <id>` and `calyx replay <id>`.
+fn rerun(args: &[String], mode: Mode) -> ExitCode {
+    let mut id = None;
+    let mut config_path = None;
+    let mut fake_models = false;
+    let mut quiet = false;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--config" => match it.next() {
+                Some(c) => config_path = Some(PathBuf::from(c)),
+                None => return usage_error("--config expects a file"),
+            },
+            "--fake-models" => fake_models = true,
+            "--quiet" => quiet = true,
+            a if a.starts_with('-') => return usage_error(&format!("unknown option `{a}`")),
+            a if id.is_none() => id = Some(a.to_owned()),
+            _ => return usage_error("give a single run id"),
+        }
+    }
+    let Some(id) = id else {
+        return usage_error("which run? `calyx runs` lists them");
+    };
+    let header = match runs::header(&id) {
+        Ok(h) => h,
         Err(e) => {
             eprintln!("calyx: {e}");
             return ExitCode::from(2);
+        }
+    };
+    // The run finishes on the program it started with (D23): the runtime
+    // compares the hash of the compiled program with the journal's.
+    let program = match compile(&header.program) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
+    let config = if mode == Mode::Replay {
+        calyx_runtime::Config::builtin()
+    } else {
+        match load_config(&header.program, config_path.as_deref()) {
+            Ok(c) => c,
+            Err(code) => return code,
         }
     };
     let opts = calyx_runtime::RunOptions {
         config,
         fake_models,
         trace: !quiet,
+        journal: Some(runs::dir(&id)),
+        mode,
+        program: Some(header.program.clone()),
     };
-    match calyx_runtime::run(
-        &program.to_json(),
-        &graph,
-        &serde_json::Value::Object(args),
-        opts,
-    ) {
+    execute(&program, &header.graph, header.args, opts, Some(&id))
+}
+
+fn list_runs() -> ExitCode {
+    let all = runs::list();
+    if all.is_empty() {
+        println!("no runs in {}", runs::RUNS_DIR);
+        return ExitCode::SUCCESS;
+    }
+    println!(
+        "{:<22} {:<16} {:<12} {:>6}  resumed",
+        "run", "graph", "status", "calls"
+    );
+    for r in all {
+        println!(
+            "{:<22} {:<16} {:<12} {:>6}  {}",
+            r.id, r.graph, r.status, r.calls, r.resumes
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+/// Reads and checks a program. On errors, prints them.
+fn compile(file: &Path) -> Result<calyx_ir::Program, ExitCode> {
+    let text = std::fs::read_to_string(file).map_err(|e| {
+        eprintln!("calyx: cannot read `{}`: {e}", file.display());
+        ExitCode::from(2)
+    })?;
+    let report = calyx_check::check(&file.display().to_string(), &text);
+    if report.has_errors() {
+        print!("{}", report.render());
+        return Err(ExitCode::from(1));
+    }
+    Ok(report.ir)
+}
+
+/// `--config FILE`, or the `calyx.toml` next to the program or above it.
+fn load_config(file: &Path, explicit: Option<&Path>) -> Result<calyx_runtime::Config, ExitCode> {
+    let config = match explicit {
+        Some(path) => calyx_runtime::Config::load(path),
+        None => {
+            let dir = file
+                .parent()
+                .filter(|d| !d.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            calyx_runtime::Config::discover(dir)
+        }
+    };
+    config.map_err(|e| {
+        eprintln!("calyx: {e}");
+        ExitCode::from(2)
+    })
+}
+
+fn execute(
+    program: &calyx_ir::Program,
+    graph: &str,
+    args: serde_json::Value,
+    opts: calyx_runtime::RunOptions,
+    id: Option<&str>,
+) -> ExitCode {
+    let mode = opts.mode;
+    match calyx_runtime::run(&program.to_json(), graph, &args, opts) {
         Ok(serde_json::Value::String(s)) => {
             println!("{s}");
             ExitCode::SUCCESS
@@ -231,6 +353,13 @@ fn run(args: &[String]) -> ExitCode {
         }
         Err(e) => {
             eprintln!("calyx: execution failed: {e}");
+            if let Some(id) = id
+                && mode != Mode::Replay
+            {
+                eprintln!(
+                    "calyx: finished calls are in the journal; continue with `calyx resume {id}`"
+                );
+            }
             ExitCode::from(3)
         }
     }

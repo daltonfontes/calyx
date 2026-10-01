@@ -23,6 +23,7 @@ fn opts() -> RunOptions {
         config: Config::load(&examples().join("calyx.toml")).unwrap(),
         fake_models: true,
         trace: false,
+        ..RunOptions::default()
     }
 }
 

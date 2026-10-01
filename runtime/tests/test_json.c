@@ -1,5 +1,6 @@
-/* Unit tests of the interpreter's values (src/json.c). */
+/* Unit tests of the interpreter's values (src/json.c) and hashes (src/sha256.c). */
 #include "json.h"
+#include "sha256.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -66,10 +67,23 @@ int main(void) {
     EXPECT(cx_get(v, "missing") == NULL, "missing field");
     cx_arena_free(&a);
 
+    /* FIPS 180-4 test vectors, plus inputs around the padding boundary. */
+    char hex[65];
+    cx_sha256_hex("", 0, hex);
+    EXPECT(strcmp(hex, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") == 0,
+           "sha256 of empty input");
+    cx_sha256_hex("abc", 3, hex);
+    EXPECT(strcmp(hex, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") == 0,
+           "sha256 of abc");
+    const char *two = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    cx_sha256_hex(two, strlen(two), hex);
+    EXPECT(strcmp(hex, "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1") == 0,
+           "sha256 of a 56-byte input (two padding blocks)");
+
     if (failures) {
         fprintf(stderr, "%d failure(s)\n", failures);
         return 1;
     }
-    printf("values: all tests passed\n");
+    printf("values and hashes: all tests passed\n");
     return 0;
 }

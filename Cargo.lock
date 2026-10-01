@@ -39,6 +39,7 @@ name = "calyx-cli"
 version = "0.0.1"
 dependencies = [
  "calyx-check",
+ "calyx-ir",
  "calyx-runtime",
  "serde_json",
 ]

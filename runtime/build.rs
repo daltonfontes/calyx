@@ -2,9 +2,17 @@
 //! the C runtime end up in one library.
 
 fn main() {
-    let sources = ["src/runtime.c", "src/json.c", "src/exec.c"];
+    let sources = [
+        "src/runtime.c",
+        "src/json.c",
+        "src/exec.c",
+        "src/journal.c",
+        "src/sha256.c",
+    ];
     for f in sources.iter().chain(&[
         "src/json.h",
+        "src/journal.h",
+        "src/sha256.h",
         "include/calyx_runtime.h",
         "include/calyx_io.h",
         "include/calyx_verify.h",

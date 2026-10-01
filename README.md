@@ -54,7 +54,7 @@ A analogia mais próxima é o **SQL**: você declara o que quer, e o banco decid
 
 ## Estado do projeto
 
-O **discovery** está concluído (34 decisões fechadas). Na implementação, os marcos M0 (estrutura), M1 (`calyx check` para o subconjunto inicial) e M2 (`calyx run`: o runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP) estão concluídos. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
+O **discovery** está concluído (34 decisões fechadas). Na implementação, os marcos M0 (estrutura), M1 (`calyx check` para o subconjunto inicial) M2 (`calyx run`: o runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP) e M3 (diário: uma execução interrompida continua sem refazer nenhuma chamada concluída) estão concluídos. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
 
 ## Como compilar e testar
 
@@ -78,6 +78,14 @@ cargo run -p calyx-cli -- run examples/research.clyx --topic "energia solar no B
 ```
 
 Cada parâmetro do grafo vira uma opção (`--topic`). O resultado vai para a saída padrão; o rastro (uma linha por passo e por chamada, com tempo e tokens) vai para a saída de erro, e some com `--quiet`.
+
+**Diário e retomada.** Toda execução grava cada chamada concluída num diário, em `.calyx/runs/<id>/`. Se o processo cair, ou uma chamada falhar de vez, a execução continua de onde parou, sem pagar de novo pelo que já terminou:
+
+```sh
+calyx runs                 # lista as execuções e o estado de cada uma
+calyx resume <id>          # continua; chamadas já no diário vêm dele
+calyx replay <id>          # reexecuta só a partir do diário, sem chamar nada
+```
 
 **Modelos.** O runtime fala o formato de API da OpenAI, aceito por Gemini, NVIDIA, OpenAI, OpenRouter, Groq e Ollama. Identificadores `gemini-*`, `gpt-*` e `nvidia/*` já têm provedor embutido; outros se configuram no `calyx.toml`.
 

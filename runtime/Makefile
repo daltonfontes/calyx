@@ -18,9 +18,9 @@ lib:
 
 $(LIB): lib
 
-# The values module has no dependencies: test it on its own.
-$(BUILD)/test_json: tests/test_json.c src/json.c src/json.h | $(BUILD)
-	$(CC) $(CFLAGS) -Isrc tests/test_json.c src/json.c -lm -o $@
+# Values and hashes have no dependencies: test them on their own.
+$(BUILD)/test_json: tests/test_json.c src/json.c src/json.h src/sha256.c src/sha256.h | $(BUILD)
+	$(CC) $(CFLAGS) -Isrc tests/test_json.c src/json.c src/sha256.c -lm -o $@
 
 $(BUILD)/test_verify: tests/test_verify.c $(LIB) | $(BUILD)
 	$(CC) $(CFLAGS) -Iinclude $< $(LIB) $(LDLIBS) -o $@

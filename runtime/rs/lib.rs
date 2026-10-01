@@ -12,7 +12,8 @@ mod llm;
 mod mcp;
 pub mod verify;
 
-use std::ffi::{CStr, CString, c_char, c_int};
+use std::ffi::{CStr, CString, c_char};
+use std::path::PathBuf;
 
 pub use config::Config;
 
@@ -21,20 +22,36 @@ unsafe extern "C" {
         ir_json: *const c_char,
         graph: *const c_char,
         args_json: *const c_char,
-        flags: c_int,
+        options_json: *const c_char,
     ) -> *mut c_char;
     fn calyx_run_free(s: *mut c_char);
 }
 
-/// Flag for `calyx_run`: print one line per node and effect to stderr.
-pub const RUN_TRACE: c_int = 1;
+/// What to do with the run's journal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// A new run.
+    #[default]
+    New,
+    /// Continue an interrupted run: calls already in its journal are not
+    /// made again.
+    Resume,
+    /// Run again from the journal only, without calling models or tools.
+    Replay,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
     pub config: Config,
     /// Models answer with fake values shaped by the prompt's type.
     pub fake_models: bool,
+    /// One line per node and call on stderr.
     pub trace: bool,
+    /// The run's directory (journal and blobs). `None`: no journal.
+    pub journal: Option<PathBuf>,
+    pub mode: Mode,
+    /// The source file, recorded in the journal to find it again.
+    pub program: Option<PathBuf>,
 }
 
 /// Runs `graph` of a compiled program (the IR in JSON) with `args` (a JSON
@@ -45,12 +62,26 @@ pub fn run(
     args: &serde_json::Value,
     opts: RunOptions,
 ) -> Result<serde_json::Value, String> {
+    let options = serde_json::json!({
+        "trace": opts.trace,
+        "journal": opts.journal.as_ref().map(|p| p.display().to_string()),
+        "mode": match opts.mode {
+            Mode::New => "new",
+            Mode::Resume => "resume",
+            Mode::Replay => "replay",
+        },
+        "program": opts.program.as_ref().map(|p| p.display().to_string()),
+    });
     io::configure(opts.config, opts.fake_models);
     let c = |s: &str| CString::new(s).map_err(|_| "text contains NUL".to_owned());
-    let (ir, g, a) = (c(ir_json)?, c(graph)?, c(&args.to_string())?);
-    let flags = if opts.trace { RUN_TRACE } else { 0 };
+    let (ir, g, a, o) = (
+        c(ir_json)?,
+        c(graph)?,
+        c(&args.to_string())?,
+        c(&options.to_string())?,
+    );
     // SAFETY: valid NUL-terminated strings; the result is released below.
-    let out = unsafe { calyx_run(ir.as_ptr(), g.as_ptr(), a.as_ptr(), flags) };
+    let out = unsafe { calyx_run(ir.as_ptr(), g.as_ptr(), a.as_ptr(), o.as_ptr()) };
     io::shutdown();
     if out.is_null() {
         return Err("the runtime returned nothing (out of memory?)".into());
