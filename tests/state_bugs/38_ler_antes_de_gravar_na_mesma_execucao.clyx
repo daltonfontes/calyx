@@ -1,0 +1,25 @@
+# Bug: A execução deposita e depois consulta o saldo; sem ordem, a consulta poderia ver o saldo antigo.
+# Pego por: design
+model m = "m"
+
+entity Account(key id: Text):
+    state balance: Int = 0
+    state history: List[Text] = []
+
+    on Balance() -> Int:
+        return balance
+
+    on Deposit(amount: Int, note: Text):
+        next balance = balance + amount
+        next history = history + [note]
+
+    on Set(amount: Int):
+        next balance = amount
+
+prompt why(x: Text) -> Text:
+    """{x}"""
+
+graph g(id: Text) -> Int:
+    send Account(id).Deposit(10, "x")
+    after_deposit = ask Account(id).Balance()
+    return after_deposit

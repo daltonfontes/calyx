@@ -90,7 +90,7 @@ static char *path_join(cx_arena *a, const char *dir, const char *name) {
 }
 
 /* Creates `dir` and its parents. */
-static int mkdirs(const char *dir) {
+int cx_mkdirs(const char *dir) {
     char tmp[4096];
     size_t n = strlen(dir);
     if (n == 0 || n >= sizeof tmp) return -1;
@@ -203,7 +203,7 @@ cx_journal *cx_journal_open(cx_arena *a, const char *dir, cx_journal_mode mode,
     char *path = path_join(a, dir, CX_JOURNAL_FILE);
 
     if (mode == CX_JOURNAL_NEW) {
-        if (mkdirs(dir) != 0 || mkdirs(path_join(a, dir, "blobs")) != 0) {
+        if (cx_mkdirs(dir) != 0 || cx_mkdirs(path_join(a, dir, "blobs")) != 0) {
             cx_buf_printf(err, "cannot create the run directory `%s`", dir);
             return NULL;
         }

@@ -183,6 +183,14 @@ entity NOME(key CHAVE: Tipo):
 
 No máximo **uma** entidade aberta por chave. Se um handler altera `state`, ele é de escrita; caso contrário, de leitura (inferido pelo compilador).
 
+**Como está implementado (M6c):**
+
+- **Handlers são puros:** calculam com o estado, a chave e a mensagem; não chamam modelos, tools, grafos nem outras entidades (`E0654`). As chamadas com efeito ficam no grafo, que manda o resultado. Por isso nenhum handler espera nada, e ciclos de `ask` (D33) não podem existir.
+- Um handler **responde** (`-> T` e um `return`) ou **muda o estado** (linhas `next campo = valor`, todas calculadas sobre o estado anterior à mensagem); nunca os dois (`E0652`). `next` só em campos do estado, uma vez cada, com o tipo do campo (`E0653`). O valor inicial de cada campo é um valor escrito no programa (`E0651`).
+- **Onde vive:** `.calyx/entities/<Entidade>/<hash da chave>/entity.json` (no diretório em que o programa roda), com o estado e as mensagens já aplicadas, trocados juntos de forma atômica.
+- **Um dono por chave, entre processos:** `flock`; perguntas compartilham a trava, mudanças a têm sozinhas. 50 execuções simultâneas mandando ao mesmo contador terminam com 50.
+- **Cada mensagem é aplicada uma vez:** o id de uma mensagem é a execução e o lugar da chamada; uma execução retomada que manda de novo encontra o id e não aplica outra vez.
+
 ---
 
 ## 5. O corpo de um grafo
@@ -362,6 +370,14 @@ send Memoria(usuario).Remember(novos)          # assíncrono
 ```
 
 O compilador recusa ciclos de `ask` (D33).
+
+**Como está implementado (M6c):** `ask` e `send` (o `receive`, mensagens para uma execução em andamento, fica para depois).
+
+- `ask` só para handlers que respondem; `send` só para os que mudam o estado (`E0656`); entidade e mensagem precisam existir (`E0655`). `send` pode ser uma linha sozinha.
+- **Ordem dentro de uma execução:** mensagens à mesma entidade seguem a ordem do texto, como os empréstimos de sandbox: um `send` depois de toda mensagem anterior a ela, um `ask` depois de todo `send` anterior. A execução vê as próprias mudanças.
+- **Diário:** a resposta de um `ask` e a confirmação de um `send` entram no diário; a retomada e o `replay` usam o diário, e o `replay` não manda nada.
+- **Aviso `W0603` (atualização perdida):** um `send` cujo valor depende de um `ask` à mesma entidade. Outra execução pode mudar a entidade entre os dois; a conta deve ser feita num handler, sobre o estado atual (`next saldo = saldo + valor`).
+- O `send` é aplicado durante a execução (a resposta é só a confirmação), não numa fila: a execução não espera nenhum outro efeito por causa dele.
 
 ### 5.13 Grafos gerados por LLM (D4)
 
@@ -549,6 +565,7 @@ Todas lineares ou composicionais (meta: `calyx check` em até 1 segundo):
 | Escrita sem chave de idempotência (aviso); agente sem tools `write once` | D2 |
 | Precondições: tool com `checks`, campos e tipos do estado, só operadores | D29 |
 | Empréstimo de sandboxes: modo certo, sem edições em paralelo, sandbox nunca como valor | D13, D26 |
+| Entidades: handlers puros, `ask`/`send` para o tipo certo de handler, atualização perdida (aviso) | D15, D21, D33 |
 | Uso de recursos afins e suas visões | D26 |
 | Escritas externas sem ordem definida (aviso) | D2 |
 | Terminação: limite em laços e rodadas, `decreases` em recursão | D5, D17 |

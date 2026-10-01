@@ -1,0 +1,6 @@
+graph post(board: Text, text: Text) -> Text [write]
+  %0 before: Nat = ask Board.Count [read]
+  %1 send_0: Unit = send Board.Post [write] <- %0
+  %2 seen: List[Note] = ask Board.Notes [read] <- %1
+  %3 return: Text = pure [pure] <- %0 %2
+  return %3

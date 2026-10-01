@@ -3,12 +3,14 @@
 //! with one known bug, and says in its second line who catches it:
 //!
 //! - `# Pego por: E0304` (or a warning, `W0602`): the compiler, with that code;
+//! - `# Pego por: design`: the language leaves no room for it (the compiler
+//!   orders the steps itself), so there is nothing to report;
 //! - `# Pego por: runtime`: not the compiler, but the runtime when the bug
-//!   would bite (tested in `compiler/calyx-cli/tests/writes.rs`);
+//!   would bite (tested in `compiler/calyx-cli/tests/`);
 //! - `# Pego por: none`: nobody. These stay in the suite on purpose.
 //!
-//! For `runtime` and `none` the compiler must say nothing, so the count is
-//! honest. Run with `--nocapture` to see the summary.
+//! For `design`, `runtime` and `none` the compiler must say nothing, so the
+//! count is honest. Run with `--nocapture` to see the summary.
 
 use std::fs;
 use std::path::Path;
@@ -24,7 +26,7 @@ fn state_bugs_are_caught_where_their_header_says() {
     files.sort();
     assert!(files.len() >= 20, "the suite has {} programs", files.len());
 
-    let (mut compiler, mut runtime, mut none) = (0, 0, 0);
+    let (mut compiler, mut design, mut runtime, mut none) = (0, 0, 0, 0);
     let mut failures = Vec::new();
     for path in &files {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -38,14 +40,14 @@ fn state_bugs_are_caught_where_their_header_says() {
         let report = calyx_check::check(&name, &text);
         let codes: Vec<&str> = report.diagnostics.iter().map(|d| d.code).collect();
         match expect.as_str() {
-            "runtime" | "none" => {
+            "design" | "runtime" | "none" => {
                 if !codes.is_empty() {
                     failures.push(format!("{name}: expected no diagnostics, got {codes:?}"));
                 }
-                if expect == "runtime" {
-                    runtime += 1;
-                } else {
-                    none += 1;
+                match expect.as_str() {
+                    "design" => design += 1,
+                    "runtime" => runtime += 1,
+                    _ => none += 1,
                 }
             }
             code => {
@@ -57,7 +59,7 @@ fn state_bugs_are_caught_where_their_header_says() {
         }
     }
     eprintln!(
-        "Q2: {} bugs; compiler {compiler}, runtime {runtime}, not caught {none}",
+        "Q2: {} bugs; compiler {compiler}, by design {design}, runtime {runtime}, not caught {none}",
         files.len()
     );
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));

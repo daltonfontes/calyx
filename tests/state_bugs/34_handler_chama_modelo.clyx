@@ -1,0 +1,30 @@
+# Bug: Um handler chama um modelo: a entidade ficaria travada esperando o modelo, e o resultado mudaria a cada vez.
+# Pego por: E0654
+model m = "m"
+
+entity Account(key id: Text):
+    state balance: Int = 0
+    state history: List[Text] = []
+
+    on Balance() -> Int:
+        return balance
+
+    on Deposit(amount: Int, note: Text):
+        next balance = balance + amount
+        next history = history + [note]
+
+    on Set(amount: Int):
+        next balance = amount
+
+prompt why(x: Text) -> Text:
+    """{x}"""
+
+entity Notes(key id: Text):
+    state text: Text = ""
+
+    on Summarize():
+        next text = m(why(text))
+
+graph g(id: Text) -> Text:
+    send Notes(id).Summarize()
+    return "ok"

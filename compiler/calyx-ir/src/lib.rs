@@ -117,8 +117,17 @@ pub enum Expr {
         requires: Vec<Expr>,
     },
     /// `state.field` inside a `requires`: a field of the state the tool
-    /// checks, known only to the tool.
+    /// checks, known only to the tool. In an entity's handler, a field of
+    /// the entity's state.
     State(String),
+    /// `ask Entity(key).Handler(args)` or `send ...` (decisions D15, D21).
+    Message {
+        send: bool,
+        entity: usize,
+        handler: usize,
+        key: Box<Expr>,
+        args: Vec<Expr>,
+    },
     /// Arguments follow the graph's parameters.
     Graph {
         graph: usize,
@@ -329,6 +338,9 @@ impl Graph {
                 }
                 Expr::Tool { args, .. } => 1.0 + args.iter().map(calls).sum::<f64>(),
                 Expr::State(_) => 0.0,
+                Expr::Message { key, args, .. } => {
+                    0.1 + calls(key) + args.iter().map(calls).sum::<f64>()
+                }
                 Expr::Field(base, _) => calls(base),
                 Expr::List(items) => items.iter().map(calls).sum(),
                 Expr::Record(fields) => fields.iter().map(|(_, e)| calls(e)).sum(),
@@ -397,6 +409,31 @@ pub struct Program {
     pub tools: Vec<Tool>,
     pub prompts: Vec<Prompt>,
     pub graphs: Vec<Graph>,
+    pub entities: Vec<Entity>,
+}
+
+/// An entity (decision D15): state kept between runs, one per key, changed
+/// one message at a time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Entity {
+    pub name: String,
+    /// The state's fields and their initial values.
+    pub state: Vec<(String, Expr)>,
+    pub handlers: Vec<Handler>,
+}
+
+/// A message an entity handles. Its body sees the key in local slot 0, the
+/// message's parameters in the next slots, and the state as `State(field)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Handler {
+    pub name: String,
+    pub params: Vec<String>,
+    /// The answer, for a handler that answers (`ask`).
+    pub answer: Option<Expr>,
+    /// New values of state fields, for a handler that changes it (`send`),
+    /// all computed from the state before the message.
+    pub updates: Vec<(String, Expr)>,
+    pub nlocals: usize,
 }
 
 impl Program {

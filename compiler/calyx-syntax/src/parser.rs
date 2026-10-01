@@ -22,6 +22,7 @@ pub fn parse(text: &str) -> (Program, Vec<Diagnostic>) {
         pos: 0,
         depth: 0,
         broken: None,
+        sends: 0,
         diags: Vec::new(),
     };
     let program = p.program();
@@ -36,22 +37,19 @@ const UNITS: &[&str] = &[
 /// Units accepted after `/` in a rate, as in `50/s`.
 const RATE_UNITS: &[&str] = &["s", "min", "h"];
 
-const DECLS: &[&str] = &["model", "tool", "type", "prompt", "graph"];
+const DECLS: &[&str] = &["model", "tool", "type", "prompt", "graph", "entity"];
 
 /// Declarations planned for later milestones.
 const FUTURE_DECLS: &[(&str, &str)] = &[
     ("def", "a later milestone"),
-    ("message", "M6"),
-    ("entity", "M6"),
+    ("message", "a later milestone"),
     ("router", "a later milestone"),
 ];
 
 /// Statements and expressions planned for later milestones.
 const FUTURE_STMTS: &[(&str, &str)] = &[
-    ("state", "M6"),
-    ("receive", "M6"),
-    ("ask", "M6"),
-    ("send", "M6"),
+    ("state", "a later milestone"),
+    ("receive", "a later milestone"),
     ("respond", "a later milestone"),
     ("rounds", "a later milestone"),
     ("race", "a later milestone"),
@@ -66,6 +64,8 @@ struct Parser<'a> {
     depth: usize,
     /// Name of a `name = ...` statement whose value failed to parse.
     broken: Option<Ident>,
+    /// `send` statements so far, to name their steps.
+    sends: usize,
     diags: Vec<Diagnostic>,
 }
 
@@ -369,6 +369,7 @@ impl Parser<'_> {
             "type" => self.type_decl().map(Decl::Type),
             "prompt" => self.prompt_decl().map(Decl::Prompt),
             "graph" => self.graph_decl().map(Decl::Graph),
+            "entity" => self.entity_decl().map(Decl::Entity),
             w => {
                 if let Some((_, m)) = FUTURE_DECLS.iter().find(|(k, _)| *k == w) {
                     Err(self.unsupported(w, m))
@@ -376,7 +377,7 @@ impl Parser<'_> {
                     Err(self.error_here(
                         "E0100",
                         "syntax error",
-                        "a declaration (`model`, `tool`, `type`, `prompt` or `graph`)",
+                        "a declaration (`model`, `tool`, `type`, `prompt`, `graph` or `entity`)",
                     ))
                 }
             }
@@ -685,6 +686,107 @@ impl Parser<'_> {
         })
     }
 
+    /// `entity Name(key k: T):` then `state` lines and `on` handlers.
+    fn entity_decl(&mut self) -> PResult<EntityDecl> {
+        let start = self.advance().span;
+        let name = self.ident("an entity name")?;
+        self.expect(TokenKind::LParen, "`(key name: Type)`")?;
+        if !self.is_word("key") {
+            return Err(self.error_here(
+                "E0111",
+                "an entity is identified by a key",
+                "`key name: Type`",
+            ));
+        }
+        self.advance();
+        let kname = self.ident("the key's name")?;
+        self.expect(TokenKind::Colon, "`:` and the key's type")?;
+        let kty = self.type_expr()?;
+        self.expect(TokenKind::RParen, "`)`")?;
+        let key = Param {
+            name: kname,
+            ty: kty,
+            borrow: None,
+        };
+        self.block_start("the entity's `state` and `on` handlers")?;
+        let mut state = Vec::new();
+        let mut handlers = Vec::new();
+        while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
+            if self.is_word("state") {
+                self.advance();
+                let fname = self.ident("a state field")?;
+                self.expect(TokenKind::Colon, "`:` and the field's type")?;
+                let ty = self.type_expr()?;
+                self.expect(TokenKind::Eq, "`=` and the initial value")?;
+                let init = self.expr()?;
+                state.push(StateField {
+                    name: fname,
+                    ty,
+                    init,
+                });
+                self.end_of_line()?;
+            } else if self.is_word("on") {
+                handlers.push(self.handler()?);
+            } else {
+                return Err(self.error_here(
+                    "E0111",
+                    "expected `state` or `on` in an entity",
+                    "`state name: Type = value` or `on Message(...):`",
+                ));
+            }
+        }
+        self.eat(TokenKind::Dedent);
+        Ok(EntityDecl {
+            name,
+            key,
+            state,
+            handlers,
+            span: self.span_from(start),
+        })
+    }
+
+    /// `on Name(params) -> T:` + `return e`, or `on Name(params):` + `next f = e` lines.
+    fn handler(&mut self) -> PResult<Handler> {
+        let start = self.advance().span; // on
+        let name = self.ident("the message's name")?;
+        let params = self.params()?;
+        let ret = if self.eat(TokenKind::Arrow) {
+            Some(self.type_expr()?)
+        } else {
+            None
+        };
+        self.block_start("the handler's body")?;
+        let mut returns = None;
+        let mut updates = Vec::new();
+        while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
+            if self.is_word("return") {
+                self.advance();
+                returns = Some(self.expr()?);
+            } else if self.is_word("next") && self.nth_kind(1) == TokenKind::Ident {
+                self.advance();
+                let field = self.ident("a state field")?;
+                self.expect(TokenKind::Eq, "`=` and the field's new value")?;
+                updates.push((field, self.expr()?));
+            } else {
+                return Err(self.error_here(
+                    "E0111",
+                    "expected `return` or `next` in a handler",
+                    "`return value` (a handler that answers) or `next field = value` (one that changes the state)",
+                ));
+            }
+            self.end_of_line()?;
+        }
+        self.eat(TokenKind::Dedent);
+        Ok(Handler {
+            name,
+            params,
+            ret,
+            returns,
+            updates,
+            span: self.span_from(start),
+        })
+    }
+
     fn params(&mut self) -> PResult<Vec<Param>> {
         self.expect(TokenKind::LParen, "`(` with the parameters")?;
         let mut params = Vec::new();
@@ -762,6 +864,21 @@ impl Parser<'_> {
         }
         if let Some((k, m)) = self.future_keyword() {
             return Err(self.unsupported(k, m));
+        }
+        // `send E(k).M(x)` on its own line: a step without a name.
+        if self.is_word("send") && self.nth_kind(1) == TokenKind::Ident {
+            let at = self.tok().span;
+            let value = self.message_expr()?;
+            let n = self.sends;
+            self.sends += 1;
+            return Ok(Stmt::Node {
+                name: Ident {
+                    name: format!("send_{n}"),
+                    span: at,
+                },
+                fan_out: None,
+                value,
+            });
         }
         if self.kind() == TokenKind::Ident && self.nth_kind(1) == TokenKind::Eq {
             let name = self.ident("a name")?;
@@ -866,6 +983,9 @@ impl Parser<'_> {
     fn expr(&mut self) -> PResult<Expr> {
         if let Some((k, m)) = self.future_keyword() {
             return Err(self.unsupported(k, m));
+        }
+        if (self.is_word("ask") || self.is_word("send")) && self.nth_kind(1) == TokenKind::Ident {
+            return self.message_expr();
         }
         if self.is_word("for") {
             return Err(self.error_here(
@@ -1260,6 +1380,34 @@ impl Parser<'_> {
         })
     }
 
+    /// `ask Entity(key).Handler(args)` or `send Entity(key).Handler(args)`.
+    fn message_expr(&mut self) -> PResult<Expr> {
+        let start = self.tok().span;
+        let send = self.is_word("send");
+        self.advance();
+        let entity = self.ident("an entity")?;
+        self.expect(TokenKind::LParen, "`(` and the entity's key")?;
+        let key = self.expr()?;
+        self.expect(TokenKind::RParen, "`)` after the key")?;
+        self.expect(
+            TokenKind::Dot,
+            "`.` and the message, e.g. `Entity(key).Message(...)`",
+        )?;
+        let handler = self.ident("the message's name")?;
+        self.expect(TokenKind::LParen, "`(` with the message's arguments")?;
+        let args = self.args()?;
+        Ok(Expr {
+            span: self.span_from(start),
+            kind: ExprKind::Message(Box::new(MessageExpr {
+                send,
+                entity,
+                key,
+                handler,
+                args,
+            })),
+        })
+    }
+
     /// `call:` followed by indented `requires condition` lines (D29).
     fn requires_block(&mut self, call: Expr) -> PResult<Expr> {
         let start = call.span;
@@ -1589,10 +1737,26 @@ graph research(topic: Text) -> List[Text]:
 
     #[test]
     fn future_constructs_name_their_milestone() {
-        let (_, diags) = parse("graph g() -> Text:\n    a = ask Mem(u).Recall(x)\n    return a\n");
+        let (_, diags) = parse("graph g() -> Text:\n    a = receive Approval\n    return a\n");
         assert_eq!(diags.len(), 1, "{diags:#?}");
         assert_eq!(diags[0].code, "E0101");
-        assert!(diags[0].message.contains("M6"));
+        assert!(diags[0].message.contains("later milestone"));
+    }
+
+    #[test]
+    fn entities_and_messages() {
+        let p = parse_ok(
+            "entity E(key k: Text):\n    state n: Nat = 0\n    on Get() -> Nat:\n        return n\n    on Add(x: Nat):\n        next n = n + x\n\ngraph g(u: Text) -> Nat:\n    send E(u).Add(1)\n    return ask E(u).Get()\n",
+        );
+        let Decl::Entity(e) = &p.decls[0] else {
+            panic!()
+        };
+        assert_eq!(e.state.len(), 1);
+        assert_eq!(e.handlers[1].updates[0].0.name, "n");
+        let Decl::Graph(g) = &p.decls[1] else {
+            panic!()
+        };
+        assert!(matches!(&g.body[0], Stmt::Node { name, .. } if name.name == "send_0"));
     }
 
     fn graph_value(src: &str) -> Expr {

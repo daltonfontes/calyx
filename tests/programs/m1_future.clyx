@@ -9,5 +9,5 @@ graph g(q: Text) -> Text:
         one: q
     b = rounds 3, carry t = q:
         next t
-    send Memory(q).Remember(q)
+    r = receive Approval
     return q

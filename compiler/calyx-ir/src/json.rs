@@ -72,9 +72,43 @@ impl Program {
         list(&mut o, &self.prompts, prompt);
         o.push_str(",\"graphs\":");
         list(&mut o, &self.graphs, graph);
+        o.push_str(",\"entities\":");
+        list(&mut o, &self.entities, entity);
         o.push('}');
         o
     }
+}
+
+fn entity(o: &mut String, e: &crate::Entity) {
+    o.push_str("{\"name\":");
+    string(o, &e.name);
+    o.push_str(",\"state\":");
+    list(o, &e.state, |o, (n, v)| {
+        o.push_str("{\"name\":");
+        string(o, n);
+        o.push_str(",\"init\":");
+        expr(o, v, &mut 0);
+        o.push('}');
+    });
+    o.push_str(",\"handlers\":");
+    list(o, &e.handlers, |o, h| {
+        o.push_str("{\"name\":");
+        string(o, &h.name);
+        o.push_str(",\"params\":");
+        strings(o, &h.params);
+        o.push_str(&format!(",\"nlocals\":{},\"answer\":", h.nlocals));
+        opt_expr(o, h.answer.as_ref());
+        o.push_str(",\"updates\":");
+        list(o, &h.updates, |o, (f, v)| {
+            o.push_str("{\"field\":");
+            string(o, f);
+            o.push_str(",\"v\":");
+            expr(o, v, &mut 0);
+            o.push('}');
+        });
+        o.push('}');
+    });
+    o.push('}');
 }
 
 fn model(o: &mut String, m: &Model) {
@@ -303,6 +337,25 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
                 list(o, requires, |o, e| expr(o, e, ids));
                 o.push('}');
             }
+        }
+        Expr::Message {
+            send,
+            entity,
+            handler,
+            key,
+            args,
+        } => {
+            // The key is the first argument: a call's arguments come first.
+            let mut all = vec![(**key).clone()];
+            all.extend(args.iter().cloned());
+            let kind = if *send { "send" } else { "ask" };
+            call(
+                o,
+                kind,
+                &[("entity", *entity), ("handler", *handler)],
+                &all,
+                ids,
+            );
         }
         Expr::State(field) => {
             o.push_str("{\"k\":\"state\",\"field\":");

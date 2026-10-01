@@ -1,0 +1,52 @@
+# Assistente com memória entre execuções (marco M6).
+#
+# - `entity UserMemory(key user: Text)`: o estado de cada usuário vive fora
+#   das execuções, em .calyx/entities/. Há no máximo um dono por chave, e
+#   mensagens que mudam o estado são aplicadas uma por vez, também quando
+#   várias execuções do mesmo usuário rodam ao mesmo tempo (D15).
+# - `ask` espera a resposta; `send` muda o estado. Cada `send` é aplicado
+#   uma vez só, mesmo se a execução cair e for retomada.
+# - Handlers são puros: calculam com o estado e a mensagem. Chamadas a
+#   modelos e tools ficam no grafo.
+#
+# calyx run examples/memory.clyx --fake-models --user ana --text "Moro em Recife e tenho um gato"
+
+model gemini = "gemini-3.5-flash-lite"
+
+type Fact:
+    topic: Text
+    content: Text
+
+entity UserMemory(key user: Text):
+    state facts: List[Fact] = []
+    state conversations: Nat = 0
+
+    on Recall() -> List[Fact]:
+        return facts
+
+    on Remember(learned: List[Fact]):
+        next facts = facts + learned
+        next conversations = conversations + 1
+
+prompt answer(memories: List[Fact], text: Text) -> Text:
+    """
+    Você conhece estes fatos sobre o usuário:
+    {memories}
+
+    Responda à mensagem dele em uma ou duas frases: {text}
+    """
+
+prompt facts_from(text: Text) -> List[Fact] max 3:
+    """
+    Extraia até 3 fatos duradouros sobre o usuário desta mensagem
+    (tema curto e conteúdo). Se não houver nenhum, devolva uma lista vazia.
+
+    {text}
+    """
+
+graph chat(user: Text, text: Text) -> Text:
+    memories = ask UserMemory(user).Recall()
+    reply = gemini(answer(memories, text))
+    learned = gemini(facts_from(text))
+    send UserMemory(user).Remember(learned)
+    return reply

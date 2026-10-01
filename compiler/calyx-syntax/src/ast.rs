@@ -22,6 +22,7 @@ pub enum Decl {
     Type(TypeDecl),
     Prompt(PromptDecl),
     Graph(GraphDecl),
+    Entity(EntityDecl),
 }
 
 impl Decl {
@@ -32,6 +33,7 @@ impl Decl {
             Decl::Type(d) => &d.name,
             Decl::Prompt(d) => &d.name,
             Decl::Graph(d) => &d.name,
+            Decl::Entity(d) => &d.name,
         }
     }
 }
@@ -70,6 +72,39 @@ pub struct Param {
     /// `box: reads Sandbox` or `box: edits Sandbox`: how a tool borrows a
     /// resource (decision D26).
     pub borrow: Option<Ident>,
+}
+
+/// `entity Name(key k: T):` with `state` fields and `on` handlers: a
+/// long-lived owner of state shared between runs, one per key (decision
+/// D15).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntityDecl {
+    pub name: Ident,
+    pub key: Param,
+    pub state: Vec<StateField>,
+    pub handlers: Vec<Handler>,
+    pub span: Span,
+}
+
+/// `state facts: List[Fact] = []`
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateField {
+    pub name: Ident,
+    pub ty: TypeExpr,
+    pub init: Expr,
+}
+
+/// `on Recall(query: Text) -> List[Fact]:` then `return ...` (reads the
+/// state), or `on Remember(new: List[Fact]):` then `next field = ...`
+/// lines (changes it).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Handler {
+    pub name: Ident,
+    pub params: Vec<Param>,
+    pub ret: Option<TypeExpr>,
+    pub returns: Option<Expr>,
+    pub updates: Vec<(Ident, Expr)>,
+    pub span: Span,
 }
 
 /// `type Name = ...`
@@ -247,6 +282,19 @@ pub enum ExprKind {
         mode: Ident,
         target: Ident,
     },
+    /// `ask Entity(key).Handler(args)` (waits for the answer) or `send ...`
+    /// (changes the entity's state; nothing to wait for) (decision D21).
+    Message(Box<MessageExpr>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MessageExpr {
+    /// `send` rather than `ask`.
+    pub send: bool,
+    pub entity: Ident,
+    pub key: Expr,
+    pub handler: Ident,
+    pub args: Vec<Arg>,
 }
 
 /// `case Variant(field, ...):` or `case _:`, and what it evaluates to.
