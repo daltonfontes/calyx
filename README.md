@@ -2,7 +2,7 @@
 
 Calyx é uma linguagem de programação **graph-native** para agentes de IA.
 
-O projeto está na fase de **discovery**: ainda não há implementação. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design antes de escolher a plataforma (C# ou C).
+O projeto está na fase de **discovery**: ainda não há implementação. O objetivo desta fase é entender o estado da arte e definir a hipótese central e as decisões de design. Princípio do projeto: **rodar rápido e compilar rápido**.
 
 ## Documentos de discovery
 
@@ -19,3 +19,4 @@ O projeto está na fase de **discovery**: ainda não há implementação. O obje
 | [Sintaxe](docs/discovery/09-sintaxe.md) | Proposta de sintaxe testada com 9 programas em `examples/` |
 | [SVBE](docs/discovery/10-svbe.md) | Consistência de estado entre agentes concorrentes: validação semântica no momento do efeito |
 | [Mapa da orquestração](docs/discovery/11-mapa-orquestracao.md) | Onde a Calyx está na pilha de orquestração de agentes, e o que falta |
+| [Arquitetura do runtime](docs/discovery/12-arquitetura-runtime.md) | Compilador e runtime nativos com modelo de atores; princípio de rodar e compilar rápido |

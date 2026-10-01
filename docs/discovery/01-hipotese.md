@@ -1,5 +1,9 @@
 # Hipótese central
 
+## Princípio do projeto
+
+**A Calyx precisa rodar rápido e compilar rápido.** Toda análise do compilador é linear ou composicional (sem enumerar caminhos, sem provador de teoremas); no runtime, a prioridade é fazer menos chamadas de LLM e rodar em paralelo o que é independente. Ver [arquitetura do runtime](12-arquitetura-runtime.md).
+
 ## Pergunta
 
 > Uma linguagem graph-native para agentes pode permitir que o runtime derive automaticamente **concorrência**, **dependências de estado**, **recuperação de falhas** e **observabilidade** a partir da estrutura do grafo?
