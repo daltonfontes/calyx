@@ -1,0 +1,58 @@
+# W3: reembolso com aprovação humana e prazo. A execução para no `receive`
+# e sai; a resposta chega com `calyx deliver` e `calyx resume`. Sem resposta
+# no prazo, `calyx tick` continua pelo `on timeout` (o prazo fica no diário,
+# então vale mesmo com o processo parado). O prazo é curto para o harness.
+model m = "fake-model"
+
+message Approval = Approved | Denied(reason: Text)
+
+type Status = Pending | Delivered | Cancelled
+
+type Order:
+    id: Text
+    customer: Text
+    email: Text
+    total: Float
+    refunded: Float
+    status: Status
+
+type Proposal:
+    amount: Float
+    reason: Text
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+
+tool email_sent(to: Text, subject: Text) -> Bool:
+    effect read
+
+tool email(to: Text, subject: Text, body: Text) -> Unit:
+    effect write once
+    timeout 10 s
+    on_uncertain verify(email_sent(to, subject))
+
+prompt decide(order: Order, message: Text) -> Proposal:
+    """Proponha um reembolso para {order} por causa de: {message}"""
+
+graph pay(request: Text, order: Order, amount: Float) -> Text:
+    paid = refund(request, order.id, amount)
+    notice = email(order.email, "Reembolso do pedido {order.id}", "Reembolsamos {amount}.")
+    notice after paid
+    return "reembolso de {amount} enviado para {order.email}"
+
+graph refuse(order: Order, reason: Text) -> Text:
+    notice = email(order.email, "Reembolso do pedido {order.id}", "Não aprovado: {reason}")
+    return "recusado: {reason}"
+
+graph approve(request: Text, order: Text, message: Text) -> Text:
+    found = get_order(order)
+    proposal = m(decide(found, message))
+    approval = receive Approval, timeout 3 s:
+        on timeout: Denied(reason="sem resposta no prazo")
+    return match approval:
+        case Approved: pay(request, found, proposal.amount)
+        case Denied(reason): refuse(found, reason)

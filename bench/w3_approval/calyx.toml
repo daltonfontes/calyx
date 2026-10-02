@@ -1,0 +1,12 @@
+[tools.get_order]
+command = ["python3", "../../examples/tools/fake_store.py"]
+
+[tools.refund]
+command = ["python3", "../../examples/tools/fake_store.py"]
+
+[tools.email]
+command = ["python3", "../../examples/tools/fake_store.py"]
+
+[tools.email_sent]
+command = ["python3", "../../examples/tools/fake_store.py"]
+
