@@ -1,0 +1,192 @@
+[
+ {
+  "experiment": "fan-out",
+  "system": "calyx",
+  "n": 1000,
+  "median_s": 0.162,
+  "min_s": 0.155,
+  "max_s": 0.226,
+  "reps": 3,
+  "ms_per_item": 0.1625
+ },
+ {
+  "experiment": "fan-out",
+  "system": "calyx --no-journal",
+  "n": 1000,
+  "median_s": 0.149,
+  "min_s": 0.139,
+  "max_s": 0.155,
+  "reps": 3,
+  "ms_per_item": 0.1489
+ },
+ {
+  "experiment": "fan-out",
+  "system": "python asyncio",
+  "n": 1000,
+  "median_s": 0.077,
+  "min_s": 0.077,
+  "max_s": 0.083,
+  "reps": 3,
+  "ms_per_item": 0.0773
+ },
+ {
+  "experiment": "fan-out",
+  "system": "langgraph",
+  "n": 1000,
+  "median_s": 1.97,
+  "min_s": 1.824,
+  "max_s": 2.158,
+  "reps": 3,
+  "ms_per_item": 1.9702
+ },
+ {
+  "experiment": "fan-out",
+  "system": "calyx",
+  "n": 10000,
+  "median_s": 1.22,
+  "min_s": 1.218,
+  "max_s": 1.32,
+  "reps": 3,
+  "ms_per_item": 0.122
+ },
+ {
+  "experiment": "fan-out",
+  "system": "calyx --no-journal",
+  "n": 10000,
+  "median_s": 1.252,
+  "min_s": 1.181,
+  "max_s": 1.256,
+  "reps": 3,
+  "ms_per_item": 0.1252
+ },
+ {
+  "experiment": "fan-out",
+  "system": "python asyncio",
+  "n": 10000,
+  "median_s": 0.226,
+  "min_s": 0.208,
+  "max_s": 0.238,
+  "reps": 3,
+  "ms_per_item": 0.0226
+ },
+ {
+  "experiment": "fan-out",
+  "system": "langgraph",
+  "n": 10000,
+  "median_s": 71.842,
+  "min_s": 71.842,
+  "max_s": 71.842,
+  "reps": 1,
+  "ms_per_item": 7.1842
+ },
+ {
+  "experiment": "fan-out",
+  "system": "calyx",
+  "n": 30000,
+  "median_s": 3.818,
+  "min_s": 3.741,
+  "max_s": 3.848,
+  "reps": 3,
+  "ms_per_item": 0.1273
+ },
+ {
+  "experiment": "fan-out",
+  "system": "calyx --no-journal",
+  "n": 30000,
+  "median_s": 3.515,
+  "min_s": 3.405,
+  "max_s": 3.856,
+  "reps": 3,
+  "ms_per_item": 0.1172
+ },
+ {
+  "experiment": "fan-out",
+  "system": "python asyncio",
+  "n": 30000,
+  "median_s": 0.583,
+  "min_s": 0.557,
+  "max_s": 0.904,
+  "reps": 3,
+  "ms_per_item": 0.0194
+ },
+ {
+  "experiment": "fan-out",
+  "system": "calyx",
+  "n": 100000,
+  "median_s": 13.851,
+  "min_s": 13.851,
+  "max_s": 13.851,
+  "reps": 1,
+  "ms_per_item": 0.1385
+ },
+ {
+  "experiment": "fan-out",
+  "system": "calyx --no-journal",
+  "n": 100000,
+  "median_s": 12.121,
+  "min_s": 12.121,
+  "max_s": 12.121,
+  "reps": 1,
+  "ms_per_item": 0.1212
+ },
+ {
+  "experiment": "fan-out",
+  "system": "python asyncio",
+  "n": 100000,
+  "median_s": 2.459,
+  "min_s": 2.459,
+  "max_s": 2.459,
+  "reps": 1,
+  "ms_per_item": 0.0246
+ },
+ {
+  "experiment": "agent",
+  "system": "calyx",
+  "n": 50,
+  "median_s": 0.074,
+  "min_s": 0.072,
+  "max_s": 0.077,
+  "reps": 3,
+  "ms_per_item": 1.4892
+ },
+ {
+  "experiment": "agent",
+  "system": "calyx",
+  "n": 100,
+  "median_s": 0.165,
+  "min_s": 0.146,
+  "max_s": 0.166,
+  "reps": 3,
+  "ms_per_item": 1.6526
+ },
+ {
+  "experiment": "agent",
+  "system": "calyx",
+  "n": 200,
+  "median_s": 0.446,
+  "min_s": 0.444,
+  "max_s": 0.478,
+  "reps": 3,
+  "ms_per_item": 2.2289
+ },
+ {
+  "experiment": "agent",
+  "system": "calyx",
+  "n": 400,
+  "median_s": 1.548,
+  "min_s": 1.532,
+  "max_s": 1.582,
+  "reps": 3,
+  "ms_per_item": 3.8711
+ },
+ {
+  "experiment": "agent",
+  "system": "calyx",
+  "n": 800,
+  "median_s": 5.791,
+  "min_s": 5.696,
+  "max_s": 5.833,
+  "reps": 3,
+  "ms_per_item": 7.239
+ }
+]
