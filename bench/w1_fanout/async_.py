@@ -19,4 +19,4 @@ async def research(questions: list[str]) -> str:
         return await allm(f"Escreva um relatório com {list(answers)}")
 
 
-print(asyncio.run(research(json.loads(sys.argv[1]))))
+print(asyncio.run(research(json.loads(open(sys.argv[1][1:]).read() if sys.argv[1].startswith("@") else sys.argv[1]))))

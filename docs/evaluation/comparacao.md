@@ -17,7 +17,7 @@ crus, em `bench/results/`.
 | **Q2: bugs antes de rodar** (14 bugs que a Calyx pega) | 14 de 14 | pyright + mypy: 2 de 14; LangGraph para 3 ao rodar, 2 depois do dano | Forte, mas o corpus foi escrito por quem fez o compilador |
 | **Bugs reais** (44 issues de LangGraph, CrewAI, AutoGen; [`bugs-reais.md`](bugs-reais.md)) | Dos 15 de workflow: evita 7 (runtime 5, construção 2), deixa passar 8; compilador: 0 | — (29 dos 44 são bugs dos próprios frameworks) | Issues relatam o framework errando, não o programador: não confirmam a Q2. Achada uma lacuna (`write once` em laço), que virou o aviso `W0605` |
 | **Q1: paralelismo** (W1) | A 30–50 ms do limite teórico | asyncio à mão: a 80–95 ms; LangGraph: +0,8 s | Empate com asyncio. O ganho é não escrever o paralelismo, não ser mais rápido |
-| **Custo do runtime** (W1 sem latência) | Linear, 0,16 ms por item | asyncio: 0,025 ms; LangGraph: 8,4 ms e crescendo | Desprezível perto de uma chamada de modelo; o LangGraph cresce mais que linearmente |
+| **Custo do runtime** (W1 sem latência, E2) | Linear até 10⁵ itens, 0,12–0,16 ms por item; agentes quadráticos nas voltas (eram cúbicos: corrigido) | asyncio: 0,025 ms; LangGraph: 7–8 ms e crescendo | Desprezível perto de uma chamada de modelo; o LangGraph cresce mais que linearmente |
 
 ## W2: recuperação com efeitos externos (Q3)
 
@@ -282,6 +282,47 @@ inteiro (com a inicialização), mediana de 3 repetições.
   Python separado, por um pipe), enquanto as versões em Python chamam a busca
   como uma função. Mesmo assim, 0,16 ms por item é ~6.000 vezes menos que uma
   chamada de modelo de 1 s.
+
+## E2: custo do runtime até 100.000 itens (A4)
+
+A W1 sem latência, agora até 10⁵ itens (as perguntas vão num arquivo,
+`--questions @arquivo.json`: 100.000 não cabem num argumento), e um agente
+cujo modelo chama uma tool a cada volta (`fake-busy`), de 50 a 800 voltas.
+Mediana de 3 repetições (1 com 100.000 itens e com o LangGraph a 10.000).
+
+| N | Calyx | Calyx sem diário | asyncio | LangGraph |
+|---|---|---|---|---|
+| 1.000 | 0,162 s (0,16 ms/item) | 0,149 s | 0,077 s | 1,97 s (2,0 ms/item) |
+| 10.000 | 1,220 s (0,12 ms/item) | 1,252 s | 0,226 s | 71,8 s (7,2 ms/item) |
+| 30.000 | 3,818 s (0,13 ms/item) | 3,515 s | 0,583 s | — |
+| 100.000 | 13,85 s (0,14 ms/item) | 12,12 s | 2,46 s (0,025 ms/item) | — |
+
+- **O fan-out da Calyx é linear até 10⁵:** de 0,12 a 0,16 ms por item em toda
+  a faixa. O diário custa até ~14% (com 100.000 itens), porque o `fsync`
+  é feito no máximo uma vez por segundo, não por entrada.
+- O LangGraph não foi além de 10.000: a 7 ms por item, e crescendo, 30.000
+  levariam quase uma hora.
+- O asyncio continua ~5× mais barato por item, pelo mesmo motivo de antes: a
+  Calyx faz uma chamada MCP de verdade por item, o Python chama uma função.
+
+**O custo que o plano temia apareceu nos agentes, e foi corrigido.** O passo
+de um agente é avaliado de novo cada vez que uma chamada dele responde, e
+cada avaliação recomeçava da primeira volta, refazendo a conversa e
+procurando cada volta anterior com um pedido cada vez maior: o custo crescia
+com o **cubo** das voltas. Agora o progresso do agente fica guardado entre
+avaliações (e, numa retomada, vem do diário uma vez).
+
+| Voltas | Antes | Depois |
+|---|---|---|
+| 100 | 1,27 s | 0,165 s |
+| 200 | 9,27 s | 0,446 s |
+| 400 | 69,7 s | 1,548 s |
+| 800 | — | 5,791 s |
+
+O que sobra cresce com o quadrado das voltas, e é do protocolo: cada volta
+manda a conversa inteira ao modelo. Com as 6 a 20 voltas de um agente comum,
+o custo é de milissegundos. O fan-out dentro de `rounds` (`for each` numa
+expressão) também foi medido e é linear: 0,023 ms por item até 100.000.
 
 ## O que a comparação mostra e o que não mostra
 

@@ -69,7 +69,7 @@ caminho crítico calculado pelo compilador.
 
 **E2, escala e custo do runtime (A4).** W1 sem latência, de 10 a 10⁵ itens.
 Medir também o custo do diário (com e sem `fsync`) e da reavaliação das
-expressões, que hoje cresce com o número de chamadas de um passo.
+expressões, que hoje cresce com o número de chamadas de um passo. ✅ Feito ([`comparacao.md`](comparacao.md), seção E2): o fan-out custa 0,12–0,16 ms por item de 10³ a 10⁵ itens, com diário ou sem (o diário custa até ~14%); um agente custava o cubo das voltas por reavaliar a conversa do começo a cada resposta, e foi corrigido (400 voltas: de 70 s para 1,5 s).
 
 **E3, matriz de quedas (A2).** Para cada workload com efeitos (W2, W3, W5,
 W7), matar o processo:
@@ -123,7 +123,7 @@ segundo aparecem atribuídos a um passo no diário.
    uma alternativa é um estudo com programadores escrevendo os workflows.
    O aviso para `write once` dentro de laço (`W0605`) já existe.
 3. ~~W3 e W7~~ (feitos): nos dois, como na W2, os baselines só acertam com cuidado manual.
-4. E2 até 10⁵ itens, e a otimização da reavaliação se ela aparecer.
+4. ~~E2 até 10⁵ itens, e a otimização da reavaliação se ela aparecer.~~ Feito: o fan-out é linear até 10⁵; a reavaliação apareceu nos agentes (custo cúbico nas voltas) e foi corrigida.
 5. W4 a W6 e o E1 com modelo real.
 6. Texto: introdução com o caso do pagamento, que é o exemplo mais claro do
    problema.

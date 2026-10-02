@@ -41,7 +41,7 @@ graph.add_edge("answer", "report")
 graph.add_edge("report", END)
 app = graph.compile()
 
-questions = json.loads(sys.argv[1])
+questions = json.loads(open(sys.argv[1][1:]).read() if sys.argv[1].startswith("@") else sys.argv[1])
 out = app.invoke(
     {"questions": questions, "answers": [], "report": ""},
     config={"max_concurrency": 8, "recursion_limit": len(questions) + 10},
