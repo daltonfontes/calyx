@@ -132,6 +132,8 @@ pub enum Expr {
     /// value when the deadline passes first.
     Receive {
         message: String,
+        /// What the message is about, written down with the wait.
+        about: Option<Box<Expr>>,
         timeout_s: u64,
         on_timeout: Box<Expr>,
     },

@@ -79,9 +79,9 @@ entity Cliente(key id: Text):
     on Historico() -> List[Text]:
         return ultimas
 
-    on Registrar(mensagem: Text):
+    on Registrar(resumo: Text):
         next conversas = conversas + 1
-        next ultimas = ultimas + [mensagem]
+        next ultimas = ultimas + [resumo]
 
 prompt classificar(mensagem: Text) -> Intent:
     """
@@ -117,7 +117,7 @@ prompt acalmar(mensagem: Text, historico: List[Text]) -> Text:
 # Reembolso: só paga com aprovação de uma pessoa, em até 2 dias.
 graph reembolsar(chamado: Text, pedido: Order, mensagem: Text) -> Text:
     proposta = bom(propor(pedido, mensagem))
-    aprovacao = receive Approval, timeout 2 days:
+    aprovacao = receive Approval about proposta, timeout 2 days:
         on timeout: Denied(reason="ninguém aprovou em 2 dias")
     return match aprovacao:
         case Approved: pagar(chamado, pedido, proposta.amount)
@@ -153,6 +153,6 @@ graph atender(cliente: Text, pedido: Text, mensagem: Text) -> Text:
         case Reembolso: reembolsar("{cliente}/{pedido}", encontrado, mensagem)
         case Reclamacao: bom(acalmar(mensagem, historico))
 
-    registro = send Cliente(cliente).Registrar(mensagem)
+    registro = send Cliente(cliente).Registrar("{mensagem} -> {resposta}")
     registro after resposta
     return resposta

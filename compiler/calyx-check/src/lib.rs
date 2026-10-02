@@ -218,4 +218,21 @@ prompt summarize(items: List[Text]) -> Text:
         assert!(codes(&program("to, \"tentativa {n}\"")).is_empty());
         assert!(codes(&program("\"{to}\", \"oi {n}\"")).is_empty());
     }
+
+    #[test]
+    fn sending_back_what_was_read_warns_only_when_it_overwrites() {
+        let program = |update: &str| {
+            format!(
+                "entity Notes(key id: Text):\n    state notes: List[Text] = []\n\n    \
+                 on All() -> List[Text]:\n        return notes\n\n    \
+                 on Put(note: Text):\n        next notes = {update}\n\n\
+                 graph g(id: Text) -> Text:\n    seen = ask Notes(id).All()\n    \
+                 send Notes(id).Put(\"{{seen}}\")\n    return \"ok\"\n"
+            )
+        };
+        // A new value computed from what was read: another run's note is lost.
+        assert_eq!(codes(&program("[note]")), vec!["W0603"]);
+        // A change to the current value: nothing is lost.
+        assert!(codes(&program("notes + [note]")).is_empty());
+    }
 }

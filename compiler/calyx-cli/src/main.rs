@@ -850,6 +850,18 @@ fn execute(
             eprintln!("{cmd}: the run is {e}");
             if let Some(id) = id {
                 for w in runs::waits(id) {
+                    if let Some(about) = &w.about {
+                        let mut shown = about.to_string();
+                        if shown.len() > 500 {
+                            let cut = (0..=500)
+                                .rev()
+                                .find(|&i| shown.is_char_boundary(i))
+                                .unwrap_or(0);
+                            shown.truncate(cut);
+                            shown.push('…');
+                        }
+                        eprintln!("{cmd}: `{}` is about: {shown}", w.message);
+                    }
                     eprintln!(
                         "{cmd}: deliver it with `{cmd} deliver {id} {} '<json>'`; after {} it continues with `on timeout` (`{cmd} resume {id}` or `{cmd} tick`)",
                         w.message,

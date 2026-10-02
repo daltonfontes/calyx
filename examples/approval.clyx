@@ -1,6 +1,7 @@
 # Aprovação humana com espera durável (marco M8).
 #
-# A execução para no `receive` e sai (código 4, estado `waiting`). O prazo
+# A execução para no `receive` e sai (código 4, estado `waiting`), mostrando
+# a proposta (`about`): o que a pessoa vai aprovar. O prazo
 # fica gravado com o diário, então vale mesmo se a máquina reiniciar.
 # Quando a resposta chega, a execução continua de onde parou, sem refazer
 # nada: a proposta do modelo vem do diário.
@@ -23,7 +24,7 @@ prompt propose(request: Text) -> Text:
 
 graph approve(request: Text) -> Text:
     proposal = gemini(propose(request))
-    approval = receive Approval, timeout 3 days:
+    approval = receive Approval about proposal, timeout 3 days:
         on timeout: Denied(reason="ninguém respondeu em 3 dias")
     return match approval:
         case Approved: "aprovado: {proposal}"

@@ -453,6 +453,7 @@ approval = receive Approval, timeout 3 days:
     on timeout: Denied(reason="ninguém respondeu")
 ```
 
+- `receive Approval about proposta, timeout 3 days:` diz **sobre o que** é a mensagem. A espera só começa quando esse valor existe (o prazo não corre enquanto a proposta é escrita), e o valor fica gravado com a espera (`waits.jsonl`) e é mostrado quando a execução para, para quem vai responder. Sem `about`, a espera começa assim que nada a impede, mesmo antes de passos de que ela não depende.
 - Só tipos declarados com `message` (`E0670`). `timeout` e `on timeout` são obrigatórios: uma execução nunca espera para sempre (`E0671`, `E0672`).
 - **A execução para de verdade:** quando nada mais pode rodar, ela sai com o estado `waiting` (código 4). O prazo absoluto (agora + `timeout`) é gravado uma vez em `waits.jsonl`, no diretório da execução: vale mesmo se a máquina reiniciar.
 - `calyx deliver <id> Approval '<json>'` confere a mensagem contra o tipo e a entrega ao `receive` mais antigo que espera por ela (`inbox.jsonl`, com a hora da entrega). Só para execuções que estão esperando, e só **antes do prazo**: o prazo é a hora em que a resposta tinha de chegar, não a hora em que a execução é retomada. Uma resposta que chega depois é recusada mesmo que ninguém tenha retomado a execução ainda, e o runtime confere a hora de novo ao tomar a mensagem.
@@ -464,7 +465,7 @@ approval = receive Approval, timeout 3 days:
 - `ask` só para handlers que respondem; `send` só para os que mudam o estado (`E0656`); entidade e mensagem precisam existir (`E0655`). `send` pode ser uma linha sozinha.
 - **Ordem dentro de uma execução:** mensagens à mesma entidade seguem a ordem do texto, como os empréstimos de sandbox: um `send` depois de toda mensagem anterior a ela, um `ask` depois de todo `send` anterior. A execução vê as próprias mudanças.
 - **Diário:** a resposta de um `ask` e a confirmação de um `send` entram no diário; a retomada e o `replay` usam o diário, e o `replay` não manda nada.
-- **Aviso `W0603` (atualização perdida):** um `send` cujo valor depende de um `ask` à mesma entidade. Outra execução pode mudar a entidade entre os dois; a conta deve ser feita num handler, sobre o estado atual (`next saldo = saldo + valor`).
+- **Aviso `W0603` (atualização perdida):** um `send` cujo valor depende de um `ask` à mesma entidade. Outra execução pode mudar a entidade entre os dois; a conta deve ser feita num handler, sobre o estado atual (`next saldo = saldo + valor`). Não há aviso quando o handler da mensagem aplica uma mudança, não um valor novo: cada `next` que usa a mensagem usa também o valor atual do campo (`next notas = notas + [nota]`). Aí nada se perde, venha de onde vier o argumento.
 - O `send` é aplicado durante a execução (a resposta é só a confirmação), não numa fila: a execução não espera nenhum outro efeito por causa dele.
 
 ### 5.13 Grafos gerados por LLM (D4)

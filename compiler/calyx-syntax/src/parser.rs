@@ -1702,10 +1702,16 @@ impl Parser<'_> {
         })
     }
 
-    /// `receive Message, timeout N unit:` then an indented `on timeout: value`.
+    /// `receive Message [about value], timeout N unit:` then an indented
+    /// `on timeout: value`.
     fn receive_expr(&mut self) -> PResult<Expr> {
         let start = self.advance().span; // receive
         let message = self.ident("the message type")?;
+        let mut about = None;
+        if self.is_word("about") {
+            self.advance();
+            about = Some(Box::new(self.add_expr()?));
+        }
         let mut timeout = None;
         let mut on_timeout = None;
         if self.eat(TokenKind::Comma) {
@@ -1750,6 +1756,7 @@ impl Parser<'_> {
             span: self.span_from(start),
             kind: ExprKind::Receive {
                 message,
+                about,
                 timeout,
                 on_timeout,
             },
