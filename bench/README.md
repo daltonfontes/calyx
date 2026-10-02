@@ -13,6 +13,7 @@ o plano de avaliação para o paper, em
 | `w3_approval/` | Reembolso com aprovação humana e prazo de 3 s, em Calyx (`receive`), LangGraph (`interrupt()`) e Temporal (*signal* com timeout). 6 cenários com o processo parado durante a espera: resposta em dobro, atrasada, no prazo com retomada depois | Q3 |
 | `w7_memory/` | Memória de um usuário (entidade na Calyx, *Store* no LangGraph) com 20 execuções ao mesmo tempo e quedas entre gravar a memória e registrar isso | Q3 |
 | `run_e2.py` | E2: a W1 sem latência de 10³ a 10⁵ itens, e um agente de 50 a 800 voltas: o custo do runtime | A4 |
+| `e4_porting/` | Kit para **outra pessoa** portar os 54 bugs do corpus para Python + LangGraph, sem ver as versões em Calyx: descrições neutras (`bugs.md`), o mundo falso (`world.py`) e o script que roda pyright e mypy no modo estrito e o programa (`run_e4.py`). Resultados em `bench/results/e4.json` | Q2 (E4) |
 | `q2_bugs/` | 16 bugs do corpus Q2 (`tests/state_bugs/`) em Python + LangGraph, com tipos. Onde cada um aparece: pyright, mypy, ao rodar, ou em lugar nenhum | Q2 |
 | `real_bugs/` | 79 issues públicas de LangGraph, CrewAI e AutoGen, classificadas pelo que a Calyx faria (`classify.py`), e os programas que conferem os casos a favor dela (`run_verify.py`). Resultados em [`docs/evaluation/bugs-reais.md`](../docs/evaluation/bugs-reais.md) | Q2 |
 | `common/fakes.py` | O que as versões em Python dividem com as da Calyx: o modelo falso (mesma latência, mesma resposta), a busca falsa e um cliente MCP para a mesma loja | — |
