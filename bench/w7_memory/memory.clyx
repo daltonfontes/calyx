@@ -1,0 +1,38 @@
+# W7: memória de um usuário entre execuções, com várias execuções ao mesmo
+# tempo para o mesmo usuário. A memória é uma entidade: cada mudança é
+# aplicada uma por vez (flock) e cada mensagem uma vez só (ids gravados com
+# o estado), mesmo se a execução cair e for retomada.
+model m = "fake-slow-300"
+
+type Fact:
+    topic: Text
+    content: Text
+
+entity UserMemory(key user: Text):
+    state facts: List[Fact] = []
+    state conversations: Nat = 0
+
+    on Recall() -> List[Fact]:
+        return facts
+
+    on Remember(learned: List[Fact]):
+        next facts = facts + learned
+        next conversations = conversations + 1
+
+prompt answer(memories: List[Fact], text: Text) -> Text:
+    """
+    Responda: {text}
+    Fatos conhecidos: {memories}
+    """
+
+prompt facts_from(text: Text) -> List[Fact] max 3:
+    """
+    Fatos de: {text}
+    """
+
+graph chat(user: Text, text: Text) -> Text:
+    memories = ask UserMemory(user).Recall()
+    reply = m(answer(memories, text))
+    learned = m(facts_from(text))
+    send UserMemory(user).Remember(learned)
+    return reply

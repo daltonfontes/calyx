@@ -2093,6 +2093,13 @@ static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_
                     snprintf(why, why_len, "entity `%s`: cannot write %.300s", ename, path);
                 else
                     result = cx_null(a);
+                /* For tests: `kill -9` after the entity applied the message
+                 * and before the journal records it (the window exactly-once
+                 * by message id is for). */
+                if (result && getenv("CALYX_CRASH_IN_SEND")) {
+                    fprintf(stderr, "calyx: CALYX_CRASH_IN_SEND, exiting abruptly\n");
+                    _exit(137);
+                }
                 cx_buf_free(&db);
             }
             trace(x, j->label, "send  %s(%s).%s", ename, kb.data, hname);

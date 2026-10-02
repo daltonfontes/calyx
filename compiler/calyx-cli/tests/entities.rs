@@ -187,6 +187,35 @@ fn a_resumed_run_does_not_apply_its_message_twice() {
 }
 
 #[test]
+fn a_run_killed_after_the_entity_applied_its_message_does_not_apply_it_again() {
+    let d = Dir::new("killed");
+    let out = Command::new(env!("CARGO_BIN_EXE_calyx"))
+        .args([
+            "run",
+            "p.clyx",
+            "--graph",
+            "bump",
+            "--fake-models",
+            "--quiet",
+        ])
+        .args(["--name", "a", "--note", "um"])
+        .env("CALYX_CRASH_IN_SEND", "1")
+        .current_dir(&d.0)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(137), "{}", text(&out.stderr));
+    assert_eq!(d.count("a"), "1");
+    let id = text(&out.stderr)
+        .lines()
+        .find_map(|l| l.strip_prefix("calyx: run ").map(str::to_owned))
+        .unwrap();
+    let out = d.calyx(&["resume", &id, "--fake-models"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stderr).contains("already applied"));
+    assert_eq!(d.count("a"), "1");
+}
+
+#[test]
 fn replay_takes_entity_answers_from_the_journal() {
     let d = Dir::new("replay");
     assert!(d.bump("a", "um").status.success());
