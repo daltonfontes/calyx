@@ -125,5 +125,5 @@ segundo aparecem atribuídos a um passo no diário.
 3. ~~W3 e W7~~ (feitos): nos dois, como na W2, os baselines só acertam com cuidado manual.
 4. ~~E2 até 10⁵ itens, e a otimização da reavaliação se ela aparecer.~~ Feito: o fan-out é linear até 10⁵; a reavaliação apareceu nos agentes (custo cúbico nas voltas) e foi corrigida.
 5. W4 a W6 e o E1 com modelo real.
-6. Texto: introdução com o caso do pagamento, que é o exemplo mais claro do
-   problema.
+6. Texto: rascunho em [`docs/paper/rascunho.md`](../paper/rascunho.md), com o caso do
+   pagamento na introdução; o que falta medir está marcado.
