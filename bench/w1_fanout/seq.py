@@ -11,4 +11,4 @@ def research(questions: list[str]) -> str:
     return llm(f"Escreva um relatório com {answers}")
 
 
-print(research(json.loads(sys.argv[1])))
+print(research(json.loads(open(sys.argv[1][1:]).read() if sys.argv[1].startswith("@") else sys.argv[1])))

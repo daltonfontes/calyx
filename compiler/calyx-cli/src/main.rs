@@ -24,7 +24,8 @@ commands:
   run <file.clyx> [--graph NAME] [--fake-models] [--quiet] [--config FILE]
                  [--no-journal] [--deterministic] [--budget USD] [--PARAM VALUE ...]
       Check and run a graph. Each parameter of the graph is passed as
-      `--name value` (e.g. --topic \"energia solar\"). Every call is
+      `--name value` (e.g. --topic \"energia solar\"); lists and records
+      as JSON, or `@file.json` to read the JSON from a file. Every call is
       recorded in the run's journal, in .calyx/runs/<id>/.
       --graph chooses the graph (default: the only one, or `main`).
       --fake-models answers every model call with fake values shaped by the
@@ -911,8 +912,19 @@ fn parse_arg(ty: &str, raw: &str) -> Result<serde_json::Value, String> {
             "false" => Ok(false.into()),
             _ => Err(format!("expected `true` or `false`, got `{raw}`")),
         },
-        // Lists and records are written as JSON.
-        _ => serde_json::from_str(raw).map_err(|e| format!("expected JSON for a `{ty}`: {e}")),
+        // Lists and records are written as JSON, or `@file` to read the JSON
+        // from a file (a command-line argument is limited to 128 KB).
+        _ => match raw.strip_prefix('@') {
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .map_err(|e| format!("cannot read `{path}`: {e}"))?;
+                serde_json::from_str(&text)
+                    .map_err(|e| format!("expected JSON for a `{ty}` in `{path}`: {e}"))
+            }
+            None => {
+                serde_json::from_str(raw).map_err(|e| format!("expected JSON for a `{ty}`: {e}"))
+            }
+        },
     }
 }
 

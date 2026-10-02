@@ -79,6 +79,7 @@ typedef struct gexec gexec;
 typedef struct pending pending;
 typedef struct waiter waiter;
 typedef struct job job;
+typedef struct agent_progress agent_progress;
 
 enum { T_WAITING, T_QUEUED, T_RUNNING, T_DONE };
 
@@ -98,6 +99,21 @@ struct waiter {
 };
 
 enum { P_INFLIGHT, P_DONE, P_FAILED };
+
+/* Where an agent got to: the turns it finished, with their observations.
+ * The agent's step is evaluated again each time one of its calls answers;
+ * without this, each evaluation would walk every turn from the first, with
+ * a conversation that grows, and an agent's cost would grow with the cube
+ * of its turns. With `mu` held. */
+struct agent_progress {
+    char *key;
+    long turn;
+    char *msgs;
+    size_t len;
+    char *previous;
+    int repeats;
+    agent_progress *next;
+};
 
 /* A call (or subgraph) by key: running, or finished with its value. */
 struct pending {
@@ -206,6 +222,8 @@ struct exec {
     /* Pending calls by key: open addressing, capacity a power of two. */
     pending **ptab;
     size_t pcap, pused;
+    /* Agents' progress by key, in buckets (with `mu`). */
+    agent_progress *agents[256];
     /* Scheduling. */
     worker *workers;
     int nworkers;
@@ -2484,6 +2502,38 @@ static cx_value *agent_limit(ctx *c, cx_value *e, const char *which, cx_value *m
     return agent_answer(c, model, prompt, base, cx_get_str(ok, "text", ""));
 }
 
+static agent_progress *agent_find(exec *x, const char *key) {
+    for (agent_progress *p = x->agents[hash_str(key) & 255]; p; p = p->next)
+        if (strcmp(p->key, key) == 0) return p;
+    return NULL;
+}
+
+/* Writes down that the agent finished turn `turn - 1` (with `mu` held). */
+static void agent_save(exec *x, const char *key, long turn, const cx_buf *msgs,
+                       const char *previous, int repeats) {
+    agent_progress *p = agent_find(x, key);
+    if (!p) {
+        p = calloc(1, sizeof *p);
+        if (!p) abort();
+        p->key = strdup(key);
+        size_t b = hash_str(key) & 255;
+        p->next = x->agents[b];
+        x->agents[b] = p;
+    }
+    char *m = malloc(msgs->len + 1);
+    char *prev = previous ? strdup(previous) : NULL;
+    if (!m || !p->key || (previous && !prev)) abort();
+    memcpy(m, msgs->data, msgs->len);
+    m[msgs->len] = '\0';
+    free(p->msgs);
+    free(p->previous);
+    p->msgs = m;
+    p->len = msgs->len;
+    p->previous = prev;
+    p->turn = turn;
+    p->repeats = repeats;
+}
+
 /*
  * The ReAct cycle (D5). Each turn sends the whole conversation; the
  * assistant's message goes back exactly as it came (providers attach data
@@ -2536,7 +2586,18 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
     const char *previous = NULL;
     int repeats = 0;
     cx_value *result = NULL;
-    for (long turn = 0;; turn++) {
+    long first = 0;
+    pthread_mutex_lock(&x->mu);
+    agent_progress *saved = agent_find(x, base);
+    if (saved) {
+        first = saved->turn;
+        repeats = saved->repeats;
+        previous = saved->previous ? fmt(a, "%s", saved->previous) : NULL;
+        msgs.len = 0;
+        cx_buf_put(&msgs, saved->msgs, saved->len);
+    }
+    pthread_mutex_unlock(&x->mu);
+    for (long turn = first;; turn++) {
         if (turn >= (long)max_turns) {
             result = agent_limit(c, e, "on_turn_limit", model, prompt, base, &msgs,
                                  "You reached the limit of turns. Do not call tools anymore: "
@@ -2667,6 +2728,9 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
             result = PENDING;
             break;
         }
+        pthread_mutex_lock(&x->mu);
+        agent_save(x, base, turn + 1, &msgs, previous, repeats);
+        pthread_mutex_unlock(&x->mu);
     }
     cx_buf_free(&msgs);
     return result;
@@ -3127,6 +3191,14 @@ done:
     free(x->io_arenas);
     free(x->io);
     free(x->ptab);
+    for (size_t i = 0; i < 256; i++)
+        for (agent_progress *p = x->agents[i], *next; p; p = next) {
+            next = p->next;
+            free(p->key);
+            free(p->msgs);
+            free(p->previous);
+            free(p);
+        }
     free(x->cancelled);
     cx_buf_free(&msg);
     cx_buf_free(&x->err);
