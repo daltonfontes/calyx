@@ -1036,21 +1036,8 @@ impl Parser<'_> {
                     return self.for_each(name);
                 }
             }
-            let mut value = self.expr()?;
-            if self.kind() == TokenKind::Colon {
-                // `x = tool(...):` or `x = try tool(...):`, then `requires` lines.
-                match value.kind {
-                    ExprKind::Call { .. } => value = self.requires_block(value)?,
-                    ExprKind::Try(inner) if matches!(inner.kind, ExprKind::Call { .. }) => {
-                        let guarded = self.requires_block(*inner)?;
-                        value = Expr {
-                            span: self.span_from(value.span),
-                            kind: ExprKind::Try(Box::new(guarded)),
-                        };
-                    }
-                    kind => value.kind = kind,
-                }
-            }
+            let value = self.expr()?;
+            let value = self.with_requires(value)?;
             return Ok(Stmt::Node {
                 name,
                 fan_out: None,
@@ -1141,7 +1128,8 @@ impl Parser<'_> {
             let value = if self.at_for_each() {
                 self.each_expr()?
             } else {
-                self.expr()?
+                let value = self.expr()?;
+                self.with_requires(value)?
             };
             if self.tokens[self.pos.saturating_sub(1)].kind != TokenKind::Dedent {
                 self.end_of_line()?;
@@ -1445,12 +1433,15 @@ impl Parser<'_> {
             return Ok((self.expr()?, false));
         }
         self.expect(TokenKind::Indent, "an indented line")?;
-        let e = self.expr()?;
-        self.eat(TokenKind::Newline);
+        // `name = value` steps, in order, then what the branch gives.
+        let e = self.turn_body()?;
+        if self.tokens[self.pos.saturating_sub(1)].kind != TokenKind::Dedent {
+            self.eat(TokenKind::Newline);
+        }
         if self.kind() != TokenKind::Dedent {
             return Err(self.error_here(
                 "E0108",
-                "this block holds a single expression",
+                "a block is its steps (`name = value`), then the value it gives",
                 "the end of the block",
             ));
         }
@@ -1789,6 +1780,26 @@ impl Parser<'_> {
                 args,
             })),
         })
+    }
+
+    /// After a step's value: `x = tool(...):` or `x = try tool(...):`, then
+    /// `requires` lines. Anything else is returned as it is.
+    fn with_requires(&mut self, mut value: Expr) -> PResult<Expr> {
+        if self.kind() != TokenKind::Colon {
+            return Ok(value);
+        }
+        match value.kind {
+            ExprKind::Call { .. } => value = self.requires_block(value)?,
+            ExprKind::Try(inner) if matches!(inner.kind, ExprKind::Call { .. }) => {
+                let guarded = self.requires_block(*inner)?;
+                value = Expr {
+                    span: self.span_from(value.span),
+                    kind: ExprKind::Try(Box::new(guarded)),
+                };
+            }
+            kind => value.kind = kind,
+        }
+        Ok(value)
     }
 
     /// `call:` followed by indented `requires condition` lines (D29).
