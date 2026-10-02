@@ -59,6 +59,14 @@ da tool, e o compilador deve exigi-lo**:
 > interrompida sem refazer trabalho nem repetir efeitos, sem código de
 > recuperação escrito pelo programador.
 
+Os mecanismos de runtime para isso já existem: diário por chamada
+(Temporal, Restate), chave de idempotência e conferir antes de repetir
+(Mansoor et al., 2026). E há evidência independente de que a garantia de
+efeito único depende do contrato da tool, não do modelo: no benchmark LIMBO
+(2026), oferecer uma chave de idempotência em toda escrita baixa a duplicação
+de 28% para 4%, e nas falhas que uma releitura não resolve (commit atrasado,
+reentrega) só o contrato resolve. O que falta é quem **exija** o contrato.
+
 Contribuições:
 
 1. Uma linguagem de workflows de agentes (seção 3) em que o grafo de
@@ -69,7 +77,9 @@ Contribuições:
    deixar escritas sem ordem, esperar para sempre ou repetir um pagamento a
    cada volta de um laço.
 3. Um runtime (seção 5) com diário por chamada, que retoma sem refazer
-   trabalho e leva a chave de idempotência até o servidor da tool.
+   trabalho e leva a chave de idempotência até o servidor da tool. Os
+   mecanismos não são novos; o que é novo é o compilador exigir as
+   declarações que eles usam.
 4. Uma avaliação (seção 6) contra LangGraph e Temporal, que inclui a matriz
    completa de quedas, esperas com prazo, memória compartilhada, custo do
    runtime e um estudo de bugs reais, com os resultados desfavoráveis.
@@ -361,36 +371,54 @@ modelo prometeu ações que não fez.
 
 ## 8. Trabalhos relacionados
 
+*Levantamento e limitações em [`relacionados.md`](relacionados.md): os
+artigos foram lidos pelos resumos da busca, e cada afirmação abaixo precisa
+ser conferida no texto antes da submissão.*
+
+**Efeitos duplicados em agentes.** O LIMBO ("Where Does Exactly-Once
+Live?", 2026) mede, em 25.930 episódios com 9 modelos e 3 harnesses, onde
+deve morar a garantia de efeito único, e conclui que, nas falhas que uma
+releitura não resolve, ela depende do contrato da tool. Mansoor et al.
+(2026) propõem um wrapper de tool com verificação de pós-condição,
+*verify-before-retry* e chave de idempotência, o mesmo mecanismo do
+`on_uncertain verify(...)` e da `idempotency_key` da Calyx, como biblioteca
+opcional. A Calyx parte da mesma conclusão e torna o contrato obrigatório e
+conferido pelo compilador. As anotações de tools do MCP (`readOnlyHint`,
+`destructiveHint`, `idempotentHint`) descrevem o mesmo vocabulário como dicas
+para o cliente; a Calyx o exige na declaração.
+
+**Verificação estática de agentes.** O Agentproof (2026) extrai um grafo
+abstrato de LangGraph, CrewAI, AutoGen e Google ADK e confere propriedades
+estruturais e políticas temporais; o IAL-Scan (2026) acha laços infinitos em
+projetos reais de agentes; o AgentFlow (2026) analisa dependências entre
+prompts e tools. Esses trabalhos analisam programas escritos em frameworks
+existentes, e conferem estrutura, ordem de nós ou terminação; a Calyx confere
+o contrato dos efeitos externos, que nesses frameworks não está escrito em
+lugar nenhum.
+
+**Cálculos e linguagens para programas com LLM.** O λ_A (2026) dá um cálculo
+lambda tipado para composição de agentes, com segurança de tipos e terminação
+provadas em Coq; modela chamadas de tool como efeito, sem distinguir as
+repetíveis das irreversíveis. O LLMbda (Garby, Gordon e Sands, 2026) trata
+fluxo de informação e injeção de prompt. Pangolin (Tan et al., 2025) e Wang
+(2025) usam efeitos algébricos para compor chamadas a LLM e paralelizá-las.
+A formalização das regras de efeito da Calyx (**[falta]**, seção 4) pode
+partir do λ_A, estendendo-o com efeitos externos e recuperação.
+
 **Frameworks de agentes.** O ReAct (Yao et al., 2022) intercala raciocínio e
 ação num laço decidido pelo modelo; a Calyx o oferece como um construto
 (`agent`) com limites obrigatórios. O AutoGen (Wu et al., 2023) organiza
-agentes em conversas; o fluxo emerge da conversa e é difícil de prever. O DSPy
-(Khattab et al., 2023) compila pipelines de módulos tipados otimizando os
-prompts, mas não a estrutura, e o grafo não é analisável antes de rodar. O
-LangGraph torna o grafo explícito e oferece checkpoints por passo; a Calyx
-compara diretamente com ele na seção 6.
+agentes em conversas; o DSPy (Khattab et al., 2023) otimiza os prompts de
+pipelines tipados; o AgentSPEX (Wang et al., 2026) descreve workflows em YAML
+com checkpoints; o LangGraph torna o grafo explícito e grava checkpoints por
+passo.
 
-**Linguagens de especificação de workflows.** O AgentSPEX (Wang et al., 2026)
-descreve workflows de agentes em YAML, separados do código, com checkpoints e
-retomada; não tem tipos de verdade nem efeitos declarados. A Calyx parte da
-mesma motivação (tirar o controle e o estado de dentro do Python) e acrescenta
-o que o compilador pode conferir.
-
-**Otimização e execução de grafos de agentes.** O levantamento de Yue et al.
-(2026) organiza o vocabulário de grafos de computação de agentes e o que se
-otimiza neles; o GraphFlow (Li et al., 2026) otimiza a execução de grafos de
-agentes no servidor. A Calyx é ortogonal: não otimiza o grafo, confere os
-efeitos dele.
-
-**Execução durável.** O Temporal registra cada passo num histórico e reexecuta
-o workflow de forma determinística sobre ele; *activities* com efeitos devem
-ser idempotentes, o que fica a cargo do programador. A Calyx empata com o
-Temporal na recuperação quando o cuidado é escrito (seção 6.2) e se diferencia
-por exigi-lo.
-
-**[falta]** Sistemas de efeitos e tipos para recursos (efeitos algébricos,
-tipos afins para os empréstimos da sandbox), idempotência em sistemas
-distribuídos, e *sagas*; citar com cuidado o que de fato se relaciona.
+**Execução durável.** O Temporal e o Restate registram cada passo num diário e
+retomam sem refazê-lo; o AWS Durable Execution SDK deixa o programador
+escolher, por passo, entre *at-least-once* e *at-most-once*. Nos três, a
+idempotência de um efeito externo é responsabilidade do programador. A Calyx
+empata com o Temporal na recuperação quando o cuidado é escrito (seção 6.2) e
+se diferencia por exigi-lo.
 
 ## 9. Conclusão
 
@@ -401,5 +429,6 @@ escreve o cuidado, e a Calyx exige que ele seja escrito**. O custo é baixo
 palavras a mais. A parte mais fraca da avaliação é a que mais importa para a
 tese: se o compilador pega, antes de rodar, os bugs que programadores reais
 cometem. O corpus diz que sim, mas foi escrito pelo autor; as issues públicas
-não dizem nem que sim nem que não. O E4 e um estudo com programadores são o
-próximo passo.
+não dizem nem que sim nem que não. O E4, um estudo com programadores e
+rodar a Calyx no LIMBO, um benchmark de efeitos duplicados feito por outros
+autores, são o próximo passo.
