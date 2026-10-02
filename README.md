@@ -169,7 +169,7 @@ command = ["python3", "tools/fake_search.py"]   # relativo ao calyx.toml
 | `runtime/rs` | A camada de E/S em Rust que o interpretador chama: modelos por HTTPS, tools por MCP, `calyx.toml`; e o verificador exposto ao C. Tudo sai numa biblioteca estática só |
 | `tests/programs/` | Programas de teste com os diagnósticos esperados (`.expected`) e a representação intermediária esperada (`.ir`) |
 | `tests/state_bugs/` | A medida Q2: workflows com um bug de estado conhecido cada, e quem o pega (compilador, runtime ou ninguém) |
-| `examples/` | Programas de exemplo. `research.clyx`, `agent.clyx`, `refund.clyx`, `fix.clyx`, `memory.clyx`, `approval.clyx`, `debate.clyx`, `race.clyx` e `router.clyx` passam na verificação e rodam; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
+| `examples/` | Programas de exemplo. `research.clyx`, `agent.clyx`, `refund.clyx`, `fix.clyx`, `memory.clyx`, `approval.clyx`, `debate.clyx`, `race.clyx`, `router.clyx` e `atendimento.clyx` (atendimento ao cliente, juntando quase tudo) passam na verificação e rodam; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
 
 ## Plano de implementação
 

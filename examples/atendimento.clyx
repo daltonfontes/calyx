@@ -1,0 +1,158 @@
+# Atendimento ao cliente, juntando o que a Calyx tem:
+#
+# - triagem pelo modelo barato, com tipo: o `match` cobre todo caso;
+# - dúvidas: um agente que consulta a base de conhecimento e o pedido
+#   (só ferramentas de leitura: um agente não pode pagar nem mandar e-mail);
+# - reembolso: o modelo propõe, uma pessoa aprova com prazo (`receive`),
+#   o pagamento leva chave de idempotência e o e-mail só sai depois dele;
+# - memória do cliente entre conversas (`entity`), uma mudança por vez.
+#
+# Nada aqui diz o que roda em paralelo, nem o que fazer depois de uma queda:
+# a busca do pedido, a memória e a triagem saem juntas porque não dependem
+# uma da outra, e uma execução interrompida continua de onde parou.
+#
+#   calyx run examples/atendimento.clyx --fake-models --cliente ana --pedido A100 \
+#       --mensagem "Como troco o endereço de entrega?"
+#   calyx run examples/atendimento.clyx --fake-models --cliente ana --pedido A100 \
+#       --mensagem "Chegou quebrado, quero o dinheiro de volta [Reembolso]"
+#   calyx deliver <id> Approval Approved && calyx resume <id> --fake-models
+#
+# (Com `--fake-models`, a triagem escolhe o caso escrito entre colchetes.)
+
+model rapido = "gemini-3.5-flash-lite"
+model bom = "gemini-3.5-flash":
+    max_output 2000 tokens
+
+type Status = Pending | Delivered | Cancelled
+
+type Order:
+    id: Text
+    customer: Text
+    email: Text
+    total: Float
+    refunded: Float
+    status: Status
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+type Intent = Duvida | Reembolso | Reclamacao
+
+type Proposal:
+    amount: Float
+    reason: Text
+
+message Approval = Approved | Denied(reason: Text)
+
+# Ferramentas (servidores MCP, ligados no calyx.toml). O efeito de cada uma
+# é declarado; o compilador confere cada uso contra ele.
+tool get_order(id: Text) -> Order:
+    effect read
+    max_output 500 tokens
+    description "Dados de um pedido: cliente, total, situação."
+
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 2000 tokens
+    description "Busca na base de conhecimento do atendimento."
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    checks OrderState
+
+tool email_sent(to: Text, subject: Text) -> Bool:
+    effect read
+
+tool email(to: Text, subject: Text, body: Text) -> Unit:
+    effect write once
+    timeout 10 s
+    on_uncertain verify(email_sent(to, subject))
+
+# Memória de cada cliente, fora das execuções.
+entity Cliente(key id: Text):
+    state conversas: Nat = 0
+    state ultimas: List[Text] = []
+
+    on Historico() -> List[Text]:
+        return ultimas
+
+    on Registrar(mensagem: Text):
+        next conversas = conversas + 1
+        next ultimas = ultimas + [mensagem]
+
+prompt classificar(mensagem: Text) -> Intent:
+    """
+    Mensagem do cliente: {mensagem}
+
+    Classifique: dúvida, pedido de reembolso ou reclamação.
+    """
+
+prompt responder(mensagem: Text, pedido: Order, historico: List[Text]) -> Text:
+    """
+    Você atende clientes de uma loja. Use a base de conhecimento quando
+    precisar e responda em poucas frases, com educação.
+
+    Pedido: {pedido}
+    Conversas anteriores: {historico}
+    Mensagem: {mensagem}
+    """
+
+prompt propor(pedido: Order, mensagem: Text) -> Proposal:
+    """
+    O cliente pede reembolso do pedido {pedido} por causa de: {mensagem}.
+    Proponha um valor (no máximo o que falta reembolsar) e o motivo.
+    """
+
+prompt acalmar(mensagem: Text, historico: List[Text]) -> Text:
+    """
+    Responda a esta reclamação reconhecendo o problema, sem prometer o que
+    não depende de você. Conversas anteriores: {historico}
+
+    {mensagem}
+    """
+
+# Reembolso: só paga com aprovação de uma pessoa, em até 2 dias.
+graph reembolsar(chamado: Text, pedido: Order, mensagem: Text) -> Text:
+    proposta = bom(propor(pedido, mensagem))
+    aprovacao = receive Approval, timeout 2 days:
+        on timeout: Denied(reason="ninguém aprovou em 2 dias")
+    return match aprovacao:
+        case Approved: pagar(chamado, pedido, proposta.amount)
+        case Denied(reason): avisar(pedido, "Não pudemos reembolsar agora: {reason}.")
+
+graph pagar(chamado: Text, pedido: Order, valor: Float) -> Text:
+    pago = refund(chamado, pedido.id, valor):
+        requires state.status == Delivered
+        requires state.refunded + valor <= state.total
+    aviso = email(pedido.email, "Reembolso do pedido {pedido.id}", "Reembolsamos {valor}.")
+    aviso after pago
+    return "reembolso de {valor} feito e avisado"
+
+graph avisar(pedido: Order, texto: Text) -> Text:
+    aviso = email(pedido.email, "Seu pedido {pedido.id}", texto)
+    return texto
+
+graph atender(cliente: Text, pedido: Text, mensagem: Text) -> Text:
+    limits budget 0.10 USD
+
+    encontrado = get_order(pedido)
+    historico = ask Cliente(cliente).Historico()
+    intencao = rapido(classificar(mensagem))
+
+    resposta = match intencao:
+        case Duvida:
+            agent bom:
+                tools [web_search, get_order]
+                max_turns 6
+                task responder(mensagem, encontrado, historico)
+                on turn_limit: final_answer
+                on stuck: final_answer
+        case Reembolso: reembolsar("{cliente}/{pedido}", encontrado, mensagem)
+        case Reclamacao: bom(acalmar(mensagem, historico))
+
+    registro = send Cliente(cliente).Registrar(mensagem)
+    registro after resposta
+    return resposta

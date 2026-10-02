@@ -322,7 +322,16 @@ fn fake_value(schema: &Value, summary: &str, n: usize) -> Value {
         return fake_value(chosen, summary, n);
     }
     if let Some(options) = schema["enum"].as_array() {
-        return options.first().cloned().unwrap_or(Value::Null);
+        // The same rule for variants without fields.
+        return options
+            .iter()
+            .find(|o| {
+                o.as_str()
+                    .is_some_and(|k| summary.contains(&format!("[{k}]")))
+            })
+            .or(options.first())
+            .cloned()
+            .unwrap_or(Value::Null);
     }
     match schema["type"].as_str() {
         Some("string") => json!(format!("item falso {} ({summary})", n + 1)),
