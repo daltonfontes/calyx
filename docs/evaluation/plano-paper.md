@@ -117,7 +117,7 @@ segundo aparecem atribuídos a um passo no diário.
    Calyx empata com a do Temporal e a do LangGraph `sync` com cuidado
    manual. A tese passa a ser "o compilador exige o contrato do efeito".
    Falta medir o tempo de retomada contra o Temporal com *heartbeats*.
-2. **E4 com um portador externo** dos 54 bugs: com a recuperação empatada no
+2. **E4 com um portador externo** dos 54 bugs (kit pronto em [`bench/e4_porting/`](../../bench/e4_porting/README.md); falta a pessoa): com a recuperação empatada no
    teto, os bugs que o compilador recusa viram o resultado central. As
    issues públicas não servem para isso (o compilador não pegou nenhuma);
    uma alternativa é um estudo com programadores escrevendo os workflows.
