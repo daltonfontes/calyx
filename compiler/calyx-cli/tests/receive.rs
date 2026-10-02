@@ -25,6 +25,14 @@ graph approve(request: Text) -> Text:
         case Approved: "aprovado: {proposal}"
         case Denied(reason): "recusado ({reason})"
 
+graph about(request: Text) -> Text:
+    proposal = m(propose(request))
+    approval = receive Approval about proposal, timeout 3 days:
+        on timeout: Denied(reason="sem resposta")
+    return match approval:
+        case Approved: "aprovado: {proposal}"
+        case Denied(reason): "recusado ({reason})"
+
 graph quick(request: Text) -> Text:
     approval = receive Approval, timeout 1 s:
         on timeout: Denied(reason="prazo vencido")
@@ -155,6 +163,38 @@ fn tick_resumes_runs_whose_deadline_passed() {
     assert_eq!(text(&out.stdout), "recusado (prazo vencido)\n");
     assert!(text(&out.stderr).contains(&format!("resuming {id}")));
     assert!(text(&d.calyx(&["runs"]).stdout).contains("finished"));
+}
+
+#[test]
+fn a_wait_says_what_it_is_about() {
+    let d = Dir::new("about");
+    let out = d.calyx(&[
+        "run",
+        "p.clyx",
+        "--graph",
+        "about",
+        "--fake-models",
+        "--request",
+        "reembolso",
+    ]);
+    assert_eq!(out.status.code(), Some(4), "{}", text(&out.stderr));
+    let err = text(&out.stderr);
+    // The proposal comes first; then the wait, which shows it.
+    let proposed = err.find("propose").unwrap();
+    let waiting = err.find("recv  Approval  waiting").unwrap();
+    assert!(proposed < waiting, "{err}");
+    assert!(
+        err.contains("`Approval` is about: \"[resposta falsa"),
+        "{err}"
+    );
+    let id = err
+        .lines()
+        .find_map(|l| l.strip_prefix("calyx: run "))
+        .unwrap()
+        .to_owned();
+    let waits =
+        std::fs::read_to_string(d.0.join(".calyx/runs").join(&id).join("waits.jsonl")).unwrap();
+    assert!(waits.contains("\"about\":\"[resposta falsa"), "{waits}");
 }
 
 #[test]

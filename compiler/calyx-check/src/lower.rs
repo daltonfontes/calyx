@@ -327,6 +327,7 @@ impl Lower<'_> {
             ExprKind::Bool(b) => ir::Expr::Bool(*b),
             ExprKind::Receive {
                 message,
+                about,
                 timeout,
                 on_timeout,
             } => {
@@ -344,6 +345,7 @@ impl Lower<'_> {
                 };
                 ir::Expr::Receive {
                     message: message.name.clone(),
+                    about: about.as_ref().map(|a| Box::new(self.expr(a, scope))),
                     timeout_s: seconds,
                     on_timeout: Box::new(match on_timeout {
                         Some(v) => self.expr(v, scope),

@@ -139,6 +139,8 @@ pub struct Wait {
     pub until: f64,
     /// A message was delivered to it and the run has not taken it yet.
     pub delivered: bool,
+    /// What the message is about (`receive M about value`), if anything.
+    pub about: Option<Value>,
 }
 
 fn jsonl(path: &Path) -> Vec<Value> {
@@ -173,6 +175,7 @@ pub fn waits(id: &str) -> Vec<Wait> {
                 delivered: inbox.contains(&key),
                 message: w["message"].as_str().unwrap_or("?").to_owned(),
                 until: w["until"].as_f64().unwrap_or(0.0),
+                about: w.get("about").cloned(),
                 key,
             })
         })

@@ -2229,6 +2229,13 @@ static cx_value *call_receive(ctx *c, cx_value *e) {
         if (replay) return fatalf(c, "replay: `receive %s` is not in the journal", msg);
     }
     if (!x->run_dir) return failf(c, "`receive %s` needs a journal (run without --no-journal)", msg);
+    /* `about`: what the message is about. The wait starts once it exists,
+     * so the deadline does not run while, say, the proposal is written. */
+    cx_value *about = NULL;
+    if (cx_get(e, "about")) {
+        about = eval(c, cx_get(e, "about"));
+        if (!about || about == PENDING) return about;
+    }
 
     cx_value *u = keyed_line(c, "waits.jsonl", key, "until");
     double until = u && u->kind == CX_NUM ? u->u.num : -1;
@@ -2254,7 +2261,12 @@ static cx_value *call_receive(ctx *c, cx_value *e) {
         cx_buf_json_str(&line, key, strlen(key));
         cx_buf_puts(&line, ",\"message\":");
         cx_buf_json_str(&line, msg, strlen(msg));
-        cx_buf_printf(&line, ",\"until\":%.0f}", until);
+        cx_buf_printf(&line, ",\"until\":%.0f", until);
+        if (about) {
+            cx_buf_puts(&line, ",\"about\":");
+            cx_write(&line, about);
+        }
+        cx_buf_putc(&line, '}');
         char path[2200];
         snprintf(path, sizeof path, "%s/waits.jsonl", x->run_dir);
         int bad = append_line(path, line.data, line.len) != 0;

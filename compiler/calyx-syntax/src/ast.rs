@@ -354,8 +354,12 @@ pub enum ExprKind {
     Bool(bool),
     /// `receive Message, timeout 3 days:` then `on timeout: value`: waits,
     /// durably, for a message from outside the run (decision D21).
+    /// `about value` is what the message is about (a proposal to approve):
+    /// the wait starts once it exists, and it is written down with the wait
+    /// for whoever answers.
     Receive {
         message: Ident,
+        about: Option<Box<Expr>>,
         timeout: Option<Box<Expr>>,
         on_timeout: Option<Box<Expr>>,
     },

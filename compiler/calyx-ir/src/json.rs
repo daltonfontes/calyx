@@ -399,15 +399,23 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
         // Journaled like a call, so it gets an id after what it contains.
         Expr::Receive {
             message,
+            about,
             timeout_s,
             on_timeout,
         } => {
+            let mut a = String::new();
+            if let Some(about) = about {
+                expr(&mut a, about, ids);
+            }
             let mut v = String::new();
             expr(&mut v, on_timeout, ids);
             let id = *ids;
             *ids += 1;
             o.push_str(&format!("{{\"k\":\"receive\",\"id\":{id},\"message\":"));
             string(o, message);
+            if !a.is_empty() {
+                o.push_str(&format!(",\"about\":{a}"));
+            }
             o.push_str(&format!(",\"timeout_s\":{timeout_s},\"on_timeout\":{v}}}"));
         }
         Expr::Let { slot, value, body } => {

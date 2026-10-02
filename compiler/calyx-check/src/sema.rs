@@ -84,6 +84,11 @@ type HandlerSig = (String, Vec<(String, Ty)>, Option<Ty>);
 struct EntitySig {
     key: Ty,
     handlers: Vec<HandlerSig>,
+    /// Handlers that apply a change rather than set a new value: each
+    /// update that uses the message also uses the field's current value
+    /// (`next n = n + x`, `next xs = xs + [x]`). A send to one of these
+    /// loses no other run's update, whatever its arguments came from.
+    changes: HashSet<String>,
 }
 
 /// A pure function (decision D27).
@@ -580,7 +585,24 @@ impl<'p> Cx<'_, 'p> {
             }
             handlers.push((h.name.name.clone(), params, ret));
         }
-        EntitySig { key, handlers }
+        let changes = e
+            .handlers
+            .iter()
+            .filter(|h| {
+                let params: HashSet<String> =
+                    h.params.iter().map(|p| p.name.name.clone()).collect();
+                h.updates.iter().all(|(field, value)| {
+                    !mentions_any(value, &params)
+                        || mentions_any(value, &HashSet::from([field.name.clone()]))
+                })
+            })
+            .map(|h| h.name.name.clone())
+            .collect();
+        EntitySig {
+            key,
+            handlers,
+            changes,
+        }
     }
 
     /// An entity's state and handlers. Handlers are pure: they compute
@@ -735,6 +757,7 @@ impl<'p> Cx<'_, 'p> {
     fn receive(
         &mut self,
         message: &Ident,
+        about: Option<&Expr>,
         timeout: Option<&Expr>,
         on_timeout: Option<&Expr>,
         span: Span,
@@ -799,10 +822,11 @@ impl<'p> Cx<'_, 'p> {
                 }
             }
         }
+        let effect = about.map_or(Effect::Read, |a| self.expr(a, gc).effect.join(Effect::Read));
         Typed {
             ty,
             kind: NodeKind::Other(format!("receive {}", message.name)),
-            effect: Effect::Read,
+            effect,
         }
     }
 
@@ -1994,11 +2018,20 @@ impl<'p> Cx<'_, 'p> {
     /// between, and one of the two updates is lost. The computation belongs
     /// in a handler, which sees the current state (decision D15).
     fn lost_updates(&mut self, locals: &[Local], deps: &[Vec<usize>]) {
+        let changes: HashSet<(String, String)> = self
+            .entities
+            .iter()
+            .flat_map(|(e, s)| s.changes.iter().map(|h| (e.to_string(), h.clone())))
+            .collect();
         let messages = |e: &Expr, send: bool| {
             let mut out: Vec<(String, Span)> = Vec::new();
             visit(e, &mut |x| {
                 if let ExprKind::Message(m) = &x.kind
                     && m.send == send
+                    // A handler that applies a change sees the current
+                    // state: nothing is lost (see `EntitySig::changes`).
+                    && !(send
+                        && changes.contains(&(m.entity.name.clone(), m.handler.name.clone())))
                 {
                     out.push((m.entity.name.clone(), x.span));
                 }
@@ -2185,10 +2218,12 @@ impl<'p> Cx<'_, 'p> {
             ExprKind::Race(r) => self.race(r, e.span, gc),
             ExprKind::Receive {
                 message,
+                about,
                 timeout,
                 on_timeout,
             } => self.receive(
                 message,
+                about.as_deref(),
                 timeout.as_deref(),
                 on_timeout.as_deref(),
                 e.span,
@@ -3546,9 +3581,13 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
                 }
             }
             ExprKind::Receive {
-                on_timeout: Some(v),
-                ..
-            } => walk(v, f),
+                about, on_timeout, ..
+            } => {
+                about
+                    .iter()
+                    .chain(on_timeout.iter())
+                    .for_each(|v| walk(v, f));
+            }
             ExprKind::Block { .. } | ExprKind::Each { .. } | ExprKind::Race(_) => {
                 m9_kids(e).into_iter().for_each(|k| walk(k, f))
             }
@@ -3622,7 +3661,13 @@ fn visit(e: &Expr, f: &mut dyn FnMut(&Expr)) {
             .into_iter()
             .flatten()
             .collect(),
-        ExprKind::Receive { on_timeout, .. } => on_timeout.as_deref().into_iter().collect(),
+        ExprKind::Receive {
+            about, on_timeout, ..
+        } => about
+            .iter()
+            .chain(on_timeout.iter())
+            .map(|b| b.as_ref())
+            .collect(),
         ExprKind::Block { .. } | ExprKind::Each { .. } | ExprKind::Race(_) => m9_kids(e),
         _ => Vec::new(),
     };
@@ -3815,8 +3860,10 @@ fn collect_refs(e: &Expr, bound: Option<&str>, index: &HashMap<&str, usize>, out
             let hidden = index.get(var.name.as_str()).copied();
             out.extend(inner.into_iter().filter(|i| Some(*i) != hidden));
         }
-        ExprKind::Receive { on_timeout, .. } => {
-            if let Some(v) = on_timeout {
+        ExprKind::Receive {
+            about, on_timeout, ..
+        } => {
+            for v in about.iter().chain(on_timeout.iter()) {
                 collect_refs(v, bound, index, out);
             }
         }
