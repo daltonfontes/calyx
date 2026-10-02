@@ -106,6 +106,29 @@ graph g(x: Text) -> Text:
 }
 
 #[test]
+fn a_branch_runs_its_steps_in_order() {
+    let body = r#"
+graph g(x: Text) -> Text:
+    r = m(review(x))
+    return match r:
+        case Approved:
+            first = m(echo(x))
+            second = m(echo("depois de " + first))
+            second
+        case Rejected(feedback):
+            why = "rejeitado: " + feedback
+            why
+"#;
+    let out = go(body, json!({"x": "ok"})).unwrap();
+    assert_eq!(
+        out,
+        json!("[resposta falsa para: depois de [resposta falsa para: ok]]")
+    );
+    let out = go(body, json!({"x": "[Rejected] não"})).unwrap();
+    assert_eq!(out, json!("rejeitado: item falso 1 ([Rejected] não)"));
+}
+
+#[test]
 fn a_review_loop_rewrites_until_approved() {
     let body = r#"
 graph g(x: Text) -> Text:

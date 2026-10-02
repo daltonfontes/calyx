@@ -114,26 +114,23 @@ prompt acalmar(mensagem: Text, historico: List[Text]) -> Text:
     {mensagem}
     """
 
-# Reembolso: só paga com aprovação de uma pessoa, em até 2 dias.
+# Reembolso: só paga com aprovação de uma pessoa, em até 2 dias. Os passos
+# de um ramo rodam na ordem do texto: o e-mail só sai depois do pagamento.
 graph reembolsar(chamado: Text, pedido: Order, mensagem: Text) -> Text:
     proposta = bom(propor(pedido, mensagem))
     aprovacao = receive Approval about proposta, timeout 2 days:
         on timeout: Denied(reason="ninguém aprovou em 2 dias")
     return match aprovacao:
-        case Approved: pagar(chamado, pedido, proposta.amount)
-        case Denied(reason): avisar(pedido, "Não pudemos reembolsar agora: {reason}.")
-
-graph pagar(chamado: Text, pedido: Order, valor: Float) -> Text:
-    pago = refund(chamado, pedido.id, valor):
-        requires state.status == Delivered
-        requires state.refunded + valor <= state.total
-    aviso = email(pedido.email, "Reembolso do pedido {pedido.id}", "Reembolsamos {valor}.")
-    aviso after pago
-    return "reembolso de {valor} feito e avisado"
-
-graph avisar(pedido: Order, texto: Text) -> Text:
-    aviso = email(pedido.email, "Seu pedido {pedido.id}", texto)
-    return texto
+        case Approved:
+            pago = refund(chamado, pedido.id, proposta.amount):
+                requires state.status == Delivered
+                requires state.refunded + proposta.amount <= state.total
+            aviso = email(pedido.email, "Reembolso do pedido {pedido.id}", "Reembolsamos {proposta.amount}.")
+            "reembolso de {proposta.amount} feito e avisado"
+        case Denied(reason):
+            texto = "Não pudemos reembolsar agora: {reason}."
+            aviso = email(pedido.email, "Seu pedido {pedido.id}", texto)
+            texto
 
 graph atender(cliente: Text, pedido: Text, mensagem: Text) -> Text:
     limits budget 0.10 USD

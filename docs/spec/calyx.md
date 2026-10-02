@@ -290,7 +290,7 @@ match expr:
 `match` precisa cobrir todas as variantes (ou ter `case _`). **Passos de um ramo não escolhido nunca rodam** (D32).
 
 - Os nomes de um `case` ligam os campos **pela posição**, como no Python: `case Rejected(f)` liga o primeiro campo a `f`; `_` ignora um campo. Um nome não pode esconder outro (parâmetro, passo ou nome de um `case` de fora).
-- Cada ramo é uma expressão, na mesma linha ou indentada; todos dão o mesmo tipo.
+- Cada ramo é uma expressão na mesma linha, ou um bloco indentado: passos (`nome = valor`, cada um vendo os anteriores, com `requires` depois de uma chamada a tool) e, por último, o valor do ramo. Os passos de um ramo rodam **na ordem do texto**: um e-mail escrito depois de um pagamento só sai depois dele. Todos os ramos dão o mesmo tipo. O mesmo vale para `if` e `else`.
 - `if` exige `else` (é uma expressão: sempre dá um valor). A condição é um `Bool`.
 
 **Operadores:** `+ - * /` para números (e `Money`, `Duration`); `+` também junta textos e listas; `== !=` para valores do mesmo tipo; `< <= > >=` para números, dinheiro, durações e textos; `and`, `or`, `not` para `Bool` (`and`/`or` não avaliam o lado direito quando não precisam). Parênteses agrupam.
