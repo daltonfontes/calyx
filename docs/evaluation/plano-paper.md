@@ -49,7 +49,7 @@ real.
 | W4 | Debate em rodadas (`rounds`) | Barreira, paralelismo dentro da rodada | A fazer |
 | W5 | Agente de código numa sandbox (`examples/fix.clyx`) | Empréstimos, snapshots, queda no meio de uma edição | A fazer |
 | W6 | Corrida entre estratégias e roteador de modelos | Cancelamento, custo | A fazer |
-| W7 | Memória entre execuções (entidades) com execuções simultâneas | Atualização perdida, exactly-once por mensagem | A fazer |
+| W7 | Memória entre execuções (entidades) com execuções simultâneas | Atualização perdida, exactly-once por mensagem | ✅ feito: 3 cenários. Calyx 3/3; LangGraph *Store* 0/3; com cuidado manual, 3/3 |
 
 ## 3. Baselines
 
@@ -122,7 +122,7 @@ segundo aparecem atribuídos a um passo no diário.
    issues públicas não servem para isso (o compilador não pegou nenhuma);
    uma alternativa é um estudo com programadores escrevendo os workflows.
    O aviso para `write once` dentro de laço (`W0605`) já existe.
-3. ~~W3~~ (feito) e W7, que exercitam o que nenhum baseline faz por padrão.
+3. ~~W3 e W7~~ (feitos): nos dois, como na W2, os baselines só acertam com cuidado manual.
 4. E2 até 10⁵ itens, e a otimização da reavaliação se ela aparecer.
 5. W4 a W6 e o E1 com modelo real.
 6. Texto: introdução com o caso do pagamento, que é o exemplo mais claro do

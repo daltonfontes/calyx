@@ -11,6 +11,7 @@ o plano de avaliação para o paper, em
 | `w1_fanout/` | N perguntas → busca + resumo de cada → relatório. Tempo com modelo de 1 s por chamada (N = 5, 20, 50) e custo por item sem latência (N = 10 a 10.000) | Q1 |
 | `w2_recovery/` | Reembolso (pedido → decisão → pagamento → resposta → e-mail) contra a loja falsa (MCP), em Calyx, LangGraph, Temporal e Python. O processo morre em 6 pontos (depois de cada passo registrado e com cada efeito em andamento) e é retomado; contamos pagamentos, e-mails e chamadas de modelo | Q3 |
 | `w3_approval/` | Reembolso com aprovação humana e prazo de 3 s, em Calyx (`receive`), LangGraph (`interrupt()`) e Temporal (*signal* com timeout). 6 cenários com o processo parado durante a espera: resposta em dobro, atrasada, no prazo com retomada depois | Q3 |
+| `w7_memory/` | Memória de um usuário (entidade na Calyx, *Store* no LangGraph) com 20 execuções ao mesmo tempo e quedas entre gravar a memória e registrar isso | Q3 |
 | `q2_bugs/` | 16 bugs do corpus Q2 (`tests/state_bugs/`) em Python + LangGraph, com tipos. Onde cada um aparece: pyright, mypy, ao rodar, ou em lugar nenhum | Q2 |
 | `real_bugs/` | 79 issues públicas de LangGraph, CrewAI e AutoGen, classificadas pelo que a Calyx faria (`classify.py`), e os programas que conferem os casos a favor dela (`run_verify.py`). Resultados em [`docs/evaluation/bugs-reais.md`](../docs/evaluation/bugs-reais.md) | Q2 |
 | `common/fakes.py` | O que as versões em Python dividem com as da Calyx: o modelo falso (mesma latência, mesma resposta), a busca falsa e um cliente MCP para a mesma loja | — |
@@ -26,6 +27,7 @@ export TEMPORAL_BIN=$(which temporal)        # a CLI do Temporal; sem ela, a W2 
 python3 bench/run_w1.py      # ~10 min; bench/results/w1.json  (--quick: ~1 min)
 python3 bench/run_w2.py      # ~12 min; bench/results/w2.json (sobe o servidor do Temporal sozinho)
 python3 bench/run_w3.py      # ~2 min;  bench/results/w3.json (sobe o servidor do Temporal sozinho)
+python3 bench/run_w7.py      # ~30 s;  bench/results/w7.json
 python3 bench/run_q2.py      # ~1 min;  bench/results/q2.json
 python3 bench/real_bugs/classify.py      # contagens do estudo de bugs reais
 python3 bench/real_bugs/run_verify.py    # ~5 s; bench/results/real_bugs_verify.json

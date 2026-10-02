@@ -13,6 +13,7 @@ crus, em `bench/results/`.
 |---|---|---|---|
 | **Q3: recuperação com efeitos externos** (W2, 6 pontos de queda) | 6 de 6 certos, sem código de recuperação | Temporal e LangGraph `sync`: 4 de 6; 6 de 6 só com cuidado manual. LangGraph no padrão: 3 de 6 | **A diferença é o padrão, não o teto:** com cuidado manual os baselines empatam; na Calyx o cuidado é obrigatório |
 | **Espera por humano com prazo** (W3, 6 cenários com o processo parado) | 6 de 6 (5 de 6 antes de corrigir um bug que a W3 achou) | Temporal: 5 de 6; LangGraph: 3 de 6 (sem prazo); com cuidado manual, 6 de 6 | Mesmo padrão da W2: a diferença é o padrão, não o teto |
+| **Memória compartilhada** (W7, execuções simultâneas e quedas) | 3 de 3 | LangGraph *Store*: 0 de 3 (perde atualizações em metade das rodadas, repete sempre na retomada); com cuidado manual, 3 de 3 | Idem: com cuidado manual empata; na Calyx é o padrão |
 | **Q2: bugs antes de rodar** (14 bugs que a Calyx pega) | 14 de 14 | pyright + mypy: 2 de 14; LangGraph para 3 ao rodar, 2 depois do dano | Forte, mas o corpus foi escrito por quem fez o compilador |
 | **Bugs reais** (44 issues de LangGraph, CrewAI, AutoGen; [`bugs-reais.md`](bugs-reais.md)) | Dos 15 de workflow: evita 7 (runtime 5, construção 2), deixa passar 8; compilador: 0 | — (29 dos 44 são bugs dos próprios frameworks) | Issues relatam o framework errando, não o programador: não confirmam a Q2. Achada uma lacuna (`write once` em laço), que virou o aviso `W0605` |
 | **Q1: paralelismo** (W1) | A 30–50 ms do limite teórico | asyncio à mão: a 80–95 ms; LangGraph: +0,8 s | Empate com asyncio. O ganho é não escrever o paralelismo, não ser mais rápido |
@@ -159,6 +160,43 @@ Em todos, uma chamada de modelo só (a proposta não é refeita na retomada).
 O que a W3 mostra é o mesmo padrão da W2: **com cuidado manual todos
 acertam; a diferença é o padrão.** Na Calyx o prazo é obrigatório (`E0671`)
 e a regra de quando uma resposta vale fica no runtime, não em cada programa.
+
+## W7: memória compartilhada entre execuções
+
+Um turno de conversa: `lembrar a memória do usuário → responder (modelo) →
+extrair 3 fatos (modelo) → somar os fatos à memória e contar a conversa`.
+Cada execução é um processo, como quando chegam juntos vários pedidos do
+mesmo usuário. Na Calyx, a memória é uma entidade (`ask`/`send`); no
+LangGraph, o *Store* (SQLite), do jeito que a documentação mostra:
+`store.get`, juntar, `store.put`. A queda é o `kill -9` logo depois de a
+memória ser gravada e antes de a execução registrar isso (na Calyx,
+`CALYX_CRASH_IN_SEND`; no LangGraph, antes do checkpoint do nó); depois a
+execução é retomada.
+
+"Cuidado manual" no LangGraph: nada de ler, mudar e gravar; cada fato é um
+item com chave tirada do id da mensagem, então duas execuções nunca gravam
+por cima uma da outra e uma mensagem repetida grava as mesmas chaves.
+
+| Cenário | Calyx | LangGraph (Store) | LangGraph + cuidado manual |
+|---|---|---|---|
+| 20 execuções juntas | ✅ 20 conversas, 60 fatos | ❌ às vezes: 17 conversas, 9 fatos perdidos (na rodada do harness) | ✅ |
+| Queda depois de gravar, e retomada | ✅ 1 conversa, 3 fatos | ❌ 2 conversas, 3 fatos repetidos | ✅ |
+| 10 juntas, todas caem e são retomadas | ✅ 10 conversas, 30 fatos | ❌ 20 conversas, 30 fatos repetidos | ✅ |
+
+- **Execuções simultâneas perdem atualizações** no LangGraph sem cuidado: duas
+  leem a mesma memória e a última a gravar apaga o que a outra somou. **Não
+  acontece sempre:** em 6 rodadas, 3 saíram certas e 3 perderam de 1 a 3
+  conversas (com seus fatos). É o pior tipo de bug, o que passa nos testes.
+  A Calyx acertou em todas.
+- **A retomada repete a memória:** o nó que gravou é refeito, porque o
+  checkpoint dele não chegou a ser escrito. A documentação do LangGraph pede
+  nós idempotentes; o *Store* não ajuda a fazer isso.
+- **Na Calyx não há o que escrever:** a entidade aplica uma mudança por vez
+  por chave (`flock`) e cada mensagem uma vez só (o id dela fica gravado com
+  o estado), e o compilador avisa quando um programa lê a entidade e manda
+  de volta um valor calculado com o que leu (`W0603`).
+- O tempo não é comparável: no LangGraph, cada processo paga a subida do
+  Python e das bibliotecas.
 
 ## Q2: bugs de estado antes de rodar
 
