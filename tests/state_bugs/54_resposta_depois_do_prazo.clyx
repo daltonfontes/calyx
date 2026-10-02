@@ -1,0 +1,16 @@
+# Bug: A resposta chega depois do prazo, mas antes de alguém retomar a execução, e é aceita: o reembolso sai depois que o prazo venceu (achado na W3).
+# Pego por: runtime
+model m = "m"
+
+message Approval = Approved | Denied(reason: Text)
+
+tool refund(request: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+
+graph g(request: Text) -> Text:
+    approval = receive Approval, timeout 3 days:
+        on timeout: Denied(reason="sem resposta no prazo")
+    return match approval:
+        case Approved: "aprovado"
+        case Denied(reason): "recusado: {reason}"

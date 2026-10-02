@@ -158,6 +158,37 @@ fn tick_resumes_runs_whose_deadline_passed() {
 }
 
 #[test]
+fn an_answer_after_the_deadline_is_not_taken() {
+    // The deadline passes while nothing runs: the answer that comes next is
+    // late, even though the run has not taken its `on timeout` yet.
+    let d = Dir::new("late");
+    let id = d.start("quick", &["--request", "x"]);
+    std::thread::sleep(std::time::Duration::from_millis(1600));
+    let out = d.calyx(&["deliver", &id, "Approval", "Approved"]);
+    assert!(!out.status.success());
+    assert!(
+        text(&out.stderr).contains("deadline"),
+        "{}",
+        text(&out.stderr)
+    );
+
+    // An inbox line written some other way, with a late time, is not taken
+    // either: the run goes on with `on timeout`.
+    let run_dir = d.0.join(".calyx/runs").join(&id);
+    let waits = std::fs::read_to_string(run_dir.join("waits.jsonl")).unwrap();
+    let wait: serde_json::Value = serde_json::from_str(waits.lines().next().unwrap()).unwrap();
+    let late = serde_json::json!({
+        "key": wait["key"], "message": "Approval", "value": {"kind": "Approved"},
+        "at": wait["until"].as_f64().unwrap() + 1.0,
+    });
+    std::fs::write(run_dir.join("inbox.jsonl"), format!("{late}\n")).unwrap();
+    let out = d.calyx(&["resume", &id, "--fake-models"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout), "recusado (prazo vencido)\n");
+    assert!(text(&out.stderr).contains("after the deadline"));
+}
+
+#[test]
 fn parallel_receives_take_deliveries_oldest_first() {
     let d = Dir::new("survey");
     let id = d.start("survey", &["--people", r#"["ana","bia"]"#]);

@@ -455,7 +455,7 @@ approval = receive Approval, timeout 3 days:
 
 - Só tipos declarados com `message` (`E0670`). `timeout` e `on timeout` são obrigatórios: uma execução nunca espera para sempre (`E0671`, `E0672`).
 - **A execução para de verdade:** quando nada mais pode rodar, ela sai com o estado `waiting` (código 4). O prazo absoluto (agora + `timeout`) é gravado uma vez em `waits.jsonl`, no diretório da execução: vale mesmo se a máquina reiniciar.
-- `calyx deliver <id> Approval '<json>'` confere a mensagem contra o tipo e a entrega ao `receive` mais antigo que espera por ela (`inbox.jsonl`). Só para execuções que estão esperando.
+- `calyx deliver <id> Approval '<json>'` confere a mensagem contra o tipo e a entrega ao `receive` mais antigo que espera por ela (`inbox.jsonl`, com a hora da entrega). Só para execuções que estão esperando, e só **antes do prazo**: o prazo é a hora em que a resposta tinha de chegar, não a hora em que a execução é retomada. Uma resposta que chega depois é recusada mesmo que ninguém tenha retomado a execução ainda, e o runtime confere a hora de novo ao tomar a mensagem.
 - `calyx resume <id>` continua; `calyx tick` continua toda execução que recebeu mensagem ou cujo prazo venceu, e foi feito para rodar num agendador (cron): **não há servidor**. Vencido o prazo, o valor é o de `on timeout`.
 - O que o `receive` recebeu (ou o valor de `on timeout`) vai para o diário: a retomada e o `replay` não precisam da mensagem de novo. Precisa de diário (não roda com `--no-journal`).
 

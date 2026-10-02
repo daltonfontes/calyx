@@ -45,7 +45,7 @@ real.
 |---|---|---|---|
 | W1 | Pesquisa com fan-out (N perguntas → busca + resumo → relatório) | Paralelismo derivado, escala | ✅ feito |
 | W2 | Reembolso com pagamento e e-mail | Efeitos externos, recuperação | ✅ feito: 6 pontos de queda × 9 sistemas, com o Temporal |
-| W3 | Aprovação humana com prazo (`receive`) | Espera durável, prazo que sobrevive a reinício | A fazer; baseline: `interrupt()` do LangGraph, signals do Temporal |
+| W3 | Aprovação humana com prazo (`receive`) | Espera durável, prazo que sobrevive a reinício | ✅ feito: 6 cenários × 5 sistemas. Calyx 6/6 (depois de corrigir um bug que a W3 achou), Temporal 5/6, LangGraph 3/6; com cuidado manual, 6/6 |
 | W4 | Debate em rodadas (`rounds`) | Barreira, paralelismo dentro da rodada | A fazer |
 | W5 | Agente de código numa sandbox (`examples/fix.clyx`) | Empréstimos, snapshots, queda no meio de uma edição | A fazer |
 | W6 | Corrida entre estratégias e roteador de modelos | Cancelamento, custo | A fazer |
@@ -79,7 +79,7 @@ W7), matar o processo:
 Contar efeitos duplicados, efeitos perdidos, chamadas de modelo refeitas e
 casos que pedem decisão humana. No LangGraph e no Temporal, os mesmos pontos.
 
-**E4, corpus de bugs (A1).** Os 53 bugs de `tests/state_bugs/` portados para
+**E4, corpus de bugs (A1).** Os 54 bugs de `tests/state_bugs/` portados para
 Python + LangGraph **por outra pessoa**, com tipos e com pyright e mypy no
 modo estrito. Para cada bug, classificar onde ele aparece: antes de rodar,
 ao rodar (com ou sem dano) ou em lugar nenhum. ✅ Bugs reais de issues
@@ -117,12 +117,12 @@ segundo aparecem atribuídos a um passo no diário.
    Calyx empata com a do Temporal e a do LangGraph `sync` com cuidado
    manual. A tese passa a ser "o compilador exige o contrato do efeito".
    Falta medir o tempo de retomada contra o Temporal com *heartbeats*.
-2. **E4 com um portador externo** dos 53 bugs: com a recuperação empatada no
+2. **E4 com um portador externo** dos 54 bugs: com a recuperação empatada no
    teto, os bugs que o compilador recusa viram o resultado central. As
    issues públicas não servem para isso (o compilador não pegou nenhuma);
    uma alternativa é um estudo com programadores escrevendo os workflows.
    O aviso para `write once` dentro de laço (`W0605`) já existe.
-3. W3 e W7, que exercitam o que nenhum baseline faz por padrão.
+3. ~~W3~~ (feito) e W7, que exercitam o que nenhum baseline faz por padrão.
 4. E2 até 10⁵ itens, e a otimização da reavaliação se ela aparecer.
 5. W4 a W6 e o E1 com modelo real.
 6. Texto: introdução com o caso do pagamento, que é o exemplo mais claro do

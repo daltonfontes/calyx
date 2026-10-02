@@ -12,6 +12,7 @@ crus, em `bench/results/`.
 | Pergunta | Calyx | Melhor baseline | Conclusão |
 |---|---|---|---|
 | **Q3: recuperação com efeitos externos** (W2, 6 pontos de queda) | 6 de 6 certos, sem código de recuperação | Temporal e LangGraph `sync`: 4 de 6; 6 de 6 só com cuidado manual. LangGraph no padrão: 3 de 6 | **A diferença é o padrão, não o teto:** com cuidado manual os baselines empatam; na Calyx o cuidado é obrigatório |
+| **Espera por humano com prazo** (W3, 6 cenários com o processo parado) | 6 de 6 (5 de 6 antes de corrigir um bug que a W3 achou) | Temporal: 5 de 6; LangGraph: 3 de 6 (sem prazo); com cuidado manual, 6 de 6 | Mesmo padrão da W2: a diferença é o padrão, não o teto |
 | **Q2: bugs antes de rodar** (14 bugs que a Calyx pega) | 14 de 14 | pyright + mypy: 2 de 14; LangGraph para 3 ao rodar, 2 depois do dano | Forte, mas o corpus foi escrito por quem fez o compilador |
 | **Bugs reais** (44 issues de LangGraph, CrewAI, AutoGen; [`bugs-reais.md`](bugs-reais.md)) | Dos 15 de workflow: evita 7 (runtime 5, construção 2), deixa passar 8; compilador: 0 | — (29 dos 44 são bugs dos próprios frameworks) | Issues relatam o framework errando, não o programador: não confirmam a Q2. Achada uma lacuna (`write once` em laço), que virou o aviso `W0605` |
 | **Q1: paralelismo** (W1) | A 30–50 ms do limite teórico | asyncio à mão: a 80–95 ms; LangGraph: +0,8 s | Empate com asyncio. O ganho é não escrever o paralelismo, não ser mais rápido |
@@ -107,6 +108,58 @@ a do Temporal, 101 (41 do fluxo + 60 do workflow e do worker); o "cuidado manual
 linhas em cada. Linhas de código são uma métrica fraca aqui. O ponto é
 outro: as 3 linhas são **opcionais** no Python e **obrigatórias** na Calyx.
 
+## W3: aprovação humana com prazo
+
+O mesmo reembolso, agora com uma pessoa aprovando: `pedido → decisão
+(modelo) → espera pela resposta (prazo de 3 s) → paga e manda e-mail, ou
+manda a recusa`. Na Calyx, a espera é um `receive` com `timeout`; no
+LangGraph, um `interrupt()` num nó só dele, como a documentação recomenda;
+no Temporal, um *signal* com `wait_condition(..., timeout=...)`. Em todos os
+cenários **o processo termina enquanto a execução espera**, e os passos
+seguintes são feitos do jeito que cada sistema oferece: entregar a resposta
+(`calyx deliver`, `Command(resume=...)`, o *signal*) e continuar pelo
+agendador (`calyx tick`, um worker do Temporal; o LangGraph não tem prazo,
+então só a versão com cuidado manual tem o que fazer).
+
+"Cuidado manual" é o que um programador atento escreve: no LangGraph, o
+prazo guardado no estado, uma rotina que retoma as threads vencidas, e a
+resposta carimbada com a hora em que chegou; no Temporal, o carimbo da hora
+no *signal* e a comparação com o prazo dentro do workflow.
+
+| Cenário | Calyx | LangGraph | LangGraph + cuidado | Temporal | Temporal + cuidado |
+|---|---|---|---|---|---|
+| Aprovada | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Prazo vence com tudo parado | ✅ | ❌ espera para sempre | ✅ | ✅ | ✅ |
+| Resposta em dobro | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Resposta atrasada, depois da recusa | ✅ | ❌ paga | ✅ | ✅ | ✅ |
+| Resposta atrasada, antes da retomada | ✅ \* | ❌ paga | ✅ | ❌ paga | ✅ |
+| Resposta no prazo, retomada depois | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Total** | **6 de 6** | 3 de 6 | 6 de 6 | 5 de 6 | 6 de 6 |
+
+Em todos, uma chamada de modelo só (a proposta não é refeita na retomada).
+
+- **O LangGraph não tem prazo para um `interrupt()`.** Sem código a mais, a
+  execução espera para sempre, e uma resposta de qualquer hora é aceita. O
+  cuidado manual resolve, com uma rotina agendada escrita à mão.
+- **O Temporal tem prazo de verdade** (o timer roda no servidor, sem
+  worker), mas tem um caso sutil: se nenhum worker estava rodando quando o
+  prazo venceu, o timer e uma resposta atrasada chegam juntos ao próximo
+  worker, e o SDK entrega os *signals* antes dos timers. A resposta atrasada
+  vale e o pagamento sai.
+- **\* A Calyx tinha o mesmo bug**, e a W3 o achou: o `calyx deliver`
+  aceitava uma resposta depois do prazo enquanto ninguém tinha rodado o
+  `tick`, e a retomada a tomava. Agora o `deliver` recusa a resposta atrasada,
+  a entrega guarda a hora em que chegou e o runtime confere essa hora contra
+  o prazo (teste `an_answer_after_the_deadline_is_not_taken`). Antes da
+  correção, a Calyx fazia 5 de 6, como o Temporal.
+- **A resposta em dobro não pegou ninguém:** a Calyx e o Temporal recusam a
+  segunda entrega quando a execução já terminou, e o LangGraph ignora um
+  `resume` numa thread terminada.
+
+O que a W3 mostra é o mesmo padrão da W2: **com cuidado manual todos
+acertam; a diferença é o padrão.** Na Calyx o prazo é obrigatório (`E0671`)
+e a regra de quando uma resposta vale fica no runtime, não em cada programa.
+
 ## Q2: bugs de estado antes de rodar
 
 16 bugs do corpus (`tests/state_bugs/`, mesmo número) reescritos em Python +
@@ -142,7 +195,7 @@ sem o bug. Para cada um: aparece no pyright ou no mypy? Ao rodar? Causa dano?
   Ficam no corpus de propósito.
 - **Viés de seleção:** os 14 primeiros foram escolhidos entre os que a Calyx
   pega, para ver o que o Python faz com eles. A taxa da Calyx no corpus
-  inteiro é **35 de 53**, não 14 de 14. O plano do paper pede o corpus
+  inteiro é **35 de 54**, não 14 de 14. O plano do paper pede o corpus
   inteiro portado por outra pessoa e bugs tirados de issues reais. O estudo
   das issues está em [`bugs-reais.md`](bugs-reais.md): o compilador não pegou
   nenhum dos 44, porque as issues relatam erros dos frameworks, não do

@@ -180,7 +180,10 @@ pub fn waits(id: &str) -> Vec<Wait> {
 }
 
 /// Delivers `value` to the oldest `receive` of `message` the run waits on.
-/// Returns its key.
+/// Returns its key. A message that comes after the deadline is refused,
+/// even if the run has not taken its `on timeout` yet: the deadline is when
+/// the answer had to arrive, not when the run happens to be resumed. The
+/// time of delivery goes with the message, and the runtime checks it too.
 pub fn deliver(id: &str, message: &str, value: &Value) -> Result<String, String> {
     let Some(w) = waits(id)
         .into_iter()
@@ -190,8 +193,17 @@ pub fn deliver(id: &str, message: &str, value: &Value) -> Result<String, String>
             "run `{id}` is not waiting for `{message}` (`calyx runs` shows what runs wait for)"
         ));
     };
-    let line =
-        serde_json::json!({"key": w.key, "message": message, "value": value}).to_string() + "\n";
+    let at = now();
+    if w.until > 0.0 && at >= w.until {
+        return Err(format!(
+            "the deadline for `{message}` at `{}` passed at {}: the run continues with `on timeout` (`calyx resume {id}` or `calyx tick`)",
+            w.key,
+            utc(w.until)
+        ));
+    }
+    let line = serde_json::json!({"key": w.key, "message": message, "value": value, "at": at})
+        .to_string()
+        + "\n";
     use std::io::Write;
     let mut f = std::fs::OpenOptions::new()
         .create(true)

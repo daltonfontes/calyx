@@ -1,0 +1,302 @@
+[
+ {
+  "scenario": "aprovada",
+  "system": "calyx",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "aprovada",
+  "system": "langgraph",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "aprovada",
+  "system": "langgraph + cuidado manual",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "aprovada",
+  "system": "temporal",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "aprovada",
+  "system": "temporal + cuidado manual",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "prazo vence com tudo parado",
+  "system": "calyx",
+  "payments": 0,
+  "emails": 1,
+  "outcome": "recusado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "prazo vence com tudo parado",
+  "system": "langgraph",
+  "payments": 0,
+  "emails": 0,
+  "outcome": "nenhum",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": false
+ },
+ {
+  "scenario": "prazo vence com tudo parado",
+  "system": "langgraph + cuidado manual",
+  "payments": 0,
+  "emails": 1,
+  "outcome": "recusado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "prazo vence com tudo parado",
+  "system": "temporal",
+  "payments": 0,
+  "emails": 1,
+  "outcome": "recusado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "prazo vence com tudo parado",
+  "system": "temporal + cuidado manual",
+  "payments": 0,
+  "emails": 1,
+  "outcome": "recusado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta em dobro",
+  "system": "calyx",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta em dobro",
+  "system": "langgraph",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta em dobro",
+  "system": "langgraph + cuidado manual",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta em dobro",
+  "system": "temporal",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta em dobro",
+  "system": "temporal + cuidado manual",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta atrasada, depois da recusa",
+  "system": "calyx",
+  "payments": 0,
+  "emails": 1,
+  "outcome": "recusado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta atrasada, depois da recusa",
+  "system": "langgraph",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": false
+ },
+ {
+  "scenario": "resposta atrasada, depois da recusa",
+  "system": "langgraph + cuidado manual",
+  "payments": 0,
+  "emails": 1,
+  "outcome": "recusado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta atrasada, depois da recusa",
+  "system": "temporal",
+  "payments": 0,
+  "emails": 1,
+  "outcome": "recusado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta atrasada, depois da recusa",
+  "system": "temporal + cuidado manual",
+  "payments": 0,
+  "emails": 1,
+  "outcome": "recusado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta atrasada, antes da retomada",
+  "system": "calyx",
+  "payments": 0,
+  "emails": 1,
+  "outcome": "recusado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta atrasada, antes da retomada",
+  "system": "langgraph",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": false
+ },
+ {
+  "scenario": "resposta atrasada, antes da retomada",
+  "system": "langgraph + cuidado manual",
+  "payments": 0,
+  "emails": 1,
+  "outcome": "recusado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta atrasada, antes da retomada",
+  "system": "temporal",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": false
+ },
+ {
+  "scenario": "resposta atrasada, antes da retomada",
+  "system": "temporal + cuidado manual",
+  "payments": 0,
+  "emails": 1,
+  "outcome": "recusado",
+  "expected": "recusado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta no prazo, retomada depois",
+  "system": "calyx",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta no prazo, retomada depois",
+  "system": "langgraph",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta no prazo, retomada depois",
+  "system": "langgraph + cuidado manual",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta no prazo, retomada depois",
+  "system": "temporal",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ },
+ {
+  "scenario": "resposta no prazo, retomada depois",
+  "system": "temporal + cuidado manual",
+  "payments": 1,
+  "emails": 1,
+  "outcome": "aprovado",
+  "expected": "aprovado",
+  "llm_calls": 1,
+  "correct": true
+ }
+]

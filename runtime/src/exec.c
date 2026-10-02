@@ -2205,13 +2205,22 @@ static cx_value *call_receive(ctx *c, cx_value *e) {
     }
     if (!x->run_dir) return failf(c, "`receive %s` needs a journal (run without --no-journal)", msg);
 
-    cx_value *delivered = keyed_line(c, "inbox.jsonl", key, "value");
-    if (delivered) {
-        trace(x, c->label, "recv  %s  delivered", msg);
-        return received(c, key, delivered, 0);
-    }
     cx_value *u = keyed_line(c, "waits.jsonl", key, "until");
     double until = u && u->kind == CX_NUM ? u->u.num : -1;
+    cx_value *delivered = keyed_line(c, "inbox.jsonl", key, "value");
+    if (delivered) {
+        /* What counts is when the message arrived, not when the run is
+         * resumed: one that came after the deadline is not taken (`calyx
+         * deliver` refuses it already; this covers an inbox written by hand
+         * or by an older version, which have no time and are taken). */
+        cx_value *at = keyed_line(c, "inbox.jsonl", key, "at");
+        if (until >= 0 && at && at->kind == CX_NUM && at->u.num >= until) {
+            trace(x, c->label, "recv  %s  delivered after the deadline: not taken", msg);
+        } else {
+            trace(x, c->label, "recv  %s  delivered", msg);
+            return received(c, key, delivered, 0);
+        }
+    }
     double t = (double)time(NULL);
     if (until < 0) {
         until = t + cx_get_num(e, "timeout_s", 0);
