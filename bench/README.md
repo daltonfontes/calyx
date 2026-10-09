@@ -28,6 +28,9 @@ export TEMPORAL_BIN=$(which temporal)        # a CLI do Temporal; sem ela, a W2 
 
 python3 bench/run_w1.py      # ~10 min; bench/results/w1.json  (--quick: ~1 min)
 python3 bench/run_w2.py      # ~12 min; bench/results/w2.json (sobe o servidor do Temporal sozinho)
+# Com o Gemini real (chave em GEMINI_API_KEY; pausas para o limite do plano gratuito):
+python3 bench/run_w1_real.py # ~30 min; bench/results/w1_real.json
+python3 bench/run_w2.py --real  # ~20 min; bench/results/w2_real.json
 python3 bench/run_w3.py      # ~2 min;  bench/results/w3.json (sobe o servidor do Temporal sozinho)
 python3 bench/run_w7.py      # ~30 s;  bench/results/w7.json
 python3 bench/run_e2.py      # ~10 min; bench/results/e2.json

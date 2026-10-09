@@ -324,6 +324,60 @@ manda a conversa inteira ao modelo. Com as 6 a 20 voltas de um agente comum,
 o custo é de milissegundos. O fan-out dentro de `rounds` (`for each` numa
 expressão) também foi medido e é linear: 0,023 ms por item até 100.000.
 
+## W1 e W2 com um modelo real (Gemini)
+
+Os dois experimentos rodaram de novo com `gemini-3.5-flash-lite` no lugar
+do modelo falso, em todos os sistemas. Os baselines em Python chamam o mesmo
+endpoint (compatível com a OpenAI) que o runtime da Calyx, com as mesmas
+novas tentativas. A chave de teste tem limite de requisições por minuto. Por
+isso:
+- no W1, N fica em 5 e 10;
+- no W1, há 65 s de pausa entre rodadas, e a ordem dos sistemas muda a cada
+  repetição;
+- no W2, há 12 s de pausa entre rodadas.
+
+Nenhuma rodada precisou de nova tentativa. Os scripts são
+`bench/run_w1_real.py` e `bench/run_w2.py --real`; os dados estão em
+`bench/results/w1_real.json` e `w2_real.json`.
+
+**W1, tempo total, mediana de 3 repetições (mínimo e máximo):**
+
+| Sistema | N = 5 | N = 10 |
+|---|---|---|
+| **Calyx** | **5,1 s** (4,6–5,6) | **6,1 s** (5,7–6,6) |
+| Python asyncio | 5,2 s (5,2–5,7) | 6,4 s (6,2–8,2) |
+| LangGraph | 7,3 s (6,2–9,5) | 8,1 s (6,9–10,2) |
+| Python sequencial | 10,6 s (10,0–11,1) | 17,3 s (16,8–19,6) |
+
+O resultado com o modelo falso se mantém. A Calyx empata com o asyncio
+escrito à mão. O LangGraph fica 2 s atrás, quase tudo inicialização. O
+sequencial cresce com N. A variância do provedor (1 a 2 s entre repetições)
+é da mesma ordem que as diferenças entre Calyx e asyncio, que continuam
+sendo um empate.
+
+**W2, 6 pontos de queda, certos (1 pagamento, 1 e-mail, retomada sem erro):**
+
+| Sistema | Certos | Com cuidado manual |
+|---|---|---|
+| **Calyx** | **6/6**, sem refazer chamada de modelo | — |
+| Temporal | 4/6 | 6/6 |
+| LangGraph `durability="sync"` | 4/6 | 6/6 |
+| LangGraph padrão | 3/6, e refaz 2 chamadas de modelo | 6/6 |
+| Python sem checkpoint | 2/6, e refaz até 2 chamadas | 6/6 |
+
+São os mesmos números do modelo falso, caso a caso. As retomadas da Calyx
+levam de 0,03 s a 2,7 s. As do Temporal levam de 11 s a 16 s, com os
+timeouts padrão.
+
+**O que o modelo real não mostrou.** Um modelo real pode responder outra
+coisa quando é chamado de novo. Um sistema que refaz a chamada depois da
+queda poderia então pagar um valor e escrever no e-mail outro. O harness
+confere isso (`consistent`: o valor pago é o do e-mail). Neste cenário,
+porém, o Gemini propôs o reembolso total (300) todas as vezes; conferimos
+com 5 chamadas à parte. Então nenhuma incoerência apareceu, e a medida não
+distinguiu os sistemas. Para mostrar o risco, seria preciso um pedido cuja
+resposta varie de verdade.
+
 ## O que a comparação mostra e o que não mostra
 
 **Mostra:**
@@ -341,7 +395,9 @@ expressão) também foi medido e é linear: 0,023 ms por item até 100.000.
 
 **Não mostra:**
 
-- **Resultados com modelos reais.** Os modelos são falsos, com latência fixa.
+- **Resultados com modelos reais em escala.** W1 e W2 foram repetidos com o
+  Gemini (seção acima), mas com N pequeno, por causa do limite da chave de
+  teste, e com um modelo que deu sempre a mesma resposta no W2.
 - **Versões escritas por outras pessoas.** O mesmo autor escreveu todas as
   versões e o corpus de bugs.
 - **Tempo de retomada justo contra o Temporal** (com *heartbeats* e timeouts

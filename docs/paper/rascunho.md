@@ -269,6 +269,10 @@ teórico (⌈N/8⌉+1 s), o asyncio escrito à mão a 80–95 ms e o LangGraph a
 ~5× mais barato por item (a Calyx faz uma chamada MCP de verdade por item),
 e o LangGraph chega a 7 ms por item e cresce.
 
+Com o Gemini real (N = 5 e 10, 3 repetições), o quadro se mantém. A Calyx
+empata com o asyncio (5,1 s contra 5,2 s; 6,1 s contra 6,4 s, em mediana), o
+LangGraph leva 2 s a mais e o sequencial cresce com N (17 s com N = 10).
+
 O E2 achou um custo cúbico no número de voltas de um agente: a cada resposta
 de uma chamada, o passo do agente era reavaliado desde a primeira volta. A
 correção guarda o progresso do agente entre avaliações (400 voltas: de 70 s
@@ -290,6 +294,10 @@ e-mail e nenhuma chamada de modelo refeita.
 | Python sem checkpoint | 2/6 | 6/6 |
 
 *Tabela 3: W2, recuperação depois de `kill -9`.*
+
+Com o Gemini real no lugar do modelo falso, os números são os mesmos, caso
+a caso. As retomadas da Calyx levam até 2,7 s, e as do Temporal, de 11 s a
+16 s.
 
 Entre passos, Temporal e LangGraph `sync` acertam como a Calyx. Com um efeito
 em andamento, nenhum registro por passo resolve: é preciso o contrato do
@@ -451,7 +459,10 @@ Ficaram duas, sem correção:
   ou esquecer a chave (20 de 20 no LIMBO), mas não a chave que o serviço
   ignora (0 de 8), e só vale para servidores que mandam anotações.
 - **Modelos falsos.** A latência fixa isola o runtime e esconde a variância
-  dos provedores. **[falta]** Repetir W1 e W2 com um modelo real.
+  dos provedores. W1 e W2 foram repetidos com o Gemini, e os resultados se
+  mantiveram, mas com N pequeno (5 e 10), por causa do limite da chave de
+  teste. No W2, o modelo deu sempre a mesma resposta, então o risco de uma
+  resposta diferente depois da queda não foi exercitado.
 - **Um computador só, sem rede real**, e versões que mudam rápido: fixamos as
   versões e reportamos os dois modos de durabilidade do LangGraph.
 - **Estudo de bugs reais:** leitura das issues por resumo, um classificador
