@@ -60,7 +60,7 @@ def run(cmd: list[str], latency_ms: int) -> tuple[float, int]:
     calls = 0
     for line in out.stderr.splitlines():
         if line.startswith("llm_calls="):
-            calls = int(line.split("=")[1])
+            calls = int(line.split()[0].split("=")[1])
     return dt, calls
 
 

@@ -4,3 +4,4 @@ __pycache__/
 w1_fanout/research_*.clyx
 .temporal.db*
 real_bugs/verify/.store.json
+w2_recovery/refund_real.clyx

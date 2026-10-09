@@ -11,11 +11,12 @@ step starts: the steps before it finished.
 """
 import json
 import os
+import re
 import sys
 from typing import TypedDict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from common.fakes import Mcp, llm  # noqa: E402
+from common.fakes import MODEL, Mcp, llm  # noqa: E402
 
 store = Mcp("examples/tools/fake_store.py")
 
@@ -42,8 +43,15 @@ def get_order(s: State) -> State:
 
 def decide(s: State) -> State:
     crash_point("decide")
-    llm(f"Proponha um reembolso para {s['order']} por causa de: {s['message']}")
-    return {"amount": 1.5}  # what the fake model proposes in Calyx too
+    prompt = f"Proponha um reembolso para {s['order']} por causa de: {s['message']}"
+    if not MODEL:
+        llm(prompt)
+        return {"amount": 1.5}  # what the fake model proposes in Calyx too
+    # A real model: the same question, answered as JSON (Calyx sends the
+    # prompt's type as a schema; here it is asked for in words).
+    text = llm(prompt + '\nResponda só com JSON: {"amount": número, "reason": texto}')
+    m = re.search(r"\{.*\}", text, re.S)
+    return {"amount": float(json.loads(m.group(0))["amount"])}
 
 
 def refund(s: State, careful: bool) -> State:
@@ -64,5 +72,6 @@ def email(s: State, careful: bool) -> State:
     to, subject = s["order"]["email"], f"Reembolso do pedido {s['order_id']}"
     if careful and store.call("email_sent", {"to": to, "subject": subject}) == "true":
         return {"result": "já enviado"}
-    store.call("email", {"to": to, "subject": subject, "body": f"{s['body']} {s['message']}"})
+    body = f"{s['body']} {s['message']} (valor {s['amount']})"
+    store.call("email", {"to": to, "subject": subject, "body": body})
     return {"result": f"reembolso de {s['amount']} enviado para {to}"}
