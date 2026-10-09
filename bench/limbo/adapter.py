@@ -16,7 +16,9 @@ What this file adds, and nothing else:
   finds (empty if nothing). Where LIMBO's docs say a listing lags (weibo up
   to 3 min, the Sent folder up to 2 min), it waits that long first;
 - `refund`: the docs say refunding a refunded charge returns 409; that
-  answer means the refund is done.
+  answer means the refund is done;
+- `tools/list` passes on the MCP annotations LIMBO gives the tool each one
+  calls (`readOnlyHint`, `idempotentHint`, ...), for `calyx check --tools`.
 
 Environment: LIMBO_PORT, LIMBO_TOKEN (from the driver).
 """
@@ -35,15 +37,19 @@ class Fail(Exception):
         self.text = text
 
 
-def limbo(name: str, args: dict) -> dict:
+def post(path: str, body: dict) -> dict:
     req = urllib.request.Request(
-        f"http://127.0.0.1:{os.environ['LIMBO_PORT']}/tools/call",
-        data=json.dumps({"name": name, "arguments": args}).encode(),
+        f"http://127.0.0.1:{os.environ['LIMBO_PORT']}{path}",
+        data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json", "X-Limbo-Token": os.environ["LIMBO_TOKEN"]},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=60) as r:
-        obs = json.loads(r.read().decode())["observation"]
+        return json.loads(r.read().decode())
+
+
+def limbo(name: str, args: dict) -> dict:
+    obs = post("/tools/call", {"name": name, "arguments": args})["observation"]
     if obs.get("ok"):
         return obs.get("result") or {}
     err = obs.get("error") or {}
@@ -184,6 +190,32 @@ TOOLS = {f.__name__: f for f in (
 TOOLS["publish_keyed"] = publish
 TOOLS["publish_x"] = publish_unit
 
+# The LIMBO tool each one calls: its MCP annotations are passed on as theirs.
+WRAPS = {
+    "publish": "social_publish", "publish_keyed": "social_publish", "publish_x": "social_publish",
+    "charge": "billing_create_charge", "refund": "billing_refund_charge", "create_ticket": "tickets_create",
+    "comment": "tickets_add_comment", "set_status": "tickets_update_status", "send_mail": "mail_send",
+    "insert_row": "db_insert", "insert_rows": "db_insert_many", "upsert": "db_upsert", "deploy": "deploy_trigger",
+    "wait": "wait", "status_after": "deploy_get_run", "posts_with": "social_list_posts",
+    "tickets_titled": "tickets_list_recent", "has_comment": "tickets_get", "mails_sent": "mail_search_sent",
+    "rows_with": "db_query", "runs_of": "deploy_list_runs",
+}
+
+
+def tool_list() -> list:
+    """Every tool, with LIMBO's annotations where this episode's task has the tool it calls."""
+    try:
+        hints = {t["name"]: t.get("annotations") for t in post("/tools/list", {})["tools"]}
+    except Exception:
+        hints = {}
+    out = []
+    for name in TOOLS:
+        entry = {"name": name, "inputSchema": {"type": "object"}}
+        if hints.get(WRAPS.get(name)) is not None:
+            entry["annotations"] = hints[WRAPS[name]]
+        out.append(entry)
+    return out
+
 
 def reply(msg_id, result=None, error=None):
     out = {"jsonrpc": "2.0", "id": msg_id}
@@ -208,7 +240,7 @@ def main():
             reply(msg_id, {"protocolVersion": PROTOCOL, "capabilities": {"tools": {}},
                            "serverInfo": {"name": "calyx-limbo", "version": "1"}})
         elif method == "tools/list":
-            reply(msg_id, {"tools": [{"name": n, "inputSchema": {"type": "object"}} for n in TOOLS]})
+            reply(msg_id, {"tools": tool_list()})
         elif method == "tools/call":
             fn = TOOLS.get(params.get("name"))
             key = (params.get("_meta") or {}).get("calyx/idempotency_key")

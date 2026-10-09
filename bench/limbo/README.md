@@ -20,6 +20,7 @@ injetor de falhas e o avaliador dele, sem mudança nenhuma no código do LIMBO.
 | `adapter.py` | O servidor MCP das tools: repassa cada chamada ao ambiente do LIMBO e implementa as leituras usadas pelo `verify` |
 | `run_limbo.py` | Monta cada episódio com as classes do LIMBO, roda a Calyx e dá a nota com o avaliador do LIMBO |
 | `summarize.py` | As tabelas, com os mesmos filtros do relatório do LIMBO |
+| `declarations.py` | Declara cada tool de cada forma possível e confere com `calyx check --tools` o que as anotações MCP do LIMBO pegam |
 
 ## Rodar
 
@@ -29,6 +30,7 @@ cargo build --release
 python3 bench/limbo/run_limbo.py --limbo /tmp/limbo                              # contrato native
 python3 bench/limbo/run_limbo.py --limbo /tmp/limbo --contract keys_everywhere
 python3 bench/limbo/summarize.py
+python3 bench/limbo/declarations.py --limbo /tmp/limbo
 ```
 
 Os modos de falha são os da grade E2 do LIMBO: 12 tarefas, cada escrita
@@ -47,6 +49,8 @@ execução.
   ela espera esse tempo antes, no relógio simulado.
 - **`refund`.** A documentação diz que reembolsar de novo responde 409; essa
   resposta quer dizer que o reembolso está feito.
+- **Anotações.** O `tools/list` repassa as anotações MCP que o LIMBO dá à
+  tool que cada uma chama (`readOnlyHint`, `idempotentHint`).
 
 Quando uma `write once` com `on_uncertain pause` para a execução, o
 executor faz o papel da pessoa: pergunta ao operador do LIMBO

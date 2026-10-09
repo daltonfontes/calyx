@@ -18,7 +18,13 @@ usage: calyx <command> [options]
 
 commands:
   check <file.clyx> [--format human|json] [--time] [--ir | --ir-json]
+                   [--tools [--config FILE]]
       Verify a program without generating code.
+      --tools also starts the MCP server of each tool (from calyx.toml) and
+      compares the tool's declared effect with what the server says about
+      it (`readOnlyHint`, `idempotentHint`): a `read` the server does not
+      call read-only (W0701), a `write` without key it does not call
+      idempotent (W0702), a tool with no server (E0701-E0703).
       --ir prints the compiled graph template when there are no errors;
       --ir-json prints it in the JSON form the runtime loads.
   run <file.clyx> [--graph NAME] [--fake-models] [--quiet] [--config FILE]
@@ -180,9 +186,16 @@ fn check(args: &[String]) -> ExitCode {
     let mut time = false;
     let mut ir = false;
     let mut ir_json = false;
+    let mut tools = false;
+    let mut config_path = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
+            "--tools" => tools = true,
+            "--config" => match it.next() {
+                Some(c) => config_path = Some(PathBuf::from(c)),
+                None => return usage_error("--config expects a file"),
+            },
             "--format" => match it.next().map(String::as_str) {
                 Some("json") => json = true,
                 Some("human") => json = false,
@@ -226,10 +239,24 @@ fn check(args: &[String]) -> ExitCode {
         eprintln!("checked in {:.3} ms", elapsed.as_secs_f64() * 1000.0);
     }
     if report.has_errors() {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
+        return ExitCode::from(1);
     }
+    if tools {
+        let origin = Origin::File(PathBuf::from(&file));
+        let config = match load_config(&origin, config_path.as_deref()) {
+            Ok(c) => c,
+            Err(code) => return code,
+        };
+        let declared = calyx_runtime::annotations::declared(&report.ir.to_json());
+        let findings = calyx_runtime::annotations::inspect(&config, &declared);
+        for f in &findings {
+            print!("{}", f.render());
+        }
+        if findings.iter().any(|f| f.error) {
+            return ExitCode::from(1);
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 /// Where a program comes from.

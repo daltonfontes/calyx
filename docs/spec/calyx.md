@@ -666,6 +666,7 @@ Todas lineares ou composicionais (meta: `calyx check` em até 1 segundo):
 | Roteadores: dois ou mais modelos, política conhecida, verificação pura que recebe o tipo da resposta | D30 |
 | Ciclos de `ask` | D33 |
 | Regras de `respond` / `return` | D19 |
+| Com `calyx check --tools`: a declaração de cada tool contra as anotações do servidor MCP dela (seção 11.2) | D2, D34 |
 
 Mensagens de erro estruturadas, com **esperado**, **observado** e **local**, para que um agente de IA consiga corrigir sozinho.
 
@@ -675,7 +676,7 @@ Mensagens de erro estruturadas, com **esperado**, **observado** e **local**, par
 
 | Comando | Função |
 |---|---|
-| `calyx check` | Verifica o programa (meta: até 1 s), sem gerar código |
+| `calyx check` | Verifica o programa (meta: até 1 s), sem gerar código. Com `--tools`, sobe o servidor MCP de cada tool (do `calyx.toml`) e confere a declaração contra o que ele diz (seção 11.2) |
 | `calyx build` | Gera um executável autocontido para um grafo: `calyx build arquivo.clyx [-o nome] [--graph g]`. É uma cópia do próprio `calyx` com o programa e o `calyx.toml` dentro (D35); não precisa de compilador C, nem de Calyx onde roda. Os parâmetros do grafo viram opções (`./nome --param valor`), e `./nome resume <id>`, `replay` e `runs` funcionam como no `calyx` |
 | `calyx run` | Executa um grafo: `calyx run arquivo.clyx --param valor` (listas e registros em JSON, ou `@arquivo.json`). Chamadas independentes rodam em paralelo; `--deterministic` roda uma por vez; `--budget` troca o orçamento |
 | `calyx fmt` | Formata o código |
@@ -721,6 +722,11 @@ Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*`
 - **Novas tentativas:** erros temporários (`Timeout`, `RateLimit`, `Unavailable`, `Network`) de modelos são repetidos até 4 tentativas, esperando 1 s, 2 s e 4 s (o dobro para `RateLimit`), ou mais, se o provedor pedir (cabeçalho `Retry-After` ou "retry in N s" na mensagem, até 60 s). Tools repetem os erros listados em `retry_on`; tools `write` com `idempotency_key` repetem também os temporários; `write once` nunca repete sozinha: depois de `Timeout`, `Unavailable` ou `Network` aplica `on_uncertain` (D2).
 - **Sandboxes:** o parâmetro emprestado recebe o caminho da cópia. O pedido ao I/O leva `"borrows": [{"param", "mode", "path"}]`; o I/O segura a trava da sandbox e tira os snapshots.
 - **Contrato com a tool (MCP):** a chave de idempotência e as precondições vão no `_meta` da chamada `tools/call`, como `calyx/idempotency_key` (texto) e `calyx/requires` (lista de árvores: `{"state": campo}`, `{"value": v}`, `{"op", "l", "r"}` ou `{"op", "v"}`). Uma tool cujas precondições não valem responde com erro (`isError`) e texto começando com `PreconditionFailed:`, sem ter feito nada. Um servidor na frente de outro serviço repassa os erros temporários dele com o texto do erro começando com `Timeout:`, `Unavailable:`, `RateLimit:` ou `Network:`: o runtime trata como se o próprio servidor tivesse demorado ou caído (repete leituras e escritas com chave; numa `write once`, aplica o `on_uncertain`, porque a chamada pode ter acontecido). `examples/tools/fake_store.py` implementa o contrato.
+- **A declaração contra as anotações do servidor.** Servidores MCP podem descrever cada tool com `annotations` (`readOnlyHint`, `idempotentHint`, `destructiveHint`). São dicas, e não dizem nada sobre chaves nem sobre o que fazer com um resultado incerto, então não substituem a declaração; mas podem contradizê-la. Na primeira chamada de cada tool, o runtime compara, e `calyx check --tools` faz o mesmo sem rodar:
+  - `W0701`: tool declarada `read` que o servidor não diz ser somente leitura. Leituras são repetidas e reexecutadas à vontade.
+  - `W0702`: `write` sem chave que o servidor não diz ser idempotente. O runtime a repete depois de falhas.
+  - `E0701`–`E0703` (só no `check --tools`): tool sem servidor no `calyx.toml`, servidor que não sobe, servidor sem a tool.
+  Só são julgadas as tools cujo servidor manda anotações: sem elas, os padrões do MCP (não é leitura, não é idempotente) marcariam toda leitura de um servidor que simplesmente não diz nada. As anotações não dizem se o serviço respeita a chave de idempotência: uma `write` com chave num serviço que a ignora passa sem aviso.
 - **Saída de tools:** cortada em `max_output` (D16).
 - **Falha:** se um passo falha depois das tentativas, a execução para com o grafo, o passo e o motivo, a menos que um `try` a capture (D11).
 

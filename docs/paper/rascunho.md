@@ -393,6 +393,16 @@ O LIMBO achou duas lacunas na Calyx, corrigidas antes desses números:
 - um servidor de tools não tinha como dizer que o serviço atrás dele não
   respondeu.
 
+A fraqueza das declarações é a própria declaração: se o programador
+declara errado, o compilador acredita. As anotações MCP (`readOnlyHint`,
+`idempotentHint`) permitem conferir a declaração contra o servidor
+(`calyx check --tools`, e o runtime na primeira chamada). Declarando cada
+tool do LIMBO de cada forma possível, a conferência avisou as 20
+declarações perigosas que tratam uma escrita como leitura ou como `write`
+sem chave. Não avisou nenhuma das 8 que confiam numa chave que o serviço
+ignora, porque as anotações MCP não falam de chaves. Das 56 declarações
+seguras, 3 receberam aviso.
+
 Ficaram duas, sem correção:
 - o lote que fica pela metade: a resposta a uma pausa não tem como dizer
   "faça só o que falta";
@@ -410,6 +420,10 @@ Ficaram duas, sem correção:
   achados medindo (resposta depois do prazo, custo cúbico do agente, `write
   once` em laço) e corrigidos antes destes números. Relatamos os números de
   antes onde eles mudam a comparação.
+- **Declarações erradas.** O compilador confia na declaração da tool. A
+  conferência contra as anotações MCP pega tratar uma escrita como leitura
+  ou esquecer a chave (20 de 20 no LIMBO), mas não a chave que o serviço
+  ignora (0 de 8), e só vale para servidores que mandam anotações.
 - **Modelos falsos.** A latência fixa isola o runtime e esconde a variância
   dos provedores. **[falta]** Repetir W1 e W2 com um modelo real.
 - **Um computador só, sem rede real**, e versões que mudam rápido: fixamos as

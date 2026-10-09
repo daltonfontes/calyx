@@ -6,6 +6,7 @@
 //! calls for effects (models over HTTPS, tools over MCP; see [`io`]).
 //! It is also a static library, so a C program links one archive.
 
+pub mod annotations;
 pub mod config;
 pub mod io;
 mod llm;
@@ -88,6 +89,7 @@ pub fn run(
         "uncertain": opts.uncertain,
     });
     io::configure(opts.config, opts.fake_models);
+    io::declare(annotations::declared(ir_json));
     let c = |s: &str| CString::new(s).map_err(|_| "text contains NUL".to_owned());
     let (ir, g, a, o) = (
         c(ir_json)?,

@@ -30,6 +30,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::annotations;
 use crate::config::Config;
 use crate::{llm, mcp, sandbox};
 
@@ -67,6 +68,8 @@ struct State {
     /// Running MCP servers, by command. Each has its own lock: a call
     /// holds its server, not the state, so other calls run meanwhile.
     servers: HashMap<Vec<String>, Arc<Mutex<mcp::Server>>>,
+    /// The program's tools, to compare with what their servers say.
+    declared: HashMap<String, annotations::Declared>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -79,6 +82,15 @@ pub fn configure(config: Config, fake_models: bool) {
         fake_models,
         agent: llm::agent(),
         servers: HashMap::new(),
+        declared: HashMap::new(),
+    });
+}
+
+/// The program's tools: on its first call, each one is compared with what
+/// its server says about it, and a contradiction is a warning.
+pub fn declare(tools: Vec<annotations::Declared>) {
+    with_state(|st| {
+        st.declared = tools.into_iter().map(|d| (d.name.clone(), d)).collect();
     });
 }
 
@@ -98,6 +110,7 @@ fn with_state<T>(f: impl FnOnce(&mut State) -> T) -> T {
         fake_models: false,
         agent: llm::agent(),
         servers: HashMap::new(),
+        declared: HashMap::new(),
     });
     f(st)
 }
@@ -188,7 +201,7 @@ fn tool_call_unlocked(req: &Value) -> Result<Value, IoError> {
     if let Some(r) = req.get("requires") {
         meta.insert("calyx/requires".into(), r.clone());
     }
-    let (key, server, remote) = with_state(|st| {
+    let (key, server, remote, declared) = with_state(|st| {
         let server_cfg = st.config.tools.get(&tool).cloned().ok_or_else(|| {
             let place = st
                 .config
@@ -212,13 +225,19 @@ fn tool_call_unlocked(req: &Value) -> Result<Value, IoError> {
             .remote_name
             .clone()
             .unwrap_or_else(|| tool.clone());
-        Ok::<_, IoError>((key, server, remote))
+        // Compared once per run: taken out after the first call.
+        let declared = st.declared.remove(&tool);
+        Ok::<_, IoError>((key, server, remote, declared))
     })?;
     // Calls to one server take turns (one stdio pipe); others go on.
-    let result = server
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .call(&remote, args, meta, timeout);
+    let mut guard = server.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(f) =
+        declared.and_then(|d| annotations::mismatch(&d, guard.annotations.get(&remote)))
+    {
+        eprintln!("{}", f.line());
+    }
+    let result = guard.call(&remote, args, meta, timeout);
+    drop(guard);
     if let Err(e) = &result
         && matches!(e.kind, "Timeout" | "Unavailable")
     {

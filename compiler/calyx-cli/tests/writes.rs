@@ -69,6 +69,10 @@ struct Dir(PathBuf);
 
 impl Dir {
     fn new(name: &str, policy: &str) -> Dir {
+        Dir::with_program(name, &program(policy))
+    }
+
+    fn with_program(name: &str, text: &str) -> Dir {
         let dir = std::env::temp_dir().join(format!("calyx-writes-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -82,7 +86,7 @@ impl Dir {
             .map(|t| format!("[tools.{t}]\n{cmd}\n"))
             .collect();
         std::fs::write(dir.join("calyx.toml"), toml).unwrap();
-        std::fs::write(dir.join("p.clyx"), program(policy)).unwrap();
+        std::fs::write(dir.join("p.clyx"), text).unwrap();
         Dir(dir)
     }
 
@@ -283,5 +287,75 @@ fn a_person_can_have_an_uncertain_call_retried() {
     assert_eq!(d.sent(), 0);
     let out = d.calyx(&["resume", &id, "--quiet", "--uncertain", "retry"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(d.sent(), 1);
+}
+
+/// The fake store says what each tool does (MCP annotations): `email` is
+/// neither read-only nor idempotent, `email_sent` is read-only.
+const MISDECLARED: &str = r#"
+tool email(to: Text, subject: Text, body: Text) -> Unit:
+    effect write
+
+tool email_sent(to: Text, subject: Text) -> Bool:
+    effect read
+
+tool get_order(id: Text) -> Text:
+    effect read
+
+graph g(to: Text) -> Text:
+    sent = email(to, "oi", "corpo")
+    return "ok"
+"#;
+
+#[test]
+fn check_tools_compares_declarations_with_what_the_servers_say() {
+    let d = Dir::with_program("tools-ok", &program("verify(email_sent(to, subject))"));
+    let out = d.calyx(&["check", "p.clyx", "--tools"]);
+    assert!(out.status.success(), "{}", text(&out.stdout));
+    assert_eq!(
+        text(&out.stdout),
+        "",
+        "the declarations agree with the server"
+    );
+
+    // `get_order` renamed to a tool no server has.
+    let d = Dir::with_program(
+        "tools-bad",
+        &MISDECLARED.replace("get_order", "email_sent2"),
+    );
+    let out = d.calyx(&["check", "p.clyx", "--tools"]);
+    let report = text(&out.stdout);
+    assert!(
+        report.contains("warning[W0702]: tool `email` is a `write` without a key"),
+        "{report}"
+    );
+    assert!(
+        report.contains("error[E0701]: no MCP server for tool `email_sent2`"),
+        "{report}"
+    );
+    assert!(!report.contains("`email_sent`"), "{report}");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "a tool with no server is an error"
+    );
+}
+
+#[test]
+fn a_run_warns_once_when_a_server_contradicts_a_declaration() {
+    // `email` declared `read`: the server says it is not read-only.
+    let d = Dir::with_program(
+        "tools-run",
+        &MISDECLARED.replace("    effect write\n", "    effect read\n"),
+    );
+    let out = d.calyx(&["run", "p.clyx", "--to", "ana@exemplo.org"]);
+    let err = text(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert_eq!(
+        err.matches("[W0701]: tool `email` is declared `read`")
+            .count(),
+        1,
+        "{err}"
+    );
     assert_eq!(d.sent(), 1);
 }

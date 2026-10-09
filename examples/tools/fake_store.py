@@ -62,19 +62,25 @@ def schema(**props):
             "required": list(props)}
 
 
+# What the server says about each tool (MCP `annotations`); `calyx check
+# --tools` compares them with the program's declarations.
+READ = {"readOnlyHint": True}
+SEND = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False}
+
 TOOLS = [
     {"name": "get_order", "description": "Um pedido, pelo id.",
-     "inputSchema": schema(id="string")},
+     "inputSchema": schema(id="string"), "annotations": READ},
     {"name": "refund", "description": "Reembolsa parte de um pedido.",
-     "inputSchema": schema(request="string", order="string", amount="number")},
+     "inputSchema": schema(request="string", order="string", amount="number"),
+     "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False}},
     {"name": "email", "description": "Envia um e-mail.",
-     "inputSchema": schema(to="string", subject="string", body="string")},
+     "inputSchema": schema(to="string", subject="string", body="string"), "annotations": SEND},
     {"name": "email_sent", "description": "Se um e-mail com esse assunto já foi enviado.",
-     "inputSchema": schema(to="string", subject="string")},
+     "inputSchema": schema(to="string", subject="string"), "annotations": READ},
     {"name": "mail", "description": "Envia um e-mail e devolve o id dele.",
-     "inputSchema": schema(to="string", subject="string", body="string")},
+     "inputSchema": schema(to="string", subject="string", body="string"), "annotations": SEND},
     {"name": "mails_to", "description": "Os ids dos e-mails enviados com esse assunto.",
-     "inputSchema": schema(to="string", subject="string")},
+     "inputSchema": schema(to="string", subject="string"), "annotations": READ},
 ]
 
 # ----- preconditions (D29) ---------------------------------------------------

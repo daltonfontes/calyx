@@ -176,7 +176,7 @@ def episode(spec_cls, session_cls, server_cls, template, index, focal, mode, con
     }
 
 
-KEEP = re.compile(r"failed|verify|repeated|taken as done|\[operator\]|finished|error|uncertain")
+KEEP = re.compile(r"failed|verify|repeated|taken as done|\[operator\]|finished|error|warning|uncertain")
 
 
 def short(log: str) -> str:

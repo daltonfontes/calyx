@@ -83,7 +83,8 @@ nada confere.
 ## Próximos passos que isso sugere
 
 - ~~Rodar a Calyx no LIMBO.~~ Feito: [`docs/evaluation/limbo.md`](../evaluation/limbo.md).
-- **Conferir as declarações contra as anotações MCP** (`idempotentHint`,
-  `readOnlyHint`).
+- ~~Conferir as declarações contra as anotações MCP.~~ Feito:
+  `calyx check --tools` (W0701, W0702); medido em
+  [`docs/evaluation/limbo.md`](../evaluation/limbo.md).
 - Ler os artigos de verdade antes de submeter (precisa liberar arxiv.org na
   rede do ambiente, ou ler fora dele).
