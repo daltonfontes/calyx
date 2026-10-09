@@ -362,6 +362,13 @@ resposta atrasada não vale mesmo que ninguém tenha retomado a execução ainda
 tool, e em `calyx check --tools` sem rodar, a Calyx as compara com a
 declaração e avisa numa contradição (§6.8).
 
+*Programas como servidores.* `calyx serve` transforma um programa num
+servidor MCP: cada grafo é uma tool, anotada a partir do programa
+(`readOnlyHint` quando nenhum passo escreve, senão `idempotencyKeyHint`). A
+dica da chave vale por construção: uma chamada com chave fica presa a uma
+execução, e a mesma chave devolve a resposta dela, ou a retoma se ela
+morreu, em vez de rodar de novo.
+
 = Avaliação
 
 Perguntamos: o paralelismo derivado é bom (Q1)? O compilador pega bugs de

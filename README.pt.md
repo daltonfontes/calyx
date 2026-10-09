@@ -128,6 +128,21 @@ Com um modelo real (Gemini), mediana de 3 execuções:
 A Calyx empata com o asyncio escrito à mão. O ganho é não escrever o
 paralelismo.
 
+## A Calyx SERVE seus workflows por MCP
+
+`calyx serve` transforma um programa num servidor MCP: cada grafo vira uma
+tool que qualquer cliente MCP chama (Claude Desktop, uma IDE, outro agente),
+com o diário, o paralelismo e os contratos de efeito do `calyx run`. As
+anotações saem do programa: um grafo que só lê é `readOnlyHint`; um que
+escreve é `idempotencyKeyHint`, e cumpre a promessa por construção. Uma
+chamada com chave de idempotência fica presa a uma execução: a mesma chave
+devolve a resposta dela, ou a retoma se ela morreu, e nunca roda duas vezes.
+
+```json
+{ "mcpServers": { "reembolsos": {
+    "command": "calyx", "args": ["serve", "/caminho/para/refund.clyx"] } } }
+```
+
 ## A Calyx verifica RÁPIDO
 
 **Meta:** verificar qualquer programa em menos de 1 segundo, para que um

@@ -121,6 +121,21 @@ With a real model (Gemini), median of 3 runs:
 
 Calyx ties hand-written asyncio. The gain is not writing the parallelism.
 
+## Calyx SERVES your workflows over MCP
+
+`calyx serve` turns a program into an MCP server: each graph is a tool any
+MCP client can call (Claude Desktop, an IDE, another agent), with the
+journal, parallelism and effect contracts of `calyx run`. Its annotations
+come from the program: a graph that only reads is `readOnlyHint`; one that
+writes is `idempotencyKeyHint`, and keeps the promise by construction. A
+call with an idempotency key is tied to one run: the same key returns that
+run's answer, or resumes it if it died, and never runs it twice.
+
+```json
+{ "mcpServers": { "refunds": {
+    "command": "calyx", "args": ["serve", "/path/to/refund.clyx"] } } }
+```
+
 ## Calyx checks FAST
 
 **Target:** check any program in under 1 second, so an agent can check after

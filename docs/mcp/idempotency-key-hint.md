@@ -233,6 +233,13 @@ now; renaming it to the field is mechanical):
   protocol is proved at-most-once in Lean (`formal/Effects.lean`), including
   a counterexample showing the duplicate when the key comes from a model
   answer that was not synced before the call.
+- **A server whose hint holds by construction.** `calyx serve` exposes a
+  Calyx program's graphs as MCP tools and derives their annotations from
+  the program: a graph that writes gets `idempotencyKeyHint: true`, and a
+  call with a key is tied to one journaled run, so the same key returns
+  that run's answer, or resumes it after a crash, and never starts a second
+  run (`compiler/calyx-cli/src/serve.rs`, tests in
+  `compiler/calyx-cli/tests/serve.rs`).
 - **Servers.** `examples/tools/fake_store.py` deduplicates refunds by key.
   `bench/limbo/adapter.py` is an MCP server in front of LIMBO's services; with
   `LIMBO_KEY_HINT=1` it declares `idempotencyKeyHint` per tool, from which
