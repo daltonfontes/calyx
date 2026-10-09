@@ -1,6 +1,7 @@
 //! The effect a program declares for a tool, against what the tool's MCP
 //! server says about it (`annotations` in `tools/list`: `readOnlyHint`,
-//! `idempotentHint`, `destructiveHint`).
+//! `idempotentHint`, `destructiveHint`, and `idempotencyKeyHint`, which is
+//! not in MCP yet: it is proposed in `docs/mcp/idempotency-key-hint.md`).
 //!
 //! The declaration is what the runtime acts on: it retries reads and keyed
 //! writes, never repeats a `write once`. The server's hints cannot replace
@@ -99,6 +100,9 @@ pub fn mismatch(d: &Declared, annotations: Option<&Value>) -> Option<Finding> {
     let ann = annotations.filter(|a| a.is_object())?;
     let read_only = ann["readOnlyHint"] == true;
     let idempotent = ann["idempotentHint"] == true;
+    // Only an explicit `false`: servers that say nothing about keys are the
+    // norm today, and are not judged.
+    let ignores_keys = ann["idempotencyKeyHint"] == false;
     let finding = |code, message: String, expected: &str, observed: String| Finding {
         code,
         error: false,
@@ -129,6 +133,19 @@ pub fn mismatch(d: &Declared, annotations: Option<&Value>) -> Option<Finding> {
             ),
             "`idempotentHint: true`; or an `idempotency_key`, or `effect write once`: the runtime repeats a `write` after failures",
             hint(ann, "idempotentHint"),
+        )),
+        "write" if d.keyed && ignores_keys && !idempotent && !read_only => Some(finding(
+            "W0703",
+            format!(
+                "tool `{}` is a `write` with an `idempotency_key`, but its server says it does not honour keys",
+                d.name
+            ),
+            "`idempotencyKeyHint: true`; or `effect write once` with `on_uncertain`: a retry with a key the service ignores applies the write again",
+            format!(
+                "{}, {}",
+                hint(ann, "idempotencyKeyHint"),
+                hint(ann, "idempotentHint")
+            ),
         )),
         _ => None,
     }
@@ -220,6 +237,26 @@ mod tests {
         );
         assert_eq!(
             code(&tool("write once", false), json!({"readOnlyHint": false})),
+            None
+        );
+    }
+
+    #[test]
+    fn a_key_the_server_says_it_ignores_is_a_warning() {
+        let keyed = tool("write", true);
+        assert_eq!(
+            code(&keyed, json!({"idempotencyKeyHint": false})),
+            Some("W0703")
+        );
+        assert_eq!(code(&keyed, json!({"idempotencyKeyHint": true})), None);
+        // Saying nothing about keys is not saying they are ignored.
+        assert_eq!(code(&keyed, json!({"idempotentHint": false})), None);
+        // An idempotent write is safe to repeat, key or not.
+        assert_eq!(
+            code(
+                &keyed,
+                json!({"idempotencyKeyHint": false, "idempotentHint": true})
+            ),
             None
         );
     }

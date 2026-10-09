@@ -1,0 +1,968 @@
+{
+ "rows": [
+  {
+   "tool": "wait",
+   "limbo_tool": "wait",
+   "declared": "read",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "wait",
+   "limbo_tool": "wait",
+   "declared": "write",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "wait",
+   "limbo_tool": "wait",
+   "declared": "write+key",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "wait",
+   "limbo_tool": "wait",
+   "declared": "write once",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "status_after",
+   "limbo_tool": "deploy_get_run",
+   "declared": "read",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "status_after",
+   "limbo_tool": "deploy_get_run",
+   "declared": "write",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "status_after",
+   "limbo_tool": "deploy_get_run",
+   "declared": "write+key",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "status_after",
+   "limbo_tool": "deploy_get_run",
+   "declared": "write once",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "posts_with",
+   "limbo_tool": "social_list_posts",
+   "declared": "read",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "posts_with",
+   "limbo_tool": "social_list_posts",
+   "declared": "write",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "posts_with",
+   "limbo_tool": "social_list_posts",
+   "declared": "write+key",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "posts_with",
+   "limbo_tool": "social_list_posts",
+   "declared": "write once",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "tickets_titled",
+   "limbo_tool": "tickets_list_recent",
+   "declared": "read",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "tickets_titled",
+   "limbo_tool": "tickets_list_recent",
+   "declared": "write",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "tickets_titled",
+   "limbo_tool": "tickets_list_recent",
+   "declared": "write+key",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "tickets_titled",
+   "limbo_tool": "tickets_list_recent",
+   "declared": "write once",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "has_comment",
+   "limbo_tool": "tickets_get",
+   "declared": "read",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "has_comment",
+   "limbo_tool": "tickets_get",
+   "declared": "write",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "has_comment",
+   "limbo_tool": "tickets_get",
+   "declared": "write+key",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "has_comment",
+   "limbo_tool": "tickets_get",
+   "declared": "write once",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "mails_sent",
+   "limbo_tool": "mail_search_sent",
+   "declared": "read",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "mails_sent",
+   "limbo_tool": "mail_search_sent",
+   "declared": "write",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "mails_sent",
+   "limbo_tool": "mail_search_sent",
+   "declared": "write+key",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "mails_sent",
+   "limbo_tool": "mail_search_sent",
+   "declared": "write once",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "rows_with",
+   "limbo_tool": "db_query",
+   "declared": "read",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "rows_with",
+   "limbo_tool": "db_query",
+   "declared": "write",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "rows_with",
+   "limbo_tool": "db_query",
+   "declared": "write+key",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "rows_with",
+   "limbo_tool": "db_query",
+   "declared": "write once",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "rows_present",
+   "limbo_tool": "db_query",
+   "declared": "read",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "rows_present",
+   "limbo_tool": "db_query",
+   "declared": "write",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "rows_present",
+   "limbo_tool": "db_query",
+   "declared": "write+key",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "rows_present",
+   "limbo_tool": "db_query",
+   "declared": "write once",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "runs_of",
+   "limbo_tool": "deploy_list_runs",
+   "declared": "read",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "runs_of",
+   "limbo_tool": "deploy_list_runs",
+   "declared": "write",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "runs_of",
+   "limbo_tool": "deploy_list_runs",
+   "declared": "write+key",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "runs_of",
+   "limbo_tool": "deploy_list_runs",
+   "declared": "write once",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "publish",
+   "limbo_tool": "social_publish",
+   "declared": "read",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "publish",
+   "limbo_tool": "social_publish",
+   "declared": "write",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0702"
+   ]
+  },
+  {
+   "tool": "publish",
+   "limbo_tool": "social_publish",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0703"
+   ]
+  },
+  {
+   "tool": "publish",
+   "limbo_tool": "social_publish",
+   "declared": "write once",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "publish_keyed",
+   "limbo_tool": "social_publish",
+   "declared": "read",
+   "write": true,
+   "idempotent": false,
+   "honors_key": true,
+   "dangerous": true,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "publish_keyed",
+   "limbo_tool": "social_publish",
+   "declared": "write",
+   "write": true,
+   "idempotent": false,
+   "honors_key": true,
+   "dangerous": true,
+   "warned": [
+    "W0702"
+   ]
+  },
+  {
+   "tool": "publish_keyed",
+   "limbo_tool": "social_publish",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": false,
+   "honors_key": true,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "publish_keyed",
+   "limbo_tool": "social_publish",
+   "declared": "write once",
+   "write": true,
+   "idempotent": false,
+   "honors_key": true,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "publish_x",
+   "limbo_tool": "social_publish",
+   "declared": "read",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "publish_x",
+   "limbo_tool": "social_publish",
+   "declared": "write",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0702"
+   ]
+  },
+  {
+   "tool": "publish_x",
+   "limbo_tool": "social_publish",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0703"
+   ]
+  },
+  {
+   "tool": "publish_x",
+   "limbo_tool": "social_publish",
+   "declared": "write once",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "charge",
+   "limbo_tool": "billing_create_charge",
+   "declared": "read",
+   "write": true,
+   "idempotent": false,
+   "honors_key": true,
+   "dangerous": true,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "charge",
+   "limbo_tool": "billing_create_charge",
+   "declared": "write",
+   "write": true,
+   "idempotent": false,
+   "honors_key": true,
+   "dangerous": true,
+   "warned": [
+    "W0702"
+   ]
+  },
+  {
+   "tool": "charge",
+   "limbo_tool": "billing_create_charge",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": false,
+   "honors_key": true,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "charge",
+   "limbo_tool": "billing_create_charge",
+   "declared": "write once",
+   "write": true,
+   "idempotent": false,
+   "honors_key": true,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "refund",
+   "limbo_tool": "billing_refund_charge",
+   "declared": "read",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "refund",
+   "limbo_tool": "billing_refund_charge",
+   "declared": "write",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "refund",
+   "limbo_tool": "billing_refund_charge",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "refund",
+   "limbo_tool": "billing_refund_charge",
+   "declared": "write once",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "create_ticket",
+   "limbo_tool": "tickets_create",
+   "declared": "read",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "create_ticket",
+   "limbo_tool": "tickets_create",
+   "declared": "write",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0702"
+   ]
+  },
+  {
+   "tool": "create_ticket",
+   "limbo_tool": "tickets_create",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0703"
+   ]
+  },
+  {
+   "tool": "create_ticket",
+   "limbo_tool": "tickets_create",
+   "declared": "write once",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "comment",
+   "limbo_tool": "tickets_add_comment",
+   "declared": "read",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "comment",
+   "limbo_tool": "tickets_add_comment",
+   "declared": "write",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0702"
+   ]
+  },
+  {
+   "tool": "comment",
+   "limbo_tool": "tickets_add_comment",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0703"
+   ]
+  },
+  {
+   "tool": "comment",
+   "limbo_tool": "tickets_add_comment",
+   "declared": "write once",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "set_status",
+   "limbo_tool": "tickets_update_status",
+   "declared": "read",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "set_status",
+   "limbo_tool": "tickets_update_status",
+   "declared": "write",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "set_status",
+   "limbo_tool": "tickets_update_status",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "set_status",
+   "limbo_tool": "tickets_update_status",
+   "declared": "write once",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "send_mail",
+   "limbo_tool": "mail_send",
+   "declared": "read",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "send_mail",
+   "limbo_tool": "mail_send",
+   "declared": "write",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0702"
+   ]
+  },
+  {
+   "tool": "send_mail",
+   "limbo_tool": "mail_send",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0703"
+   ]
+  },
+  {
+   "tool": "send_mail",
+   "limbo_tool": "mail_send",
+   "declared": "write once",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "insert_row",
+   "limbo_tool": "db_insert",
+   "declared": "read",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "insert_row",
+   "limbo_tool": "db_insert",
+   "declared": "write",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0702"
+   ]
+  },
+  {
+   "tool": "insert_row",
+   "limbo_tool": "db_insert",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0703"
+   ]
+  },
+  {
+   "tool": "insert_row",
+   "limbo_tool": "db_insert",
+   "declared": "write once",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "insert_rows",
+   "limbo_tool": "db_insert_many",
+   "declared": "read",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "insert_rows",
+   "limbo_tool": "db_insert_many",
+   "declared": "write",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0702"
+   ]
+  },
+  {
+   "tool": "insert_rows",
+   "limbo_tool": "db_insert_many",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0703"
+   ]
+  },
+  {
+   "tool": "insert_rows",
+   "limbo_tool": "db_insert_many",
+   "declared": "write once",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "upsert",
+   "limbo_tool": "db_upsert",
+   "declared": "read",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "upsert",
+   "limbo_tool": "db_upsert",
+   "declared": "write",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "upsert",
+   "limbo_tool": "db_upsert",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "upsert",
+   "limbo_tool": "db_upsert",
+   "declared": "write once",
+   "write": true,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "deploy",
+   "limbo_tool": "deploy_trigger",
+   "declared": "read",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0701"
+   ]
+  },
+  {
+   "tool": "deploy",
+   "limbo_tool": "deploy_trigger",
+   "declared": "write",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0702"
+   ]
+  },
+  {
+   "tool": "deploy",
+   "limbo_tool": "deploy_trigger",
+   "declared": "write+key",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": true,
+   "warned": [
+    "W0703"
+   ]
+  },
+  {
+   "tool": "deploy",
+   "limbo_tool": "deploy_trigger",
+   "declared": "write once",
+   "write": true,
+   "idempotent": false,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  }
+ ],
+ "dangerous": 28,
+ "dangerous_warned": 28,
+ "safe": 60,
+ "safe_warned": 3,
+ "by_kind": {
+  "read": [
+   10,
+   10
+  ],
+  "write": [
+   10,
+   10
+  ],
+  "write+key": [
+   8,
+   8
+  ],
+  "write once": [
+   0,
+   0
+  ]
+ }
+}

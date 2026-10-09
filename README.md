@@ -235,6 +235,7 @@ for code agents to per-user memory, debates and model routers, in
 - Evaluation: [docs/evaluation/](docs/evaluation), vs. Python, LangGraph and Temporal, real bugs, and LIMBO.
 - Benches: [bench/](bench), every script behind the numbers above, with the data in `bench/results/`.
 - Demo: [make_check_gif.py](media/make_check_gif.py) records the GIF above from the real `calyx check` output.
+- MCP proposal: [idempotency-key-hint.md](docs/mcp/idempotency-key-hint.md), idempotency keys on `tools/call`, declared per tool, with a prototype and its measurement.
 - Design: [docs/discovery/](docs/discovery), the 35 design decisions and the research behind them.
 - Em português: [README.pt.md](README.pt.md), and a project overview with every milestone and folder in [visao-geral.md](docs/visao-geral.md).
 
@@ -245,7 +246,9 @@ for code agents to per-user memory, debates and model routers, in
 - The spec, docs and examples are mostly in Portuguese; the paper is in English.
 - The guarantees rest on stated hypotheses: the service honours the idempotency
   key, and `verify` reads fresh state. Calyx cannot check a service that ignores
-  keys; `calyx check --tools` catches wrong effects, not ignored keys.
+  keys; `calyx check --tools` catches wrong effects, and ignored keys only
+  from servers that send `idempotencyKeyHint`, an annotation we propose to
+  MCP (docs/mcp/idempotency-key-hint.md).
 - `on_uncertain accept_loss` can lose the effect. That is what it means.
 - The Lean proofs cover one call; whole programs get a bounded check. Both
   models are written by hand, not extracted from the C runtime.

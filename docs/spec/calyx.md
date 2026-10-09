@@ -727,8 +727,9 @@ Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*`
 - **A declaração contra as anotações do servidor.** Servidores MCP podem descrever cada tool com `annotations` (`readOnlyHint`, `idempotentHint`, `destructiveHint`). São dicas, e não dizem nada sobre chaves nem sobre o que fazer com um resultado incerto, então não substituem a declaração; mas podem contradizê-la. Na primeira chamada de cada tool, o runtime compara, e `calyx check --tools` faz o mesmo sem rodar:
   - `W0701`: tool declarada `read` que o servidor não diz ser somente leitura. Leituras são repetidas e reexecutadas à vontade.
   - `W0702`: `write` sem chave que o servidor não diz ser idempotente. O runtime a repete depois de falhas.
+  - `W0703`: `write` com chave numa tool cujo servidor diz `idempotencyKeyHint: false` (e não diz que ela é idempotente). Essa anotação ainda não existe no MCP: é a proposta em [`docs/mcp/idempotency-key-hint.md`](../mcp/idempotency-key-hint.md). Sem ela (o caso de hoje), nada é julgado.
   - `E0701`–`E0703` (só no `check --tools`): tool sem servidor no `calyx.toml`, servidor que não sobe, servidor sem a tool.
-  Só são julgadas as tools cujo servidor manda anotações: sem elas, os padrões do MCP (não é leitura, não é idempotente) marcariam toda leitura de um servidor que simplesmente não diz nada. As anotações não dizem se o serviço respeita a chave de idempotência: uma `write` com chave num serviço que a ignora passa sem aviso.
+  Só são julgadas as tools cujo servidor manda anotações: sem elas, os padrões do MCP (não é leitura, não é idempotente) marcariam toda leitura de um servidor que simplesmente não diz nada. As anotações atuais do MCP não dizem se o serviço respeita a chave de idempotência: uma `write` com chave num serviço que a ignora só recebe aviso se o servidor mandar a anotação proposta `idempotencyKeyHint`.
 - **Saída de tools:** cortada em `max_output` (D16).
 - **Falha:** se um passo falha depois das tentativas, a execução para com o grafo, o passo e o motivo, a menos que um `try` a capture (D11).
 

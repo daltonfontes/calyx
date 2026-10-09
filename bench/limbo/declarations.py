@@ -17,9 +17,11 @@ agent never sees):
   key the service ignores;
 - safe: the declaration is right, or only more careful than needed.
 
-    python bench/limbo/declarations.py --limbo PATH
+    python bench/limbo/declarations.py --limbo PATH [--key-hint]
 
-Writes bench/results/limbo_declarations.json.
+Writes bench/results/limbo_declarations.json. With --key-hint, the adapter
+also sends the proposed `idempotencyKeyHint` (docs/mcp/idempotency-key-hint.md)
+and the results go to bench/results/limbo_declarations_keyhint.json.
 """
 from __future__ import annotations
 
@@ -85,6 +87,7 @@ def dangerous(kind: str, t: dict) -> bool:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limbo", required=True)
+    ap.add_argument("--key-hint", action="store_true")
     a = ap.parse_args()
     sys.path.insert(0, os.path.abspath(a.limbo))
     sys.path.insert(0, HERE)
@@ -112,7 +115,8 @@ def main() -> None:
         listed = {t["name"] for t in session.list_tools()}
         covered |= {n for n in names if WRAPS[n] in listed}
         with SandboxServer(session) as server:
-            env = dict(os.environ, LIMBO_PORT=str(server.port), LIMBO_TOKEN=server.token)
+            env = dict(os.environ, LIMBO_PORT=str(server.port), LIMBO_TOKEN=server.token,
+                       LIMBO_KEY_HINT="1" if a.key_hint else "0")
             for kind in KINDS:
                 path = os.path.join(work, f"{kind.replace(' ', '_').replace('+', '_')}.clyx")
                 with open(path, "w") as f:
@@ -153,7 +157,8 @@ def main() -> None:
     print(f"dangerous declarations warned: {caught}/{len(danger)}  "
           + ", ".join(f"{k}: {c}/{n}" for k, (c, n) in by_kind.items() if n))
     print(f"safe declarations warned: {false}/{len(safe)}")
-    with open(os.path.join(ROOT, "bench", "results", "limbo_declarations.json"), "w") as f:
+    name = "limbo_declarations_keyhint.json" if a.key_hint else "limbo_declarations.json"
+    with open(os.path.join(ROOT, "bench", "results", name), "w") as f:
         json.dump({"rows": rows, "dangerous": len(danger), "dangerous_warned": caught,
                    "safe": len(safe), "safe_warned": false,
                    "by_kind": {k: list(v) for k, v in by_kind.items()}}, f, indent=1)

@@ -190,6 +190,9 @@ TOOLS = {f.__name__: f for f in (
 TOOLS["publish_keyed"] = publish
 TOOLS["publish_x"] = publish
 
+# Under the native contract, the tools whose service honours an idempotency key.
+HONORS_KEY = {"publish_keyed", "charge"}
+
 # The LIMBO tool each one calls: its MCP annotations are passed on as theirs.
 WRAPS = {
     "publish": "social_publish", "publish_keyed": "social_publish", "publish_x": "social_publish",
@@ -212,7 +215,12 @@ def tool_list() -> list:
     for name in TOOLS:
         entry = {"name": name, "inputSchema": {"type": "object"}}
         if hints.get(WRAPS.get(name)) is not None:
-            entry["annotations"] = hints[WRAPS[name]]
+            entry["annotations"] = dict(hints[WRAPS[name]])
+            # The proposed `idempotencyKeyHint` (docs/mcp/idempotency-key-hint.md),
+            # declared as a server author would: from which services behind it
+            # honour a key. Off by default, so earlier results reproduce.
+            if os.environ.get("LIMBO_KEY_HINT") == "1" and not entry["annotations"].get("readOnlyHint"):
+                entry["annotations"]["idempotencyKeyHint"] = name in HONORS_KEY
         out.append(entry)
     return out
 

@@ -234,14 +234,14 @@ step and the dependency graph. @tab-checks lists those about state.
     [`E0640`], [An agent given a `write once` tool],
     [`E0671`], [`receive` without a deadline],
     [`E0637`], [A `batch` that is not a list, or not verified],
-    [`W0701/2`], [A declaration the tool's MCP server contradicts (`check --tools`)],
+    [`W0701–3`], [A declaration the tool's MCP server contradicts (`check --tools`)],
     thick,
   ),
   caption: [State checks (partial; the specification lists all).],
 ) <tab-checks>
 
 Several came from the evaluation: `W0605` from the real-bug study (§6.6),
-`E0637` and the list form of `verify` from LIMBO (§6.7), and `W0701/2` from
+`E0637` and the list form of `verify` from LIMBO (§6.7), and `W0701–3` from
 the observation that a wrong declaration is the weakest point (§6.8).
 
 == What the rules guarantee
@@ -583,8 +583,11 @@ non-idempotent write.
 The annotations catch treating a write as a read and forgetting the key.
 They miss the mistake that mattered most in LIMBO, trusting a key the
 service ignores, because MCP annotations have no vocabulary for idempotency
-keys @mcp2025spec. An annotation saying "this tool honours an idempotency
-key" would close the gap.
+keys @mcp2025spec. We propose one to MCP, `idempotencyKeyHint`, per tool
+(`docs/mcp/idempotency-key-hint.md`): with our LIMBO adapter declaring it
+from which services honour a key, Calyx warns (`W0703`) on all 8 such
+declarations, with no new false positives. The adapter, not LIMBO, declares
+it: this shows what the check does when servers tell the truth.
 
 == Writing a real workflow
 
