@@ -242,6 +242,15 @@ now; renaming it to the field is mechanical):
   (`bench/results/limbo_declarations.json`); adding `--key-hint` produces the
   `idempotencyKeyHint` column (`bench/results/limbo_declarations_keyhint.json`).
 
+- **Conformance probe.** `calyx check --tools --probe` runs steps 1, 2 and
+  the count of the Testing Plan below against any tool configured with a
+  `probe` (a setup tool, the arguments, a read tool that counts effects).
+  Against Stripe in test mode (`bench/stripe/probe.sh`,
+  `bench/results/stripe_probe.txt`), it passes the server above (one refund
+  for two calls with the same key) and flags a version of it that stops
+  forwarding the key while still claiming `idempotencyKeyHint: true` (two
+  refunds, error `E0704`).
+
 ## Testing Plan
 
 A conformance test for a server that claims `idempotencyKeyHint: true` on a

@@ -18,13 +18,18 @@ usage: calyx <command> [options]
 
 commands:
   check <file.clyx> [--format human|json] [--time] [--ir | --ir-json]
-                   [--tools [--config FILE]]
+                   [--tools [--probe] [--config FILE]]
       Verify a program without generating code.
       --tools also starts the MCP server of each tool (from calyx.toml) and
       compares the tool's declared effect with what the server says about
       it (`readOnlyHint`, `idempotentHint`): a `read` the server does not
       call read-only (W0701), a `write` without key it does not call
-      idempotent (W0702), a tool with no server (E0701-E0703).
+      idempotent (W0702), a keyed `write` its server says ignores keys
+      (W0703), a tool with no server (E0701-E0703).
+      --probe also tests every keyed `write` that has a `probe` in
+      calyx.toml: two calls with the same key, then a count of the effects
+      with a read tool. More than one effect is an error (E0704). It makes
+      real writes: use it only against a service's test environment.
       --ir prints the compiled graph template when there are no errors;
       --ir-json prints it in the JSON form the runtime loads.
   run <file.clyx> [--graph NAME] [--fake-models] [--quiet] [--config FILE]
@@ -189,11 +194,16 @@ fn check(args: &[String]) -> ExitCode {
     let mut ir = false;
     let mut ir_json = false;
     let mut tools = false;
+    let mut probe = false;
     let mut config_path = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--tools" => tools = true,
+            "--probe" => {
+                tools = true;
+                probe = true;
+            }
             "--config" => match it.next() {
                 Some(c) => config_path = Some(PathBuf::from(c)),
                 None => return usage_error("--config expects a file"),
@@ -250,7 +260,17 @@ fn check(args: &[String]) -> ExitCode {
             Err(code) => return code,
         };
         let declared = calyx_runtime::annotations::declared(&report.ir.to_json());
-        let findings = calyx_runtime::annotations::inspect(&config, &declared);
+        let mut findings = calyx_runtime::annotations::inspect(&config, &declared);
+        if probe {
+            let (probed, more) = calyx_runtime::annotations::probe(&config, &declared);
+            for p in probed.iter().filter(|p| p.effects == 1) {
+                println!(
+                    "probe: tool `{}` applied a repeated key once (key `{}`)",
+                    p.tool, p.key
+                );
+            }
+            findings.extend(more);
+        }
         for f in &findings {
             print!("{}", f.render());
         }

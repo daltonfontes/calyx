@@ -608,7 +608,12 @@ tool (`docs/mcp/idempotency-key-hint.md`): com nosso adaptador do LIMBO
 declarando-a a partir de quais serviços respeitam a chave, a Calyx avisa
 (`W0703`) as 8 declarações desse tipo, sem novos falsos positivos. Quem
 declara é o adaptador, não o LIMBO: isso mostra o que a conferência faz
-quando os servidores dizem a verdade.
+quando os servidores dizem a verdade. Quando podem não dizer,
+`calyx check --tools --probe` testa a afirmação no ambiente de teste do
+serviço: duas chamadas com a mesma chave, depois uma contagem dos efeitos
+com uma tool de leitura. Contra o Stripe em modo de teste, aprova nosso
+servidor e acusa (`E0704`, dois reembolsos) uma versão dele que deixa de
+repassar a chave e continua anunciando `idempotencyKeyHint: true`.
 
 == Escrevendo um workflow real
 

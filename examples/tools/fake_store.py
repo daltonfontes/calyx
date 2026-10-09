@@ -15,7 +15,10 @@ It shows the other side of Calyx's contracts for external writes:
   answers 3 s later; `__gateway__` sends it and answers with an error
   starting `Timeout:`, as a server in front of a mail gateway that did not
   answer would. `email_many` to an address starting `metade@` sends half
-  of its e-mails and crashes, the first time. A refund whose request has `__slowpay__` pays and
+  of its e-mails and crashes, the first time. `payments_for` counts the
+  payments of a request (what `calyx check --tools --probe` reads); with
+  CALYX_FAKE_STORE_IGNORE_KEYS=1 the store ignores keys while still
+  claiming `idempotencyKeyHint: true`, as a broken server would. A refund whose request has `__slowpay__` pays and
   answers 3 s later. The benchmarks (bench/) kill the caller in that window.
 - Every payment made is listed in `payments`, so duplicates can be counted.
 - `email_sent` tells whether an e-mail went out: what `on_uncertain
@@ -73,7 +76,10 @@ TOOLS = [
      "inputSchema": schema(id="string"), "annotations": READ},
     {"name": "refund", "description": "Reembolsa parte de um pedido.",
      "inputSchema": schema(request="string", order="string", amount="number"),
-     "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False}},
+     "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False,
+                     "idempotencyKeyHint": True}},
+    {"name": "payments_for", "description": "Quantos pagamentos uma solicitação fez.",
+     "inputSchema": schema(request="string"), "annotations": READ},
     {"name": "email", "description": "Envia um e-mail.",
      "inputSchema": schema(to="string", subject="string", body="string"), "annotations": SEND},
     {"name": "email_sent", "description": "Se um e-mail com esse assunto já foi enviado.",
@@ -139,6 +145,8 @@ def call(name, args, meta):
         return text(json.dumps(order, ensure_ascii=False))
     if name == "refund":
         key = meta.get("calyx/idempotency_key")
+        if os.environ.get("CALYX_FAKE_STORE_IGNORE_KEYS") == "1":
+            key = None  # a broken server: says it honours keys, does not
         if key is not None and key in db["refund_keys"]:
             return text("null")  # already done: the same key never pays twice
         order = db["orders"].get(args.get("order"))
@@ -194,6 +202,8 @@ def call(name, args, meta):
     if name == "mails_to":
         return text(json.dumps([f"msg-{i + 1}" for i, m in enumerate(db["outbox"])
                                 if m["to"] == args.get("to") and m["subject"] == args.get("subject")]))
+    if name == "payments_for":
+        return text(str(sum(1 for p in db.get("payments", []) if p.get("request") == args.get("request"))))
     if name == "email_sent":
         sent = any(m["to"] == args.get("to") and m["subject"] == args.get("subject")
                    for m in db["outbox"])

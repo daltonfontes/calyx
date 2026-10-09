@@ -251,9 +251,10 @@ for code agents to per-user memory, debates and model routers, in
 - The spec, docs and examples are mostly in Portuguese; the paper is in English.
 - The guarantees rest on stated hypotheses: the service honours the idempotency
   key, and `verify` reads fresh state. Calyx cannot check a service that ignores
-  keys; `calyx check --tools` catches wrong effects, and ignored keys only
-  from servers that send `idempotencyKeyHint`, an annotation we propose to
-  MCP (docs/mcp/idempotency-key-hint.md).
+  keys at run time; `calyx check --tools` catches wrong effects, ignored keys
+  from servers that send `idempotencyKeyHint` (an annotation we propose to
+  MCP, docs/mcp/idempotency-key-hint.md), and with `--probe` tests the key
+  for real in a service's test environment.
 - `on_uncertain accept_loss` can lose the effect. That is what it means.
 - The Lean proofs cover one call; whole programs get a bounded check. Both
   models are written by hand, not extracted from the C runtime.

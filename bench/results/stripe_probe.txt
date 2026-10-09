@@ -1,0 +1,10 @@
+# 2026-10-09 calyx check refund.clyx --probe, Stripe test mode
+## the server as it is
+probe: tool `refund` applied a repeated key once (key `calyx-probe-18dcfe050fb4ac8c-refund`)
+exit 0
+## STRIPE_DROP_KEY=1: the key is not forwarded
+error[E0704]: tool `refund` applied a repeated idempotency key 2 times
+- expected : one effect for two calls with the same key; or declare it `write once` with `on_uncertain`
+- observed : `refunds_with` counted 2 after two calls with key `calyx-probe-18dcfe060b9bc3a6-refund` (idempotencyKeyHint: true)
+Location: [tools.refund] in calyx.toml
+exit 1

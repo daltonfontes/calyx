@@ -262,10 +262,11 @@ modelos, em [`examples/`](examples).
 - As mensagens do compilador e os nomes da linguagem são em inglês.
 - As garantias dependem de hipóteses declaradas: o serviço respeita a chave
   de idempotência, e o `verify` lê o estado atual. A Calyx não tem como
-  conferir um serviço que ignora chaves; `calyx check --tools` pega efeitos
-  errados, e chaves ignoradas só de servidores que mandam
-  `idempotencyKeyHint`, uma anotação que propomos ao MCP
-  (docs/mcp/idempotency-key-hint.md).
+  conferir ao rodar um serviço que ignora chaves; `calyx check --tools` pega
+  efeitos errados, chaves ignoradas de servidores que mandam
+  `idempotencyKeyHint` (uma anotação que propomos ao MCP,
+  docs/mcp/idempotency-key-hint.md) e, com `--probe`, testa a chave de
+  verdade no ambiente de teste do serviço.
 - `on_uncertain accept_loss` pode perder o efeito. É isso que ele significa.
 - As provas em Lean cobrem uma chamada; programas inteiros têm uma
   verificação limitada. Os dois modelos são escritos à mão, não extraídos
