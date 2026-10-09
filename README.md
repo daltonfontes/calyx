@@ -263,3 +263,7 @@ Calyx is created by [Dalton Fontes](https://github.com/daltonfontes), who
 conceived and directed it, read the related work and reviewed every change.
 The code, the experiments and the paper were written with Claude (Anthropic)
 as a coding assistant.
+
+# License
+
+[MIT](LICENSE).
