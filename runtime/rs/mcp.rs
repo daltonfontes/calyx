@@ -6,6 +6,7 @@
 //! whole run. A reader thread turns the server's output into a channel, so
 //! every call can have a timeout.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
@@ -28,6 +29,8 @@ pub struct Server {
     next_id: u64,
     /// Tool names the server offers.
     pub tools: Vec<String>,
+    /// What the server says about each tool (`annotations`), if anything.
+    pub annotations: HashMap<String, Value>,
 }
 
 pub struct ToolAnswer {
@@ -70,6 +73,7 @@ impl Server {
             lines,
             next_id: 1,
             tools: Vec::new(),
+            annotations: HashMap::new(),
         };
         server.request(
             "initialize",
@@ -87,6 +91,19 @@ impl Server {
             .map(|ts| {
                 ts.iter()
                     .filter_map(|t| t["name"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        server.annotations = list["tools"]
+            .as_array()
+            .map(|ts| {
+                ts.iter()
+                    .filter_map(|t| {
+                        Some((
+                            t["name"].as_str()?.to_owned(),
+                            t.get("annotations")?.clone(),
+                        ))
+                    })
                     .collect()
             })
             .unwrap_or_default();

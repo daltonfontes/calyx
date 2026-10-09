@@ -151,6 +151,52 @@ Ficaram duas lacunas, relatadas e não corrigidas:
   informar a resposta. Por isso o post no x devolve `Unit` e o e-mail do
   `cross_post` não traz o id dele. O avaliador do LIMBO não confere esse id.
 
+## Declarações erradas: o que as anotações MCP pegam
+
+A fraqueza das declarações da Calyx é a própria declaração: se o
+programador declara errado o efeito de uma tool, o compilador acredita.
+Os servidores MCP podem descrever cada tool com anotações (`readOnlyHint`,
+`idempotentHint`, `destructiveHint`), e o LIMBO as publica. Agora a Calyx
+confere as duas coisas:
+- `calyx check --tools` confere sem rodar;
+- o runtime confere na primeira chamada de cada tool.
+
+O estudo está em `bench/limbo/declarations.py`, e os dados em
+`bench/results/limbo_declarations.json`.
+
+**Como foi medido.**
+- Cada uma das 21 tools dos programas foi declarada, uma vez cada, das
+  quatro formas possíveis: `read`, `write` sem chave, `write` com chave e
+  `write once`.
+- Cada declaração foi conferida contra um ambiente do LIMBO.
+- Cada declaração foi classificada pelos contratos internos do LIMBO, que o
+  agente nunca vê:
+  - **perigosa:** o runtime pode repetir uma escrita que não é idempotente.
+    É o caso de uma escrita assim declarada `read`, `write` sem chave, ou
+    com uma chave que o serviço ignora;
+  - **segura:** a declaração está certa ou só é mais cuidadosa que o
+    necessário.
+
+| Declaração perigosa | Avisadas |
+|---|---|
+| escrita não idempotente declarada `read` | 10 de 10 (`W0701`) |
+| escrita não idempotente declarada `write` sem chave | 10 de 10 (`W0702`) |
+| `write` com uma chave que o serviço ignora | **0 de 8** |
+
+Das 56 declarações seguras, 3 receberam aviso: são escritas idempotentes
+(reembolso, mudança de estado e upsert) declaradas `read`. Repetir essas
+escritas não faz mal, mas o aviso está certo: elas mudam coisas.
+
+**Leitura.** As anotações pegam os dois erros mais comuns: tratar uma
+escrita como leitura, e esquecer que uma escrita sem chave vai ser
+repetida. Não pegam o erro que mais importou no LIMBO: confiar numa chave
+que o serviço não respeita. Isso não é um defeito da conferência. As
+anotações MCP não têm vocabulário para chaves de idempotência. Por exemplo,
+`social_publish` aceita chave no mastodon e a ignora nas outras
+plataformas, e nada nas anotações diz isso. Uma anotação nova no MCP, algo
+como "aceita chave de idempotência", fecharia a lacuna. Até lá, essa parte
+do contrato continua só na declaração.
+
 ## Ameaças
 
 - **Sem modelo.** Os programas não interpretam a instrução, e a Calyx não
