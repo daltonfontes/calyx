@@ -3,7 +3,7 @@
 
 #include <string.h>
 
-#define CALYX_RUNTIME_VERSION "0.3.1"
+#define CALYX_RUNTIME_VERSION "0.3.2"
 
 const char *calyx_runtime_version(void) { return CALYX_RUNTIME_VERSION; }
 
