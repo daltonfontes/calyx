@@ -1,89 +1,91 @@
-# Os 54 bugs
+# The 54 bugs
 
-Cada um é um workflow de agentes com um erro de programação. Escreva o
-programa **com o erro**, do jeito mais natural em Python (com LangGraph
-quando houver um fluxo de passos), e deixe que as ferramentas o encontrem,
-se encontrarem. "O que observar" diz o que conta como dano.
+*Em português: [bugs.pt.md](bugs.pt.md).*
 
-Alguns bugs podem não ter equivalente natural em Python. Nesse caso, escreva
-o programa mais parecido que conseguir, ou crie o arquivo só com o cabeçalho
-e `# Não se aplica: <motivo>`.
+Each one is an agent workflow with a programming mistake. Write the program
+**with the mistake**, in the most natural Python (with LangGraph when there
+is a flow of steps), and let the tools find it, if they do. "What to watch"
+says what counts as damage.
 
-## Efeitos externos (pagamento, e-mail)
+Some bugs may have no natural equivalent in Python. In that case, write the
+closest program you can, or create the file with just the header and
+`# Not applicable: <why>`.
 
-| # | Programa | O erro | O que observar |
+## External effects (payment, e-mail)
+
+| # | Program | The mistake | What to watch |
 |---|---|---|---|
-| 01 | Dois passos em paralelo calculam um valor e gravam no mesmo campo do estado | O último a terminar sobrescreve o outro | Um dos valores se perde |
-| 02 | Escreve um e-mail (modelo) e manda | O processo cai no meio do envio; na retomada, o programa não decidiu se reenvia ou não | E-mail duplicado ou perdido na retomada |
-| 03 | Um agente (laço modelo → ferramentas) resolve um pedido e tem a ferramenta de mandar e-mail | O agente pode chamar o envio a cada volta | E-mails duplicados |
-| 04 | Faz um reembolso e manda o e-mail de confirmação | O e-mail pode sair antes do reembolso, ou sem ele se o reembolso falhar | Confirmação de um reembolso que não aconteceu |
-| 05 | Antes de pagar, passa ao serviço de pagamento uma condição a conferir ("só se o pedido foi entregue") | O serviço não sabe conferir condições e a ignora sem erro | Paga mesmo com a condição falsa |
-| 06 | Paga só se uma condição sobre o pedido for verdadeira | A condição usa um campo com nome errado (erro de digitação) | A condição nunca é verdadeira, ou quebra |
-| 07 | Paga só se uma condição sobre o pedido for verdadeira | A condição compara texto com número | A condição nunca é verdadeira, ou quebra |
-| 08 | Paga só se uma condição for verdadeira | A condição chama outra ferramenta (consulta externa) em vez de olhar o estado lido junto com o pagamento | Entre a consulta e o pagamento o estado muda |
-| 09 | Chama um serviço que paga e devolve o id do pagamento | Se a chamada fica sem resposta (timeout), o programa segue como se tivesse dado certo e inventa um id | O resto do fluxo usa um id que não existe |
-| 10 | Manda um e-mail; se a resposta não vem, confere se o e-mail saiu | A conferência usa uma função que também escreve (por exemplo, "conferir e reenviar") | A conferência manda outro e-mail |
-| 11 | Manda um e-mail; se a resposta não vem, confere se ele saiu | A conferência olha algo que não identifica este envio (por exemplo, "algum e-mail para o cliente hoje") | Conclui que saiu quando não saiu, ou o contrário |
-| 12 | Uma operação que escreve recebe tratamento de leitura (por exemplo, nova tentativa automática como se fosse segura) | A escrita é repetida em falhas | Efeito duplicado |
-| 13 | Paga e, se der timeout, tenta de novo | O pagamento não leva chave de idempotência | Paga duas vezes |
-| 14 | Define que o e-mail sai depois do pagamento | A dependência aponta para o passo com nome errado | A ordem pretendida não existe |
-| 15 | Dois passos que escrevem, com ordem entre eles | Cada um espera o outro | A execução nunca termina |
-| 16 | Um fluxo que deveria só ler (para rodar sem aprovação) | Ele chama um pagamento | Paga sem aprovação |
-| 17 | Faz um reembolso que pode ser recusado (`None`) | Usa o resultado como se tivesse dado certo | Segue (e avisa o cliente) com um reembolso que não houve |
-| 18 | Manda um e-mail | O processo cai depois de mandar e antes de receber a resposta; a retomada reenvia | E-mail duplicado |
-| 19 | Decide um reembolso (modelo) e paga | O pedido é cancelado entre a decisão e o pagamento | Paga um pedido cancelado |
-| 20 | Confere o status do pedido numa leitura e paga num passo seguinte | Entre os dois o pedido pode mudar | Paga com base num status velho |
-| 21 | Paga com chave de idempotência | A chave é o pedido, não a solicitação de reembolso | Um segundo reembolso legítimo do mesmo pedido é descartado em silêncio |
+| 01 | Two parallel steps compute a value and write it to the same state field | The last to finish overwrites the other | One of the values is lost |
+| 02 | Writes an e-mail (model) and sends it | The process crashes mid-send; on resume, the program has not decided whether to resend | E-mail duplicated or lost on resume |
+| 03 | An agent (model → tools loop) handles a request and has the send-e-mail tool | The agent may call send on every turn | Duplicate e-mails |
+| 04 | Makes a refund and sends the confirmation e-mail | The e-mail may go out before the refund, or without it if the refund fails | Confirmation of a refund that did not happen |
+| 05 | Before paying, passes the payment service a condition to check ("only if the order was delivered") | The service cannot check conditions and ignores it without an error | Pays even with the condition false |
+| 06 | Pays only if a condition on the order holds | The condition uses a misspelled field name | The condition is never true, or crashes |
+| 07 | Pays only if a condition on the order holds | The condition compares text with a number | The condition is never true, or crashes |
+| 08 | Pays only if a condition holds | The condition calls another tool (an external query) instead of looking at the state read together with the payment | The state changes between the query and the payment |
+| 09 | Calls a service that pays and returns the payment id | If the call gets no answer (timeout), the program carries on as if it succeeded and makes up an id | The rest of the flow uses an id that does not exist |
+| 10 | Sends an e-mail; if no answer comes, checks whether it went out | The check uses a function that also writes (for example, "check and resend") | The check sends another e-mail |
+| 11 | Sends an e-mail; if no answer comes, checks whether it went out | The check looks at something that does not identify this send (for example, "any e-mail to the customer today") | Concludes it went out when it did not, or the reverse |
+| 12 | A writing operation is treated as a read (for example, automatic retry as if it were safe) | The write is repeated on failures | Duplicate effect |
+| 13 | Pays and, on timeout, tries again | The payment carries no idempotency key | Pays twice |
+| 14 | Says the e-mail goes out after the payment | The dependency points to a misnamed step | The intended order does not exist |
+| 15 | Two writing steps, ordered | Each waits for the other | The run never finishes |
+| 16 | A flow that should only read (so it can run without approval) | It calls a payment | Pays without approval |
+| 17 | Makes a refund that may be declined (`None`) | Uses the result as if it succeeded | Carries on (and tells the customer) with a refund that did not happen |
+| 18 | Sends an e-mail | The process crashes after sending and before getting the answer; the resume resends | Duplicate e-mail |
+| 19 | Decides a refund (model) and pays | The order is cancelled between the decision and the payment | Pays a cancelled order |
+| 20 | Checks the order status in one read and pays in a later step | The order may change in between | Pays based on a stale status |
+| 21 | Pays with an idempotency key | The key is the order, not the refund request | A second legitimate refund of the same order is silently dropped |
 
-## Arquivos e repositório
+## Files and repository
 
-| # | Programa | O erro | O que observar |
+| # | Program | The mistake | What to watch |
 |---|---|---|---|
-| 22 | Processa uma lista de itens em paralelo, cada um gravando um resultado | Todos gravam o mesmo arquivo | O resultado depende da ordem |
-| 23 | Corrige um repositório com vários itens em paralelo (um por arquivo) | Todos editam o mesmo repositório ao mesmo tempo | Edições se sobrescrevem |
-| 24 | Um passo edita o repositório enquanto outro só lê | O passo que edita foi tratado como leitura, e os dois rodam juntos | A leitura vê uma edição pela metade |
-| 25 | Edita o repositório e roda os testes | Os testes rodam ao mesmo tempo que a edição | O resultado dos testes depende de quem chega primeiro |
-| 26 | Um passo cria um repositório de trabalho | Ele é guardado no estado e usado depois por outros passos sem controle | Ninguém sabe quem é o dono; dois usos se misturam |
-| 27 | Uma função que edita o repositório | É tratada como leitura; uma falha no meio não desfaz nada | A edição fica pela metade |
-| 28 | Um agente tem a ferramenta de editar arquivos | O caminho (diretório) é um argumento que o modelo escolhe | O modelo pode escrever em qualquer lugar |
-| 29 | Trabalha numa cópia do repositório | Uma função escreve no diretório original, não na cópia | A cópia não protege nada |
-| 30 | Edita um arquivo e tenta de novo se falhar | A falha acontece depois de escrever parte do arquivo | A nova tentativa parte de um arquivo pela metade |
-| 31 | Faz várias edições em sequência, com retomada | O processo cai no meio de uma edição | A retomada encontra o repositório num estado que o checkpoint não conhece |
-| 32 | Roda os testes, tratado como leitura | Os testes escrevem arquivos (caches) no repositório | Uma "leitura" mudou o repositório |
+| 22 | Processes a list of items in parallel, each writing a result | They all write the same file | The result depends on the order |
+| 23 | Fixes a repository with several items in parallel (one per file) | They all edit the same repository at the same time | Edits overwrite each other |
+| 24 | One step edits the repository while another only reads | The editing step was treated as a read, and both run together | The read sees a half-done edit |
+| 25 | Edits the repository and runs the tests | The tests run at the same time as the edit | The test result depends on who gets there first |
+| 26 | A step creates a working repository | It is kept in the state and used later by other steps without control | Nobody knows who owns it; two uses get mixed |
+| 27 | A function that edits the repository | It is treated as a read; a failure halfway undoes nothing | The edit is left half-done |
+| 28 | An agent has the edit-files tool | The path (directory) is an argument the model chooses | The model can write anywhere |
+| 29 | Works on a copy of the repository | A function writes to the original directory, not the copy | The copy protects nothing |
+| 30 | Edits a file and tries again if it fails | The failure happens after part of the file was written | The retry starts from a half-written file |
+| 31 | Makes several edits in sequence, with resume | The process crashes in the middle of an edit | The resume finds the repository in a state the checkpoint does not know |
+| 32 | Runs the tests, treated as a read | The tests write files (caches) into the repository | A "read" changed the repository |
 
-## Estado compartilhado entre execuções (contas)
+## State shared between runs (accounts)
 
-| # | Programa | O erro | O que observar |
+| # | Program | The mistake | What to watch |
 |---|---|---|---|
-| 33 | Deposita numa conta | Lê o saldo, soma e grava; duas execuções ao mesmo tempo | Um depósito se perde |
-| 34 | A função que atualiza a conta | Chama um modelo enquanto atualiza | A conta fica travada esperando, e o resultado muda a cada vez |
-| 35 | Pede uma resposta a uma operação da conta | A operação muda o estado e não devolve nada | O programa usa uma resposta que não existe |
-| 36 | Manda um depósito para a conta | O nome da operação está errado (erro de digitação) | O depósito some |
-| 37 | Uma operação da conta muda um campo | O campo não existe | A mudança se perde |
-| 38 | Deposita e depois consulta o saldo na mesma execução | Sem ordem entre os dois | A consulta pode ver o saldo antigo |
-| 39 | Várias execuções do mesmo usuário depositam ao mesmo tempo | — | Depósitos perdidos |
-| 40 | Deposita, com retomada | O processo cai depois de o depósito ser aplicado e antes de a execução registrar isso; a retomada deposita de novo | Depósito duplicado |
-| 41 | Deposita | O usuário clicou duas vezes: duas execuções com o mesmo depósito | Depósito duplicado |
+| 33 | Deposits into an account | Reads the balance, adds and writes back; two runs at the same time | A deposit is lost |
+| 34 | The function that updates the account | Calls a model while updating | The account stays locked waiting, and the result changes every time |
+| 35 | Asks an account operation for an answer | The operation changes the state and returns nothing | The program uses an answer that does not exist |
+| 36 | Sends a deposit to the account | The operation's name is misspelled | The deposit vanishes |
+| 37 | An account operation changes a field | The field does not exist | The change is lost |
+| 38 | Deposits and then checks the balance in the same run | No order between the two | The check may see the old balance |
+| 39 | Several runs for the same user deposit at the same time | — | Lost deposits |
+| 40 | Deposits, with resume | The process crashes after the deposit is applied and before the run records it; the resume deposits again | Duplicate deposit |
+| 41 | Deposits | The user clicked twice: two runs with the same deposit | Duplicate deposit |
 
-## Esperas por pessoas
+## Waiting for people
 
-| # | Programa | O erro | O que observar |
+| # | Program | The mistake | What to watch |
 |---|---|---|---|
-| 42 | Espera uma aprovação | Sem prazo | Se ninguém responde, fica parada para sempre |
-| 43 | Espera uma resposta de fora | Espera um valor de um tipo que nenhuma interface externa sabe entregar | Ninguém consegue responder |
-| 44 | Espera uma aprovação | A mesma aprovação é entregue duas vezes (dois cliques) | A segunda é aplicada de novo |
-| 45 | Espera uma aprovação com prazo de 3 dias | A máquina reinicia durante a espera e o prazo é contado de novo | O prazo nunca vence |
-| 54 | Espera uma aprovação com prazo, e o processo está parado quando o prazo vence | A resposta chega depois do prazo, antes de alguém retomar | A resposta atrasada é aceita e o reembolso sai |
+| 42 | Waits for an approval | No deadline | If nobody answers, it waits forever |
+| 43 | Waits for an answer from outside | Waits for a value of a type no external interface can deliver | Nobody can answer |
+| 44 | Waits for an approval | The same approval is delivered twice (two clicks) | The second is applied again |
+| 45 | Waits for an approval with a 3-day deadline | The machine restarts during the wait and the deadline is counted again | The deadline never expires |
+| 54 | Waits for an approval with a deadline, and the process is stopped when the deadline expires | The answer arrives after the deadline, before anyone resumes | The late answer is accepted and the refund goes out |
 
-## Corridas, rodadas e laços
+## Races, rounds and loops
 
-| # | Programa | O erro | O que observar |
+| # | Program | The mistake | What to watch |
 |---|---|---|---|
-| 46 | Duas estratégias de cobrança correm; fica a primeira que termina | A perdedora também cobra antes de a corrida ser decidida | O cliente é cobrado duas vezes |
-| 47 | Duas estratégias de correção correm | As duas editam o mesmo repositório ao mesmo tempo | As edições se misturam |
-| 48 | Uma corrida entre duas estratégias, com retomada | O processo cai depois de a corrida ser decidida; na retomada, outra termina primeiro | A execução segue com um vencedor diferente do que já usou |
-| 49 | Um debate em rodadas entre agentes | Um agente lê as respostas da rodada atual enquanto os outros ainda respondem | Cada execução vê um conjunto diferente |
-| 50 | Duas estratégias correm; a rápida vence | A lenta continua chamando o modelo | A conta sobe sem uso |
-| 51 | Uma corrida com uma condição para aceitar o resultado | Nenhum ramo passa, e o programa não diz o que fazer | Segue com um valor que não existe |
-| 52 | Uma corrida com uma condição para aceitar o resultado | A condição chama um modelo para julgar cada resposta | Cada ramo gera mais uma chamada paga, e o resultado muda a cada execução |
-| 53 | Repete uma tarefa até uma conferência passar | O pagamento está dentro do laço e sai de novo a cada volta | Paga várias vezes |
+| 46 | Two charging strategies race; the first to finish wins | The loser also charges before the race is decided | The customer is charged twice |
+| 47 | Two fixing strategies race | Both edit the same repository at the same time | The edits get mixed |
+| 48 | A race between two strategies, with resume | The process crashes after the race is decided; on resume, another one finishes first | The run continues with a different winner than the one it already used |
+| 49 | A debate in rounds between agents | One agent reads the current round's answers while the others are still answering | Each run sees a different set |
+| 50 | Two strategies race; the fast one wins | The slow one keeps calling the model | The bill grows for nothing |
+| 51 | A race with a condition to accept the result | No branch passes, and the program does not say what to do | Carries on with a value that does not exist |
+| 52 | A race with a condition to accept the result | The condition calls a model to judge each answer | Each branch makes one more paid call, and the result changes every run |
+| 53 | Repeats a task until a check passes | The payment is inside the loop and goes out again on every turn | Pays several times |

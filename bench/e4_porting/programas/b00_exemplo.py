@@ -1,14 +1,14 @@
-# Bug 00: exemplo do formato (não faz parte dos 54): o e-mail sai duas vezes.
-# Dano: a segunda chamada a store.email
+# Bug 00: example of the format (not one of the 54): the e-mail goes out twice.
+# Damage: the second call to store.email
 from world import Store
 
 store = Store()
 
 
 def notify(customer: str) -> None:
-    store.email(customer, "Seu pedido", "Chegou!")
+    store.email(customer, "Your order", "It arrived!")
 
 
-notify("ana@exemplo.org")
-notify("ana@exemplo.org")
+notify("ana@example.org")
+notify("ana@example.org")
 print(f"e-mails: {len(store.outbox)}")
