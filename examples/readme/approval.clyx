@@ -1,0 +1,16 @@
+model gemini = "gemini-3.5-flash-lite"
+
+message Approval = Approved | Denied(reason: Text)
+
+prompt propose(request: Text) -> Text:
+    """
+    A customer asked: {request}. Propose, in one sentence, what to do.
+    """
+
+graph approve(request: Text) -> Text:
+    proposal = gemini(propose(request))
+    approval = receive Approval about proposal, timeout 3 days:
+        on timeout: Denied(reason="nobody answered in 3 days")
+    return match approval:
+        case Approved: "approved: {proposal}"
+        case Denied(reason): "denied ({reason}): {proposal}"

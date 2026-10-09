@@ -1,0 +1,38 @@
+model gemini = "gemini-3.5-flash-lite"
+
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 4000 tokens
+
+type Review = Approved | Rejected(feedback: Text)
+
+prompt investigate(question: Text) -> Text:
+    """
+    Answer the question, searching as often as you need: {question}
+    """
+
+prompt review(question: Text, answer: Text) -> Review:
+    """
+    Does this answer "{question}" and cite sources? {answer}
+    """
+
+prompt improve(answer: Text, feedback: Text) -> Text:
+    """
+    Improve the answer following the feedback ({feedback}): {answer}
+    """
+
+graph ask(question: Text) -> Text:
+    draft = agent gemini:                       # the ReAct loop, bounded
+        tools [web_search]
+        max_turns 6
+        task investigate(question)
+        on turn_limit: final_answer
+        on stuck: final_answer
+
+    return loop answer = draft, max 2:          # every loop has a limit
+        match gemini(review(question, answer)):
+            case Approved:
+                done answer
+            case Rejected(feedback):
+                next gemini(improve(answer, feedback))
+        on limit: last

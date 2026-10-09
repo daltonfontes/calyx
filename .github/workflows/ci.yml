@@ -38,6 +38,16 @@ jobs:
           ./target/release/calyx run examples/router.clyx --fake-models --ticket "Fui cobrado duas vezes"
           ./target/release/calyx run examples/atendimento.clyx --graph atender --fake-models --cliente ana --pedido A100 --mensagem "Como troco o endereço?"
 
+      - name: The README snippets check, and the unsafe one is refused
+        run: |
+          for f in refund research approval agent; do
+            ./target/release/calyx check examples/readme/$f.clyx
+          done
+          if ./target/release/calyx check examples/readme/refund_unsafe.clyx > unsafe.log 2>&1; then
+            echo "refund_unsafe.clyx should not pass"; exit 1
+          fi
+          grep -q E0304 unsafe.log && grep -q W0601 unsafe.log && grep -q W0602 unsafe.log
+
       - name: The LIMBO programs compile under both contracts
         run: |
           for c in native keys; do
