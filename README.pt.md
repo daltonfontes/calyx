@@ -2,209 +2,286 @@
 
 *In English: [README.md](README.md).*
 
-Calyx é uma linguagem de programação **graph-native** para agentes de IA.
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="media/check_dark.gif"><img src="media/check.gif" width="640" alt="calyx check recusa um workflow de reembolso que pode pagar duas vezes; três linhas corrigem"></picture></p>
 
-## O problema
+Agentes de IA já enviam e-mails, movem dinheiro e editam código. Quando uma
+dessas chamadas dá timeout, ninguém sabe se ela aconteceu. Repita, e o
+cliente recebe o reembolso duas vezes. Não repita, e o reembolso se perde.
+Todo framework deixa essa escolha para você, e a maior parte do código nunca
+a faz.
 
-> **Colocar agentes de IA em produção exige escrever à mão uma infraestrutura difícil (paralelismo, retentativas, recuperação de falhas, consistência de estado, controle de custo, rastreamento), e é exatamente nesse código escrito à mão que os agentes quebram.**
+A Calyx é uma linguagem para workflows de agentes em que **toda tool declara
+seu efeito**, e o compilador **recusa o programa** até ele dizer o que
+acontece quando o resultado de uma chamada é incerto. Você escreve os passos;
+a Calyx deriva o paralelismo, as novas tentativas e a recuperação depois de
+quedas.
 
-Um agente real faz dezenas ou centenas de chamadas de LLM e de tools, muitas em paralelo, às vezes ao longo de horas ou dias, e algumas mudam o mundo (enviam e-mail, fazem pagamento, editam código). Hoje, quem constrói isso enfrenta seis problemas:
+Isso é a Calyx: sintaxe parecida com Python, um grafo por baixo, efeitos em
+que dá para confiar.
 
-| Problema | O que acontece hoje | Evidência |
-|---|---|---|
-| **Fluxo escondido** | No ReAct e no AutoGen, o controle está dentro do texto do LLM ou da conversa; não dá para inspecionar nem garantir nada | [Papers](docs/discovery/02-papers.md) |
-| **Paralelismo feito à mão, e errado** | O programador escreve `parallel` ou `async`, e o framework erra | No código do AgentSPEX, o `parallel` roda em sequência e os ramos perdem o estado ([Papers](docs/discovery/02-papers.md)) |
-| **Agentes concorrentes corrompem estado** | Dois agentes leem, pensam por segundos e escrevem; um apaga o trabalho do outro | Sem proteção, 97,5% das execuções concorrentes violam regras de negócio; sistemas multiagente falham em 41–87% dos benchmarks ([SVBE](docs/discovery/10-svbe.md), [concorrência](docs/discovery/07-escalonamento-e-concorrencia.md)) |
-| **Proteger com trava é lento** | Travar durante o raciocínio do LLM bloqueia todo mundo | Latência P95 de 5 s para 29 s ([SVBE](docs/discovery/10-svbe.md)) |
-| **Falhas custam caro e duplicam efeitos** | O processo cai no meio; recomeçar repete chamadas pagas ou envia o e-mail de novo | No Temporal, o determinismo depende de disciplina e a idempotência é só recomendação ([Temporal](docs/discovery/05-temporal.md)) |
-| **Custo e contexto explodem em produção** | O agente entra em laço, a conversa estoura a janela, a conta chega alta | Bibliotecas Python não analisam o grafo antes de rodar ([Papers](docs/discovery/02-papers.md)) |
+## A Calyx BLOQUEIA efeitos duplicados, antes de rodar
 
-## A proposta
+Um reembolso, depois um e-mail. Parece certo:
 
-**Você escreve o que o agente faz, como um grafo. A linguagem garante o resto.**
+```python
+tool refund(order: Text, amount: Float) -> Unit:
+    effect write
 
-- **Antes de rodar**, o compilador verifica, em até 1 segundo: teto de custo, se a conversa cabe na janela do modelo, se todo efeito perigoso tem política, se dois ramos não disputam o mesmo recurso, se todo laço termina.
-- **Ao rodar**, o runtime deriva sozinho o que hoje se escreve à mão: o paralelismo, a retomada depois de uma queda sem pagar de novo, a garantia de não enviar nada duas vezes, e o rastreamento de custo por passo.
+tool email(to: Text, body: Text) -> Unit:
+    effect write once
+
+graph handle_refund(order: Text, message: Text) -> Text:
+    proposal = gemini(decide(order, message))
+    paid = refund(order, proposal.amount)
+    notice = email("ana@example.com", "refunded {proposal.amount}")
+    return "done"
+```
+
+O `calyx check` discorda:
 
 ```
+warning[W0601]: `write` tool without `idempotency_key`
+- expected : `idempotency_key param`, so retries and resumed runs cannot apply it twice
+- observed : no key: the runtime repeats the call after failures, so the tool itself must be idempotent
+
+error[E0304]: `write once` tool needs a policy for uncertain outcomes
+- expected : `on_uncertain verify(...)`, `on_uncertain pause` or `on_uncertain accept_loss`
+- observed : no `on_uncertain` property
+
+warning[W0602]: external writes without a defined order
+- expected : `notice after paid` (or `paid after notice`), or a value one passes to the other
+- observed : `paid` and `notice` both write outside the run and may run at the same time
+```
+
+Três linhas corrigem, e elas não são opcionais:
+
+```python
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request               # repetido ou retomado: paga uma vez
+
+tool email(to: Text, body: Text) -> Unit:
+    effect write once
+    on_uncertain verify(email_sent(to, body))   # deu timeout? confere antes de reenviar
+
+graph handle_refund(request: Text, order: Text, message: Text) -> Text:
+    proposal = gemini(decide(order, message))
+    paid = refund(request, order, proposal.amount)
+    notice = email("ana@example.com", "refunded {proposal.amount}")
+    notice after paid
+    return "done"
+```
+
+Os erros são estruturados (`expected` / `observed` / local), então um agente
+de IA consegue lê-los e corrigir o próprio código. Em resumo: o compilador
+exige o contrato de efeito que, em Python, só um programador atento lembra de
+escrever.
+
+## A Calyx RETOMA sem pagar duas vezes
+
+Toda chamada concluída vai para um diário. Mate o processo em qualquer ponto,
+e `calyx resume <id>` continua de onde parou: nenhuma chamada de modelo paga
+duas vezes, nenhum reembolso enviado duas vezes. Matamos o workflow de
+reembolso (`kill -9`) em 6 pontos:
+
+| Sistema | Certos (de 6) | Reembolsos duplicados | E-mails duplicados |
+|---|---|---|---|
+| **Calyx** | **6** | **0** | **0** |
+| Temporal | 4 | 1 | 1 |
+| LangGraph, `durability="sync"` | 4 | 1 | 1 |
+| LangGraph, padrão | 3 | 2 | 1 |
+
+Com o cuidado que a documentação deles recomenda (3 linhas a mais em cada),
+Temporal e LangGraph também fazem 6 de 6. A diferença é o padrão, não o teto:
+na Calyx, essas linhas são obrigatórias. Detalhes em
+[`docs/evaluation/comparacao.md`](docs/evaluation/comparacao.md).
+
+## A Calyx é PARALELA
+
+Sem `async`, sem `parallel`, sem threads. Passos que não dependem uns dos
+outros rodam ao mesmo tempo, o caminho crítico primeiro:
+
+```python
 graph research(topic: Text) -> Text:
+    effect read                         # este grafo nunca escreve no mundo
     limits threads 8, budget 2 USD
 
-    plan = claude(split_topic(topic))
-    findings = for each q in plan.questions:   # paralelismo derivado, sem "parallel"
-        agent claude:
-            tools [web_search]
-            max_turns 10
-            task investigate(q)
-            on turn_limit: final_answer
-            on stuck: final_answer
-
-    return claude(write_report(topic, findings))
+    plan = gemini(split_topic(topic))
+    answers = for each q in plan.questions:     # sem `parallel`, sem `async`
+        gemini(summarize(q, web_search(q)))
+    return gemini(write_report(topic, answers))
 ```
 
-A sintaxe **parece Python e se comporta como uma linguagem funcional**: cada linha `nome = ...` é um passo do grafo, valores não mudam, e quem decide a ordem de execução são as dependências, não a ordem das linhas.
+Com um modelo real (Gemini), mediana de 3 execuções:
 
-A analogia mais próxima é o **SQL**: você declara o que quer, e o banco decide como executar, paralelizar e se recuperar. A Calyx tenta fazer isso para agentes.
+| Perguntas | Calyx | asyncio, à mão | LangGraph | Python, sequencial |
+|---|---|---|---|---|
+| 5 | **5,1 s** | 5,2 s | 7,3 s | 10,6 s |
+| 10 | **6,1 s** | 6,4 s | 8,1 s | 17,3 s |
 
-**Para quem:** times que colocam agentes em produção com efeitos reais (dinheiro, mensagens, código), e **agentes que escrevem agentes**: com verificação rápida e erros estruturados, um agente de IA pode escrever código Calyx e corrigi-lo sozinho.
+A Calyx empata com o asyncio escrito à mão. O ganho é não escrever o
+paralelismo.
 
-**O que ela não resolve:** a qualidade do raciocínio do modelo e dos prompts; decidir qual agente construir; regras de negócio de sistemas externos além das precondições declaradas.
+## A Calyx verifica RÁPIDO
 
-**Por que uma linguagem, e não uma biblioteca:** as garantias dependem de analisar o programa inteiro antes de rodar. Uma biblioteca não consegue impedir que se chame o relógio dentro do workflow ou que se envie um e-mail duas vezes. O preço é a adoção, bem mais difícil que a de uma biblioteca.
+**Meta:** verificar qualquer programa em menos de 1 segundo, para que um
+agente possa verificar a cada mudança. **Situação:** o exemplo de atendimento
+ao cliente, de 155 linhas ([`atendimento.clyx`](examples/atendimento.clyx)),
+é verificado em **0,5 ms**. O verificador e o runtime compilam para código
+nativo; o `calyx` é um binário só, de ~3 MB.
 
-**Comparação com Python, LangGraph e Temporal:** [`docs/evaluation/comparacao.md`](docs/evaluation/comparacao.md). Em 6 pontos de queda do fluxo de reembolso, a Calyx não duplica nenhum pagamento nem e-mail sem código de recuperação; Temporal e LangGraph chegam ao mesmo resultado só com o cuidado manual que a documentação recomenda (sem ele, erram 2 a 3 dos 6). Dos 14 bugs de estado que a Calyx pega antes de rodar, pyright e mypy pegam 2.
+## A Calyx é PROVADA, dentro de limites
 
-**No LIMBO** (benchmark de efeitos duplicados de outros autores): [`docs/evaluation/limbo.md`](docs/evaluation/limbo.md). Com as tools como são, a Calyx empata com os melhores modelos (76% de efeito único, contra 74–79%); quando toda escrita aceita chave, 100%, sem nenhuma duplicata.
+As regras de efeito vêm com três teoremas: uma chamada `write once` acontece
+**no máximo uma vez**; terminada por `verify` ou por uma pessoa, **exatamente
+uma vez**; e **nada feito é refeito** ao retomar. Para uma chamada, eles são
+provados em Lean ([`formal/Effects.lean`](formal/Effects.lean), conferido na
+CI). Para programas inteiros, um verificador de modelos limitado tenta toda
+combinação de até 2 falhas e 2 quedas, e acha um contraexemplo para cada
+hipótese retirada. Formalizar achou dois bugs no runtime, ambos corrigidos.
 
-**O que ainda não está provado:** a hipótese central foi testada só no papel ([teste no papel](docs/discovery/04-teste-no-papel.md)). As perguntas de pesquisa da [hipótese](docs/discovery/01-hipotese.md) só se respondem com uma implementação.
+No [LIMBO](https://github.com/jaxblack/limbo-bench), um benchmark externo de
+efeitos duplicados (205 episódios com falha), programas Calyx chegam a
+**76%** de sucesso com efeito único com as tools como são (modelos de
+fronteira: 74–79%), e a **100%, zero duplicatas** quando toda escrita aceita
+chave.
 
-## Estado do projeto
+# Como começar
 
-O **discovery** está concluído (35 decisões fechadas). Na implementação, estes marcos estão concluídos:
+### 1. Instale:
 
-- **M0:** estrutura do repositório.
-- **M1:** `calyx check` para o subconjunto inicial.
-- **M2:** `calyx run`. O runtime executa o grafo de ponta a ponta, com chamadas reais de modelo e tools via MCP.
-- **M3:** diário. Uma execução interrompida continua sem refazer nenhuma chamada concluída.
-- **M4:** paralelismo derivado do grafo, com limites e prioridade pelo caminho crítico.
-- **M5:** `agent`, `loop`, `match`, `if` e `try`. O ciclo ReAct funciona com o Gemini.
-- **M6a:** escritas externas seguras: chave de idempotência, políticas para `write once` de resultado incerto, precondições conferidas pela tool e `after`.
-- **M6b:** sandboxes. O agente trabalha numa cópia do repositório, com empréstimos `reads`/`edits` verificados e snapshots para desfazer e retomar.
-- **M6c:** entidades: estado entre execuções, uma mudança por vez por chave, cada mensagem aplicada uma vez.
-- **M7:** camada pura: `def`, `true`/`false`, listas por compreensão, `in` e funções embutidas.
-- **M8:** `receive`. Uma execução espera dias por uma mensagem (uma aprovação, por exemplo) sem servidor nenhum, e continua de onde parou.
-- **M9:** `rounds` e `race`. Agentes debatem em rodadas, com os de cada rodada em paralelo e uma barreira no fim; estratégias correm entre si, a primeira que passa na condição vence e as outras param.
-- **M10:** roteador de modelos. O modelo mais barato responde primeiro; só quando a resposta não passa numa verificação o pedido sobe para um modelo mais caro.
-
-Na medida Q2, o compilador pega 30 de 45 bugs de estado antes de rodar, e 39 de 45 nunca causam dano. A Calyx se instala como um binário só, e `calyx build` gera executáveis autocontidos (D35). Princípios do projeto: **compilar para código nativo, rodar rápido e verificar um programa em até 1 segundo**, para que um agente de IA possa verificar a cada mudança.
-
-## Como instalar
-
-Um binário só, sem dependências: não precisa de Rust, de compilador C nem de bibliotecas (decisão D35). Linux (x86_64 e ARM) e macOS (Intel e Apple Silicon); no Windows, use o WSL.
-
-```sh
+```bash
 curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | sh
 ```
 
-O script baixa o binário da última versão em [Releases](https://github.com/daltonfontes/calyx/releases), confere o SHA-256 e instala em `~/.calyx/bin`. `CALYX_VERSION=v0.1.0` escolhe uma versão; `CALYX_INSTALL` troca a pasta.
+Um binário só, sem dependências. Linux e macOS (x86_64 e ARM); no Windows,
+use o WSL.
 
-**Programas como executáveis.** `calyx build` gera um executável que roda um grafo, com o programa e o `calyx.toml` dentro. Quem recebe o arquivo não precisa instalar nada:
+### 2. Diga ao seu agente para usar a Calyx:
 
-```sh
-calyx build examples/research.clyx          # gera ./research (~3 MB)
-./research --topic "energia solar no Brasil"
-./research --help                           # mostra os parâmetros do grafo
+Acrescente ao seu `AGENTS.md`:
+
+```
+Ao escrever workflows de agentes:
+- escreva em Calyx (.clyx); a especificação é docs/spec/calyx.md
+- declare o efeito de toda tool: `read`, `write` com `idempotency_key`,
+  ou `write once` com `on_uncertain`
+- rode `calyx check <arquivo>` depois de cada mudança, e corrija todo erro
+- teste com `calyx run <arquivo> --fake-models` antes de usar modelos reais
 ```
 
-Os comandos das tools (servidores MCP) rodam na pasta do executável, então leve junto o que eles usam (no exemplo, a pasta `tools/`).
+### 3. Rode (de um clone deste repositório, para os exemplos):
 
-## Como compilar e testar
-
-Só para quem desenvolve a Calyx. Requisitos: Rust (stable) e um compilador C.
-
-```sh
-make test     # testes do compilador (Rust) e do runtime (C); precisam de python3
-make lint     # rustfmt + clippy
-cargo run -p calyx-cli -- check examples/research.clyx --ir --time
+```bash
+calyx run examples/refund.clyx --fake-models --request R1 --order A100 --message "chegou quebrado"
+export GEMINI_API_KEY=...           # ou qualquer provedor compatível com a OpenAI
+calyx run examples/research.clyx --topic "energia solar no Brasil"
+calyx runs                          # lista as execuções; `calyx resume <id>` continua uma
+calyx build examples/research.clyx  # um executável autocontido, nada a instalar
 ```
 
-## Como rodar um programa
+As tools são servidores [MCP](https://modelcontextprotocol.io), escritos em
+qualquer linguagem e declarados no `calyx.toml`. `calyx check --tools`
+compara cada declaração com o que o servidor diz de si mesmo.
 
-```sh
-# Sem rede e sem chave: os modelos devolvem respostas falsas no formato do tipo do prompt.
-cargo run -p calyx-cli -- run examples/research.clyx --fake-models --topic "energia solar no Brasil"
+# Exemplos
 
-# Um agente que pesquisa (ciclo ReAct) e revisa a própria resposta:
-cargo run -p calyx-cli -- run examples/agent.clyx --fake-models --question "vantagens das baterias de sódio"
+### Sintaxe == Python, passos == um grafo
 
-# Um agente de código numa sandbox (cópia do repositório); o original não muda:
-cargo run -p calyx-cli -- run examples/fix.clyx --fake-models --repo examples/sample_repo --issue "average([2, 4, 6]) devolve 6"
+Cada `nome = ...` é um passo. Valores não mudam, e a ordem vem dos dados, não
+das linhas. Veja o `research` acima.
 
-# Memória entre conversas (uma entidade por usuário, em .calyx/entities/):
-cargo run -p calyx-cli -- run examples/memory.clyx --fake-models --user ana --text "Moro em Recife"
+### Esperar uma pessoa == `receive`
 
-# Aprovação humana: a execução para e espera (estado `waiting`), sem servidor:
-cargo run -p calyx-cli -- run examples/approval.clyx --fake-models --request "reembolso de 300"
-cargo run -p calyx-cli -- deliver <id> Approval Approved
-cargo run -p calyx-cli -- resume <id> --fake-models      # ou `calyx tick`, num cron
+A execução para, grava seu estado no disco e sai; nenhum servidor. Dias
+depois, `calyx deliver <id> Approval Approved` e `calyx resume <id>` a
+continuam.
 
-# Escritas externas seguras: reembolso com precondições e e-mail que nunca sai duas vezes:
-cargo run -p calyx-cli -- run examples/refund.clyx --fake-models --request R1 --order A100 --message "chegou quebrado"
+```python
+message Approval = Approved | Denied(reason: Text)
 
-# Com um modelo de verdade (os exemplos usam gemini-3.5-flash-lite):
-export GEMINI_API_KEY=...      # nunca no código nem no calyx.toml
-cargo run -p calyx-cli -- run examples/research.clyx --topic "energia solar no Brasil"
+graph approve(request: Text) -> Text:
+    proposal = gemini(propose(request))
+    approval = receive Approval about proposal, timeout 3 days:
+        on timeout: Denied(reason="nobody answered in 3 days")
+    return match approval:
+        case Approved: "approved: {proposal}"
+        case Denied(reason): "denied ({reason}): {proposal}"
 ```
 
-**Paralelismo sem escrever paralelismo.** Chamadas que não dependem umas das outras rodam ao mesmo tempo, até o limite `limits threads N` do grafo (8 por padrão), e as do caminho crítico saem primeiro. `--deterministic` roda uma por vez, sempre na mesma ordem; o resultado é o mesmo nos dois modos.
+### Agentes == laços limitados
 
-Cada parâmetro do grafo vira uma opção (`--topic`). O resultado vai para a saída padrão; o rastro (uma linha por passo e por chamada, com tempo e tokens) vai para a saída de erro, e some com `--quiet`.
+Um agente é um passo como outro qualquer, e todo laço tem um limite que o
+compilador confere.
 
-**Diário e retomada.** Toda execução grava cada chamada concluída num diário, em `.calyx/runs/<id>/`. Se o processo cair, ou uma chamada falhar de vez, a execução continua de onde parou, sem pagar de novo pelo que já terminou:
+```python
+graph ask(question: Text) -> Text:
+    draft = agent gemini:                       # o ciclo ReAct, limitado
+        tools [web_search]
+        max_turns 6
+        task investigate(question)
+        on turn_limit: final_answer
+        on stuck: final_answer
 
-```sh
-calyx runs                 # lista as execuções e o estado de cada uma
-calyx resume <id>          # continua; chamadas já no diário vêm dele
-calyx replay <id>          # reexecuta só a partir do diário, sem chamar nada
+    return loop answer = draft, max 2:          # todo laço tem limite
+        match gemini(review(question, answer)):
+            case Approved:
+                done answer
+            case Rejected(feedback):
+                next gemini(improve(answer, feedback))
+        on limit: last
 ```
 
-**Modelos.** O runtime fala o formato de API da OpenAI, aceito por Gemini, NVIDIA, OpenAI, OpenRouter, Groq e Ollama. Identificadores `gemini-*`, `gpt-*` e `nvidia/*` já têm provedor embutido; outros se configuram no `calyx.toml`.
+Os programas completos por trás desses trechos estão em
+[`examples/readme/`](examples/readme), conferidos na CI. Há mais, de sandboxes
+para agentes de código a memória por usuário, debates e roteadores de
+modelos, em [`examples/`](examples).
 
-**Escritas externas.** Uma tool que escreve declara o que o runtime precisa para não repetir nem perder o efeito: `idempotency_key` para `write`; `on_uncertain` (`pause`, `accept_loss` ou `verify(...)`) para `write once`, aplicada quando não se sabe se a chamada aconteceu; `checks` para precondições `requires`, que a própria tool confere sobre o estado atual. Com `on_uncertain pause`, a execução para e uma pessoa decide: `calyx resume <id> --uncertain done|retry|failed`, ou `done=<resposta>` quando a tool devolve algo que o programa usa. Uma escrita em lote declara `batch itens`: se ela cai no meio, o `verify` acha os itens já aplicados e a Calyx manda só os que faltam.
+# Referências
 
-**Sandboxes.** Um parâmetro `Sandbox` é um diretório; a execução trabalha numa cópia, em `.calyx/runs/<id>/sandboxes/`. As tools pedem a sandbox emprestada (`reads` ou `edits`), e a ordem entre os passos sai desses empréstimos. Uma chamada que falha é desfeita; uma execução retomada encontra a sandbox como o diário a deixou.
+- Paper: [Calyx: um compilador que exige o contrato de efeito em workflows de agentes](paper/Calyx-pt.pdf) (em inglês: [Calyx.pdf](paper/Calyx.pdf)).
+- Formalização: [Effects.lean](formal/Effects.lean), as regras de efeito e suas provas, em Lean; [formal.md](docs/paper/formal.md) e o verificador limitado [model.py](bench/formal/model.py).
+- Especificação: [calyx.md](docs/spec/calyx.md), a linguagem, toda verificação e todo código de erro.
+- Avaliação: [docs/evaluation/](docs/evaluation), contra Python, LangGraph e Temporal, bugs reais e o LIMBO.
+- Benchmarks: [bench/](bench), todo script por trás dos números acima, com os dados em `bench/results/`.
+- Visão geral: [visao-geral.md](docs/visao-geral.md), o estado de cada marco, como compilar e rodar, a pasta de cada parte.
+- Design: [docs/discovery/](docs/discovery), as 35 decisões de design e a pesquisa por trás delas.
+- Demonstração: [make_check_gif.py](media/make_check_gif.py) grava o GIF acima a partir da saída real do `calyx check`.
 
-**Entidades.** Uma `entity` guarda estado entre execuções, um por chave (por exemplo, a memória de cada usuário). `ask` pergunta, `send` muda; as mudanças de uma chave são aplicadas uma por vez, mesmo com várias execuções ao mesmo tempo, e cada mensagem uma vez só.
+# Limitações
 
-**Tools.** Cada tool roda num servidor MCP (decisão D34), declarado no `calyx.toml` ao lado do programa. O exemplo usa uma busca falsa ([`examples/tools/fake_search.py`](examples/tools/fake_search.py)); para usar uma busca real, troque o comando:
-
-```toml
-[tools.web_search]
-command = ["python3", "tools/fake_search.py"]   # relativo ao calyx.toml
+```
+- A Calyx é nova (v0.3). Espere bugs e mudanças incompatíveis.
+- As mensagens do compilador e os nomes da linguagem são em inglês.
+- As garantias dependem de hipóteses declaradas: o serviço respeita a chave
+  de idempotência, e o `verify` lê o estado atual. A Calyx não tem como
+  conferir um serviço que ignora chaves; `calyx check --tools` pega efeitos
+  errados, não chaves ignoradas.
+- `on_uncertain accept_loss` pode perder o efeito. É isso que ele significa.
+- As provas em Lean cobrem uma chamada; programas inteiros têm uma
+  verificação limitada. Os dois modelos são escritos à mão, não extraídos
+  do runtime em C.
+- Agentes não podem chamar tools `write once`.
+- Uma máquina só: o diário são arquivos locais. Ainda sem execução distribuída.
+- Tools só como servidores MCP via stdio; modelos só por APIs compatíveis com
+  a da OpenAI.
+- A camada pura não tem recursão, de propósito (todo programa termina).
+- Sem language server, depurador ou REPL.
+- A maioria dos experimentos usa modelos falsos; os de paralelismo e
+  recuperação foram repetidos com o Gemini. Os baselines e o corpus de bugs
+  foram escritos pelo autor da Calyx; as tarefas e o avaliador do LIMBO não.
+- Sem Windows (o WSL funciona).
 ```
 
-| Pasta | Conteúdo |
-|---|---|
-| `compiler/calyx-syntax` | Fonte, diagnósticos estruturados, lexer e parser |
-| `compiler/calyx-check` | O verificador e a geração da representação intermediária |
-| `compiler/calyx-ir` | Representação intermediária (o template do grafo) |
-| `compiler/calyx-cli` | O comando `calyx` |
-| `runtime/src` | O interpretador em C: valores, execução do grafo, novas tentativas, rastro |
-| `runtime/rs` | A camada de E/S em Rust que o interpretador chama: modelos por HTTPS, tools por MCP, `calyx.toml`; e o verificador exposto ao C. Tudo sai numa biblioteca estática só |
-| `tests/programs/` | Programas de teste com os diagnósticos esperados (`.expected`) e a representação intermediária esperada (`.ir`) |
-| `tests/state_bugs/` | A medida Q2: workflows com um bug de estado conhecido cada, e quem o pega (compilador, runtime ou ninguém) |
-| `examples/` | Programas de exemplo. `research.clyx`, `agent.clyx`, `refund.clyx`, `fix.clyx`, `memory.clyx`, `approval.clyx`, `debate.clyx`, `race.clyx`, `router.clyx` e `atendimento.clyx` (atendimento ao cliente, juntando quase tudo) passam na verificação e rodam; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
+**A CALYX É JOVEM. ESPERE BUGS E [RELATE-OS](https://github.com/daltonfontes/calyx/issues).**
 
-## Referências
+# Créditos
 
-- Paper: [Calyx: A Compiler That Demands the Effect Contract in Agent Workflows](paper/Calyx.pdf) (em inglês; fonte em [`paper/calyx.typ`](paper/calyx.typ), gerado com `typst compile paper/calyx.typ paper/Calyx.pdf`).
-- Especificação: [`docs/spec/calyx.md`](docs/spec/calyx.md).
-- Formalização: [`docs/paper/formal.md`](docs/paper/formal.md), as regras de efeito e os teoremas, com o verificador exaustivo em [`bench/formal/model.py`](bench/formal/model.py) e as provas mecanizadas em Lean em [`formal/Effects.lean`](formal/Effects.lean).
-- Avaliação: [`docs/evaluation/`](docs/evaluation/), com a comparação contra LangGraph e Temporal, o estudo de bugs reais e o LIMBO.
-- Benchmarks: [`bench/`](bench/), todos os scripts que geram os números do paper, e os dados em `bench/results/`.
+A Calyx foi criada por [Dalton Fontes](https://github.com/daltonfontes), que
+a concebeu e dirigiu, leu os trabalhos relacionados e revisou cada mudança. O
+código, os experimentos e o paper foram escritos com o Claude (Anthropic)
+como assistente de programação.
 
-## Plano de implementação
+# Licença
 
-[`docs/roadmap.md`](docs/roadmap.md): marcos de implementação, começando por uma fatia vertical (parser → check → runtime) para provar o modelo de execução.
-
-## Especificação
-
-[`docs/spec/calyx.md`](docs/spec/calyx.md): rascunho v0 da especificação, consolidando todas as decisões do discovery.
-
-## Documentos de discovery
-
-| Documento | Conteúdo |
-|---|---|
-| [Hipótese](docs/discovery/01-hipotese.md) | A ideia central, o que a linguagem precisa garantir e como validar |
-| [Papers](docs/discovery/02-papers.md) | Leitura dos trabalhos de referência a partir de 8 perguntas |
-| [Decisões](docs/discovery/03-decisoes.md) | Decisões de design, com opções e recomendação |
-| [Teste no papel](docs/discovery/04-teste-no-papel.md) | 8 workflows reais usados para testar a hipótese |
-| [Temporal](docs/discovery/05-temporal.md) | Leitura do Temporal (execução durável) e impacto nas decisões de recuperação |
-| [ReAct como ciclo](docs/discovery/06-react-como-ciclo.md) | Como representar o laço de raciocínio e ação como o primeiro ciclo do grafo |
-| [Escalonamento e concorrência](docs/discovery/07-escalonamento-e-concorrencia.md) | Controle de concorrência entre agentes e escalonamento de grafos de tarefas |
-| [Bend](docs/discovery/08-bend.md) | Runtime paralelo e tipos afins do Bend, e o que se transfere para a Calyx |
-| [Sintaxe](docs/discovery/09-sintaxe.md) | Proposta de sintaxe testada com 9 programas em `examples/` |
-| [SVBE](docs/discovery/10-svbe.md) | Consistência de estado entre agentes concorrentes: validação semântica no momento do efeito |
-| [Mapa da orquestração](docs/discovery/11-mapa-orquestracao.md) | Onde a Calyx está na pilha de orquestração de agentes, e o que falta |
-| [Arquitetura do runtime](docs/discovery/12-arquitetura-runtime.md) | Compilador e runtime nativos com modelo de atores; princípio de rodar e compilar rápido |
-| [Concorrência](docs/discovery/13-concorrencia.md) | Os três problemas da concorrência (descobrir, executar, estado) e o modelo de concorrência da Calyx |
+[MIT](LICENSE).
