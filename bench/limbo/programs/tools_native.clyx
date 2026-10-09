@@ -1,0 +1,98 @@
+# As tools do LIMBO como um programador as declararia lendo só a documentação
+# delas (contrato "native"). Cada programa de tarefa vem depois deste arquivo.
+#
+# Escritas:
+# - com chave: `charge` (a cobrança aceita chave) e `publish_keyed` (só o
+#   mastodon aceita chave);
+# - idempotentes pela própria natureza (`write` sem chave, W0601):
+#   `set_status`, `upsert` e `refund` (reembolsar de novo responde 409);
+# - `write once`, com `verify` por uma leitura que acha o que a chamada fez:
+#   post no linkedin e no weibo, ticket, comentário, e-mail, linha e deploy;
+# - `write once` com `pause`, onde não há como conferir: post no x (sem
+#   listagem) e o lote de linhas (pode ficar pela metade, e `verify` só diz
+#   sim ou não).
+
+tool wait(seconds: Nat) -> Unit:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool status_after(run_id: Text, seconds: Nat) -> Text:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool posts_with(platform: Text, text: Text) -> List[Text]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool tickets_titled(project: Text, title: Text) -> List[Text]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool has_comment(ticket_key: Text, text: Text) -> Bool:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool mails_sent(to: Text, subject: Text) -> List[Text]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool rows_with(table: Text, row: Map[Text, Text]) -> List[Text]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool runs_of(service: Text, version: Text, environment: Text) -> List[Text]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool publish(platform: Text, text: Text, op: Text) -> Text:
+    effect write once
+    on_uncertain verify(posts_with(platform, text))
+
+tool publish_keyed(platform: Text, text: Text, op: Text) -> Text:
+    effect write
+    idempotency_key op
+
+tool publish_x(platform: Text, text: Text, op: Text) -> Unit:
+    effect write once
+    on_uncertain pause
+
+tool charge(customer_id: Text, amount_cents: Nat, description: Text, op: Text) -> Text:
+    effect write
+    idempotency_key op
+
+tool refund(charge_id: Text, reason: Text) -> Unit:
+    effect write
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool create_ticket(project: Text, title: Text, body: Text, op: Text) -> Text:
+    effect write once
+    on_uncertain verify(tickets_titled(project, title))
+
+tool comment(ticket_key: Text, text: Text, op: Text) -> Unit:
+    effect write once
+    on_uncertain verify(has_comment(ticket_key, text))
+
+tool set_status(ticket_key: Text, status: Text) -> Unit:
+    effect write
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool send_mail(to: Text, subject: Text, body: Text, op: Text) -> Text:
+    effect write once
+    on_uncertain verify(mails_sent(to, subject))
+
+tool insert_row(table: Text, row: Map[Text, Text], op: Text) -> Text:
+    effect write once
+    on_uncertain verify(rows_with(table, row))
+
+tool insert_rows(table: Text, rows: List[Map[Text, Text]], op: Text) -> Unit:
+    effect write once
+    on_uncertain pause
+
+tool upsert(table: Text, key_field: Text, row: Map[Text, Text]) -> Unit:
+    effect write
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool deploy(service: Text, version: Text, environment: Text, op: Text) -> Text:
+    effect write once
+    on_uncertain verify(runs_of(service, version, environment))
+

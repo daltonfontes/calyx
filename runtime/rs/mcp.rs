@@ -18,6 +18,8 @@ use crate::io::IoError;
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const START_TIMEOUT: Duration = Duration::from_secs(20);
+/// Error kinds a tool may report by starting its error text with `Kind:`.
+const TEMPORARY: [&str; 4] = ["Timeout", "Unavailable", "RateLimit", "Network"];
 
 pub struct Server {
     child: Child,
@@ -130,6 +132,13 @@ impl Server {
             // A precondition that does not hold (D29): the tool did nothing.
             if let Some(rest) = text.strip_prefix("PreconditionFailed:") {
                 return Err(IoError::new("PreconditionFailed", rest.trim().to_owned()));
+            }
+            // A server in front of another service passes on its temporary
+            // errors: a timeout there may still have done the call.
+            for kind in TEMPORARY {
+                if let Some(rest) = text.strip_prefix(kind).and_then(|r| r.strip_prefix(':')) {
+                    return Err(IoError::new(kind, rest.trim().to_owned()));
+                }
             }
             return Err(IoError::new("ToolError", text));
         }

@@ -12,11 +12,14 @@ It shows the other side of Calyx's contracts for external writes:
   `__lost__` sends the e-mail and then never answers (the caller times out
   not knowing it was sent); `__down__` crashes before sending; `__flaky__`
   crashes before sending the first time only; `__slowmail__` sends it and
-  answers 3 s later. A refund whose request has `__slowpay__` pays and
+  answers 3 s later; `__gateway__` sends it and answers with an error
+  starting `Timeout:`, as a server in front of a mail gateway that did not
+  answer would. A refund whose request has `__slowpay__` pays and
   answers 3 s later. The benchmarks (bench/) kill the caller in that window.
 - Every payment made is listed in `payments`, so duplicates can be counted.
 - `email_sent` tells whether an e-mail went out: what `on_uncertain
-  verify(...)` asks after such a failure.
+  verify(...)` asks after such a failure. `mail` is `email` returning the
+  message's id, and `mails_to` finds the ids of what went out.
 
 State lives in a JSON file: $CALYX_FAKE_STORE, or .calyx/fake_store.json
 next to calyx.toml. Delete it to start over.
@@ -67,6 +70,10 @@ TOOLS = [
     {"name": "email", "description": "Envia um e-mail.",
      "inputSchema": schema(to="string", subject="string", body="string")},
     {"name": "email_sent", "description": "Se um e-mail com esse assunto já foi enviado.",
+     "inputSchema": schema(to="string", subject="string")},
+    {"name": "mail", "description": "Envia um e-mail e devolve o id dele.",
+     "inputSchema": schema(to="string", subject="string", body="string")},
+    {"name": "mails_to", "description": "Os ids dos e-mails enviados com esse assunto.",
      "inputSchema": schema(to="string", subject="string")},
 ]
 
@@ -140,7 +147,7 @@ def call(name, args, meta):
         if "__slowpay__" in str(args.get("request", "")):
             time.sleep(3)  # paid; the answer is still on its way
         return text("null")
-    if name == "email":
+    if name in ("email", "mail"):
         body = args.get("body", "")
         if "__down__" in body:
             sys.exit(3)  # crashes before sending
@@ -150,11 +157,17 @@ def call(name, args, meta):
             sys.exit(3)  # crashes before sending, this time only
         db["outbox"].append({"to": args.get("to"), "subject": args.get("subject"), "body": body})
         save(db)
+        mid = f"msg-{len(db['outbox'])}"
+        if "__gateway__" in body:
+            return text("Timeout: the mail gateway did not answer", error=True)
         if "__lost__" in body:
             time.sleep(3600)  # sent, but the answer never comes
         if "__slowmail__" in body:
             time.sleep(3)  # sent; the answer is still on its way
-        return text("null")
+        return text(mid if name == "mail" else "null")
+    if name == "mails_to":
+        return text(json.dumps([f"msg-{i + 1}" for i, m in enumerate(db["outbox"])
+                                if m["to"] == args.get("to") and m["subject"] == args.get("subject")]))
     if name == "email_sent":
         sent = any(m["to"] == args.get("to") and m["subject"] == args.get("subject")
                    for m in db["outbox"])

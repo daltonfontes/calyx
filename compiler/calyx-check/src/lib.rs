@@ -220,6 +220,22 @@ prompt summarize(items: List[Text]) -> Text:
     }
 
     #[test]
+    fn a_verify_that_finds_what_was_made_gives_its_answer() {
+        let program = |find: &str| {
+            format!(
+                "tool find(to: Text) -> {find}:\n    effect read\n\n\
+                 tool create(to: Text) -> Text:\n    effect write once\n    on_uncertain verify(find(to))\n\n\
+                 graph g(to: Text) -> Text:\n    return create(to)\n"
+            )
+        };
+        // A list of the tool's answer: found again, it is the answer.
+        assert!(codes(&program("List[Text]")).is_empty());
+        // `Bool` only says it happened: there is no answer to go on with.
+        assert_eq!(codes(&program("Bool")), vec!["E0634"]);
+        assert_eq!(codes(&program("List[Int]")), vec!["E0634", "E0633"]);
+    }
+
+    #[test]
     fn sending_back_what_was_read_warns_only_when_it_overwrites() {
         let program = |update: &str| {
             format!(

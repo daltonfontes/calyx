@@ -803,10 +803,12 @@ static void stop_run(exec *x, job *j, const char *msg) {
 /*
  * `on_uncertain verify(f(a, b))`: asks the `read` tool `f`, with the same
  * arguments, whether the call happened. 1: it did; 0: it did not; -1: the
- * question failed (`why` says why).
+ * question failed (`why` says why). A tool that returns a list answers with
+ * what the call made, found again: empty if it did not happen, else its
+ * first item goes in `*found`.
  */
-static int verify_happened(exec *x, cx_arena *a, job *j, cx_value *policy, char *why,
-                           size_t why_len) {
+static int verify_happened(exec *x, cx_arena *a, job *j, cx_value *policy, cx_value **found,
+                           char *why, size_t why_len) {
     cx_value *vtool = at(x->tools, index_of(policy, "tool"));
     cx_value *req = cx_parse(a, j->req, strlen(j->req), NULL);
     cx_value *given = cx_get(req, "args");
@@ -842,8 +844,13 @@ static int verify_happened(exec *x, cx_arena *a, job *j, cx_value *policy, char 
                 result = v->u.b != 0;
                 trace(x, j->label, "read  %s  -> %s  (verifying `%s`)", vname,
                       result ? "true" : "false", cx_get_str(j->spec, "name", "?"));
+            } else if (v && v->kind == CX_LIST) {
+                result = len_of(v) > 0;
+                if (result) *found = at(v, 0);
+                trace(x, j->label, "read  %s  -> %s  (verifying `%s`)", vname,
+                      result ? "found" : "not found", cx_get_str(j->spec, "name", "?"));
             } else {
-                snprintf(why, why_len, "`%s` did not answer true or false", vname);
+                snprintf(why, why_len, "`%s` did not answer true or false, or a list", vname);
             }
             break;
         }
@@ -867,8 +874,8 @@ enum { R_DONE, R_REDO, R_FAIL, R_STOP };
  * the decision given when resuming, else the tool's `on_uncertain`. `how`
  * gets a description; `why` the message for failing or stopping.
  */
-static int resolve_uncertain(exec *x, cx_arena *a, job *j, const char *cause, char *how,
-                             size_t how_len, char *why, size_t why_len) {
+static int resolve_uncertain(exec *x, cx_arena *a, job *j, const char *cause, cx_value **found,
+                             char *how, size_t how_len, char *why, size_t why_len) {
     const char *name = cx_get_str(j->spec, "name", "?");
     cx_value *policy = cx_get(j->spec, "on_uncertain");
     const char *pname = cx_get_str(policy, "policy", "pause");
@@ -901,9 +908,10 @@ static int resolve_uncertain(exec *x, cx_arena *a, job *j, const char *cause, ch
     }
     if (strcmp(pname, "verify") == 0) {
         char verr[512] = "";
-        int happened = verify_happened(x, a, j, policy, verr, sizeof verr);
-        if (happened == 1 && unit) {
-            snprintf(how, how_len, "done: verify says it happened");
+        int happened = verify_happened(x, a, j, policy, found, verr, sizeof verr);
+        if (happened == 1 && (unit || *found)) {
+            snprintf(how, how_len, *found ? "done: verify found what it made"
+                                          : "done: verify says it happened");
             return R_DONE;
         }
         if (happened == 0) {
@@ -926,17 +934,37 @@ static int resolve_uncertain(exec *x, cx_arena *a, job *j, const char *cause, ch
     return R_STOP;
 }
 
-/* A `write once` call taken as done: recorded, so it is never made again. */
-static cx_value *taken_as_done(exec *x, cx_arena *a, job *j, const char *how, char *why,
-                               size_t why_len) {
-    static const char done[] = "{\"text\":\"null\",\"json\":null,\"ms\":0}";
-    cx_value *ok = cx_parse(a, done, sizeof done - 1, NULL);
+/* A `write once` call taken as done: recorded, so it is never made again.
+ * `found` is its answer, when `verify` found what it made. */
+static cx_value *taken_as_done(exec *x, cx_arena *a, job *j, cx_value *found, const char *how,
+                               char *why, size_t why_len) {
+    cx_buf b = {0};
+    if (found) {
+        cx_buf t = {0};
+        if (found->kind == CX_STR)
+            cx_buf_json_str(&t, found->u.str.s, found->u.str.len);
+        else
+            cx_write(&t, found);
+        cx_buf_puts(&b, "{\"text\":");
+        if (found->kind == CX_STR)
+            cx_buf_puts(&b, t.data);
+        else
+            cx_buf_json_str(&b, t.data, t.len);
+        cx_buf_puts(&b, ",\"json\":");
+        cx_write(&b, found);
+        cx_buf_puts(&b, ",\"ms\":0}");
+        cx_buf_free(&t);
+    } else {
+        cx_buf_puts(&b, "{\"text\":\"null\",\"json\":null,\"ms\":0}");
+    }
+    cx_value *ok = cx_parse(a, b.data, b.len, NULL);
+    cx_buf_free(&b);
     trace(x, j->label, "write once %s  %s", cx_get_str(j->spec, "name", "?"), how);
     if (!journal_record(x, j, "write once", ok)) {
         snprintf(why, why_len, "cannot write the journal");
         return NULL;
     }
-    return cx_null(a);
+    return found ? found : cx_null(a);
 }
 
 /*
@@ -958,10 +986,11 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
     char how[256] = "";
 
     if (j->uncertain) {
-        switch (resolve_uncertain(x, a, j, "the run stopped while it was in progress", how,
+        cx_value *found = NULL;
+        switch (resolve_uncertain(x, a, j, "the run stopped while it was in progress", &found, how,
                                   sizeof how, why, why_len)) {
         case R_DONE:
-            return taken_as_done(x, a, j, how, why, why_len);
+            return taken_as_done(x, a, j, found, how, why, why_len);
         case R_FAIL:
             return NULL;
         case R_STOP:
@@ -1071,9 +1100,10 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
             if (write_once && maybe_happened(kind)) {
                 char cause[512];
                 snprintf(cause, sizeof cause, "%s: %s", kind, message);
-                switch (resolve_uncertain(x, a, j, cause, how, sizeof how, why, why_len)) {
+                cx_value *found = NULL;
+                switch (resolve_uncertain(x, a, j, cause, &found, how, sizeof how, why, why_len)) {
                 case R_DONE:
-                    return taken_as_done(x, a, j, how, why, why_len);
+                    return taken_as_done(x, a, j, found, how, why, why_len);
                 case R_REDO:
                     trace(x, j->label, "write once %s  %s", name, how);
                     if (attempt < MAX_ATTEMPTS) continue;

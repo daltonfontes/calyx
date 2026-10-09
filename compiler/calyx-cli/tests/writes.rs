@@ -5,7 +5,8 @@
 //! The tools run on the fake store (examples/tools/fake_store.py), whose
 //! state is a JSON file per test. Words in an e-mail's body simulate
 //! failures: `__lost__` (sent, then no answer), `__down__` (crash before
-//! sending), `__flaky__` (crash before sending, the first time only).
+//! sending), `__flaky__` (crash before sending, the first time only),
+//! `__gateway__` (sent, then an error starting `Timeout:`).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -34,6 +35,17 @@ tool email(to: Text, subject: Text, body: Text) -> Unit:
     effect write once
     timeout 1 s
     on_uncertain {policy}
+
+tool mails_to(to: Text, subject: Text) -> List[Text]:
+    effect read
+
+tool mail(to: Text, subject: Text, body: Text) -> Text:
+    effect write once
+    timeout 1 s
+    on_uncertain verify(mails_to(to, subject))
+
+graph send(body: Text) -> Text:
+    return mail("ana@exemplo.org", "oi", body)
 
 graph pay(request: Text, order: Text, amount: Float, body: Text) -> Text:
     paid = refund(request, order, amount):
@@ -65,7 +77,7 @@ impl Dir {
             .canonicalize()
             .unwrap();
         let cmd = format!("command = [\"python3\", \"{}\"]\n", store.display());
-        let toml: String = ["refund", "email", "email_sent"]
+        let toml: String = ["refund", "email", "email_sent", "mail", "mails_to"]
             .iter()
             .map(|t| format!("[tools.{t}]\n{cmd}\n"))
             .collect();
@@ -199,6 +211,27 @@ fn verify_repeats_a_call_that_did_not_happen() {
     let out = d.pay("R1", "A100", "__flaky__");
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(d.sent(), 1);
+}
+
+#[test]
+fn verify_finds_what_a_lost_call_made_and_goes_on_with_it() {
+    let d = Dir::new("verify-finds", "pause");
+    // The server sends it, then reports a timeout of the service behind it:
+    // the call may have happened, so `verify` looks for it.
+    let out = d.calyx(&["run", "p.clyx", "--graph", "send", "--body", "__gateway__"]);
+    let err = text(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert!(err.contains("failed: Timeout: the mail gateway"), "{err}");
+    assert!(err.contains("verify found what it made"), "{err}");
+    assert_eq!(d.sent(), 1, "sent once, not repeated");
+    assert_eq!(
+        text(&out.stdout).trim(),
+        "msg-1",
+        "its answer is what was found"
+    );
+    // Replaying the run gives the same answer, from the journal.
+    let out = d.calyx(&["replay", &run_id(&out), "--quiet"]);
+    assert_eq!(text(&out.stdout).trim(), "msg-1", "{}", text(&out.stderr));
 }
 
 #[test]

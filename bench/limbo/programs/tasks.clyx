@@ -1,0 +1,122 @@
+# As 12 tarefas do LIMBO como grafos Calyx. Os textos de cada instância
+# (produto, versão, clientes, ...) chegam como parâmetros; o `op` de cada
+# escrita é montado do `run`, que identifica o episódio.
+
+type Line:
+    customer: Text
+    amount: Nat
+
+# Um post: no mastodon com chave; nas outras plataformas, `write once`.
+graph post(platform: Text, text: Text, op: Text) -> Text:
+    id = if platform == "mastodon":
+        publish_keyed(platform, text, op)
+    else:
+        publish(platform, text, op)
+    return id
+
+# Espera um deploy terminar, olhando o estado a cada 15 s (no máximo 20 vezes).
+graph succeeded(run_id: Text) -> Text:
+    status = loop n = 0, max 20:
+        s = status_after(run_id, 15)
+        if s == "succeeded":
+            done s
+        else:
+            next n + 1
+        on limit: fail "o deploy não terminou"
+    return status
+
+graph release_announcement(run: Text, text: Text, first: Text, second: Text, title: Text, subject: Text) -> Text:
+    a = post(first, text, "{run}:post:{first}")
+    b = post(second, text, "{run}:post:{second}")
+    key = create_ticket("COMMS", title, "Posts: {a} ({first}), {b} ({second}).", "{run}:ticket")
+    sent = send_mail("release-team@acme.example", subject, "Posted {a} on {first} and {b} on {second}. Ticket {key}.", "{run}:mail")
+    return sent
+
+graph invoice_batch(run: Text, invoice: Text, lines: List[Line]) -> Text:
+    ids = for each l in lines:
+        charge(l.customer, l.amount, "Invoice {invoice}", "{run}:charge:{l.customer}")
+    sent = send_mail("finance@acme.example", "Invoice {invoice} charged", "Charges: {ids}", "{run}:mail")
+    return sent
+
+graph incident_open(run: Text, service: Text, title: Text, body: Text, note: Text, subject: Text) -> Text:
+    key = create_ticket("OPS", title, body, "{run}:ticket")
+    noted = comment(key, note, "{run}:comment")
+    sent = send_mail("oncall@acme.example", subject, "Ticket {key} is open for {service}.", "{run}:mail")
+    sent after noted
+    return key
+
+graph migration_log(run: Text, rows: List[Map[Text, Text]], audit: Map[Text, Text]) -> Text:
+    recorded = insert_rows("schema_migrations", rows, "{run}:rows")
+    logged = insert_row("audit_log", audit, "{run}:audit")
+    logged after recorded
+    return logged
+
+graph deploy_release(run: Text, service: Text, version: Text, change: Text) -> Text:
+    staging = deploy(service, version, "staging", "{run}:deploy:staging")
+    ready = succeeded(staging)
+    production = deploy(service, version, "production", "{run}:deploy:production")
+    production after ready
+    noted = comment(change, "Deployed {version}: staging {staging}, production {production}", "{run}:comment")
+    return production
+
+graph refund_duplicate(run: Text, charge_id: Text, email: Text, invoice: Text) -> Text:
+    refunded = refund(charge_id, "duplicate charge")
+    sent = send_mail(email, "Refund for invoice {invoice}", "We refunded the duplicate charge {charge_id} for invoice {invoice}.", "{run}:mail")
+    sent after refunded
+    return sent
+
+graph feature_flags(run: Text, rows: List[Map[Text, Text]], text: Text) -> Text:
+    enabled = for each r in rows:
+        upsert("feature_flags", "flag", r)
+    announced = post("linkedin", text, "{run}:post:linkedin")
+    announced after enabled
+    return announced
+
+graph customer_notice(run: Text, emails: List[Text], date: Text) -> Text:
+    ids = for each e in emails:
+        send_mail(e, "Scheduled maintenance on {date}", "Hello! We will run scheduled maintenance on {date}. Thank you for your patience.", "{run}:mail:{e}")
+    key = create_ticket("COMMS", "Maintenance notice sent for {date}", "Messages: {ids}", "{run}:ticket")
+    return key
+
+# O post no x não devolve o id (`write once` com `pause` exige `Unit`).
+graph cross_post(run: Text, text: Text, product: Text) -> Text:
+    on_x = publish_x("x", text, "{run}:post:x")
+    on_mastodon = post("mastodon", text, "{run}:post:mastodon")
+    sent = send_mail("events@acme.example", "{product} Q&A promoted", "Posted on x and on mastodon ({on_mastodon}).", "{run}:mail")
+    sent after on_x
+    return sent
+
+graph subscription_upgrade(run: Text, customer: Text, amount: Nat, plan: Text, row: Map[Text, Text], email: Text) -> Text:
+    charged = charge(customer, amount, "Upgrade to {plan}", "{run}:charge")
+    saved = upsert("subscriptions", "customer_id", row)
+    saved after charged
+    sent = send_mail(email, "Welcome to {plan}", "Your upgrade to the {plan} plan is active.", "{run}:mail")
+    sent after saved
+    return sent
+
+graph ticket_resolution(run: Text, key: Text, cause: Text) -> Text:
+    noted = comment(key, "Root cause: {cause}. Fix deployed and verified.", "{run}:comment")
+    resolved = set_status(key, "resolved")
+    resolved after noted
+    sent = send_mail("oncall@acme.example", "{key} resolved", "Incident {key} is resolved.", "{run}:mail")
+    sent after resolved
+    return sent
+
+graph hotfix_long(run: Text, service: Text, version: Text, text: Text, audit: Map[Text, Text]) -> Text:
+    key = create_ticket("OPS", "Hotfix {service} {version}", "Hotfix rollout for {service} {version}.", "{run}:ticket")
+    on_mastodon = post("mastodon", text, "{run}:post:mastodon")
+    on_weibo = post("weibo", text, "{run}:post:weibo")
+    on_mastodon after key
+    on_weibo after key
+    staging = deploy(service, version, "staging", "{run}:deploy:staging")
+    staging after on_mastodon
+    staging after on_weibo
+    ready = succeeded(staging)
+    production = deploy(service, version, "production", "{run}:deploy:production")
+    production after ready
+    noted = comment(key, "Deployed: staging {staging}, production {production}. Posts: {on_mastodon}, {on_weibo}.", "{run}:comment")
+    logged = insert_row("audit_log", audit, "{run}:audit")
+    logged after noted
+    sent = send_mail("oncall@acme.example", "Hotfix {version} deployed", "{service} {version} is in production ({production}).", "{run}:mail")
+    sent after logged
+    return sent
