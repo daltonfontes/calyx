@@ -41,11 +41,9 @@
   #block(width: 100%, inset: (x: 1.2cm))[
     #set text(size: 8pt)
     #set par(justify: true)
-    *AI disclosure.* Calyx was built by the author with Claude (Anthropic): the
-    author set its goals and approved each step; Claude wrote most of the
-    compiler and runtime, ran the experiments and wrote this paper from the
-    repository, which the author reviewed. Four related works (marked in the
-    references) could only be read from their abstracts.
+    *AI disclosure.* Calyx was conceived and directed by the author, who read
+    the related work and reviewed every change; the code, the experiments and
+    this text were written with Claude (Anthropic) as a coding assistant.
   ]
   #v(0.8em)
 ]
