@@ -432,6 +432,16 @@ in the baselines it is optional. With the real model the counts are the
 same; Calyx resumes in at most 2.7 s, Temporal in 11–16 s with default
 timeouts.
 
+*Against a real service.* We repeated the crash matrix against the Stripe
+API in test mode (`bench/stripe/`): a Stripe refund, whose key Calyx's tool
+server forwards to Stripe's own `Idempotency-Key`, and a store credit
+(a customer balance transaction), which Stripe cannot deduplicate and Calyx
+declares `write once` with `verify`. Killed after each step and with each
+effect in flight, Calyx made exactly one refund and one credit in all five
+cases, counted by Stripe itself, in two runs. The same program with the
+contracts left out got 3/5: one duplicate refund and one duplicate credit,
+both with the effect in flight.
+
 == Waiting for a person with a deadline (W3)
 
 The refund with human approval and a deadline, the process stopped during
@@ -614,7 +624,8 @@ annotations only works for servers that send them, and misses ignored keys.
 *Models.* Most experiments use fake models; W1 and W2 were repeated with
 Gemini at small N, and in W2 the model always proposed the same amount, so
 the risk of a different answer after a crash was not exercised. *Setting.*
-One machine, no real network; versions are pinned. *Real-bug study.* Issues
+One machine; only the Stripe runs use a real service over the network, the
+rest use fake services; versions are pinned. *Real-bug study.* Issues
 read from their summaries, one classifier, a sample limited by GitHub
 search.
 

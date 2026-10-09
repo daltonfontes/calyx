@@ -1,0 +1,290 @@
+{
+ "endpoint": "api.stripe.com (test mode)",
+ "when": "2026-10-09",
+ "runs": [
+  [
+   {
+    "system": "calyx",
+    "scenario": "after-get_order",
+    "order": "pi_3UOmKLLntVut8qJY1XtuR76A",
+    "request": "rq-dcc1cc7b7d24",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 4.0,
+    "resume_tail": [
+     "   4.01s  finished: 1 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 1 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx",
+    "scenario": "after-decide",
+    "order": "pi_3UOmKULntVut8qJY0eB8Fbgm",
+    "request": "rq-954f96f0db71",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 3.2,
+    "resume_tail": [
+     "   3.23s  finished: 0 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 2 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx",
+    "scenario": "after-refund",
+    "order": "pi_3UOmKcLntVut8qJY1CdUEx4e",
+    "request": "rq-98c4f1c75009",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 1.2,
+    "resume_tail": [
+     "   1.17s  finished: 0 model call(s) (34 -> 26 tokens), 1 tool call(s), 0 retry(ies), at most 1 at once, 3 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx",
+    "scenario": "refund-in-flight",
+    "order": "pi_3UOmKkLntVut8qJY11vGeU54",
+    "request": "rq-d7ae2b1ae894__slowrefund__",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 9.8,
+    "resume_tail": [
+     "   9.74s  finished: 0 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 2 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx",
+    "scenario": "credit-in-flight",
+    "order": "pi_3UOmL1LntVut8qJY1GcluUmJ",
+    "request": "rq-eda0ce35cf49__slowcredit__",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 1.1,
+    "resume_tail": [
+     "   1.09s  finished: 0 model call(s) (34 -> 26 tokens), 0 tool call(s), 0 retry(ies), at most 1 at once, 3 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx without contracts (control)",
+    "scenario": "after-get_order",
+    "order": "pi_3UOmLALntVut8qJY048M3TzT",
+    "request": "rq-8f9e12083cd8",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 3.8,
+    "resume_tail": [
+     "   3.78s  finished: 1 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 1 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx without contracts (control)",
+    "scenario": "after-decide",
+    "order": "pi_3UOmLHLntVut8qJY0HeXyNPh",
+    "request": "rq-bfb363431992",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 3.0,
+    "resume_tail": [
+     "   2.95s  finished: 0 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 2 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx without contracts (control)",
+    "scenario": "after-refund",
+    "order": "pi_3UOmLPLntVut8qJY019KrQSD",
+    "request": "rq-f3712f2ef2c5",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 2.3,
+    "resume_tail": [
+     "   2.26s  finished: 0 model call(s) (34 -> 26 tokens), 1 tool call(s), 0 retry(ies), at most 1 at once, 3 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx without contracts (control)",
+    "scenario": "refund-in-flight",
+    "order": "pi_3UOmLZLntVut8qJY1lPllT2g",
+    "request": "rq-9b7084e193dc__slowrefund__",
+    "resume_exit": 0,
+    "refunds": 2,
+    "credits": 1,
+    "correct": false,
+    "resume_s": 10.4,
+    "resume_tail": [
+     "  10.39s  finished: 0 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 2 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx without contracts (control)",
+    "scenario": "credit-in-flight",
+    "order": "pi_3UOmLqLntVut8qJY14I9BfKg",
+    "request": "rq-30a74397753b__slowcredit__",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 2,
+    "correct": false,
+    "resume_s": 9.2,
+    "resume_tail": [
+     "   9.24s  finished: 0 model call(s) (34 -> 26 tokens), 1 tool call(s), 0 retry(ies), at most 1 at once, 3 taken from the journal"
+    ]
+   }
+  ],
+  [
+   {
+    "system": "calyx",
+    "scenario": "after-get_order",
+    "order": "pi_3UOmMHLntVut8qJY0DvAonC4",
+    "request": "rq-132181589637",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 4.2,
+    "resume_tail": [
+     "   4.17s  finished: 1 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 1 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx",
+    "scenario": "after-decide",
+    "order": "pi_3UOmMPLntVut8qJY0OXt9GLh",
+    "request": "rq-0c3a4bc301b2",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 3.1,
+    "resume_tail": [
+     "   3.12s  finished: 0 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 2 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx",
+    "scenario": "after-refund",
+    "order": "pi_3UOmMXLntVut8qJY1f3b3e55",
+    "request": "rq-f323ecca4267",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 1.1,
+    "resume_tail": [
+     "   1.12s  finished: 0 model call(s) (34 -> 26 tokens), 1 tool call(s), 0 retry(ies), at most 1 at once, 3 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx",
+    "scenario": "refund-in-flight",
+    "order": "pi_3UOmMfLntVut8qJY0L1BMfiZ",
+    "request": "rq-ee50e8871549__slowrefund__",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 9.7,
+    "resume_tail": [
+     "   9.71s  finished: 0 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 2 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx",
+    "scenario": "credit-in-flight",
+    "order": "pi_3UOmMwLntVut8qJY1br6VUEM",
+    "request": "rq-a54dad69f0a6__slowcredit__",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 1.0,
+    "resume_tail": [
+     "   0.98s  finished: 0 model call(s) (34 -> 26 tokens), 0 tool call(s), 0 retry(ies), at most 1 at once, 3 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx without contracts (control)",
+    "scenario": "after-get_order",
+    "order": "pi_3UOmN5LntVut8qJY19wh5Y3B",
+    "request": "rq-6ed1e067a100",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 3.8,
+    "resume_tail": [
+     "   3.83s  finished: 1 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 1 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx without contracts (control)",
+    "scenario": "after-decide",
+    "order": "pi_3UOmNCLntVut8qJY1DOE1XRX",
+    "request": "rq-218146c2ac53",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 3.1,
+    "resume_tail": [
+     "   3.10s  finished: 0 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 2 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx without contracts (control)",
+    "scenario": "after-refund",
+    "order": "pi_3UOmNKLntVut8qJY0KQUmUvY",
+    "request": "rq-e40f351cbde0",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 1,
+    "correct": true,
+    "resume_s": 1.2,
+    "resume_tail": [
+     "   1.20s  finished: 0 model call(s) (34 -> 26 tokens), 1 tool call(s), 0 retry(ies), at most 1 at once, 3 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx without contracts (control)",
+    "scenario": "refund-in-flight",
+    "order": "pi_3UOmNSLntVut8qJY1Rsjgwfw",
+    "request": "rq-c4911c0b13ac__slowrefund__",
+    "resume_exit": 0,
+    "refunds": 2,
+    "credits": 1,
+    "correct": false,
+    "resume_s": 10.4,
+    "resume_tail": [
+     "  10.39s  finished: 0 model call(s) (34 -> 26 tokens), 2 tool call(s), 0 retry(ies), at most 1 at once, 2 taken from the journal"
+    ]
+   },
+   {
+    "system": "calyx without contracts (control)",
+    "scenario": "credit-in-flight",
+    "order": "pi_3UOmNiLntVut8qJY1GZMR7d2",
+    "request": "rq-a9b8beffd368__slowcredit__",
+    "resume_exit": 0,
+    "refunds": 1,
+    "credits": 2,
+    "correct": false,
+    "resume_s": 9.1,
+    "resume_tail": [
+     "   9.06s  finished: 0 model call(s) (34 -> 26 tokens), 1 tool call(s), 0 retry(ies), at most 1 at once, 3 taken from the journal"
+    ]
+   }
+  ]
+ ]
+}

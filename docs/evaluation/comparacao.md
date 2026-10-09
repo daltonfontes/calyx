@@ -378,6 +378,48 @@ com 5 chamadas à parte. Então nenhuma incoerência apareceu, e a medida não
 distinguiu os sistemas. Para mostrar o risco, seria preciso um pedido cuja
 resposta varie de verdade.
 
+## W2 contra o Stripe real
+
+Toda a W2 acima roda contra uma loja falsa, escrita pelo autor da Calyx.
+Para tirar essa dúvida, a matriz de quedas foi repetida contra a **API do
+Stripe em modo de teste** (`bench/stripe/`, resultados em
+`bench/results/stripe.json`):
+
+- `stripe_server.py` é um servidor MCP na frente da API do Stripe. O
+  reembolso (`refund`) repassa a chave de idempotência da Calyx para o
+  cabeçalho `Idempotency-Key` do Stripe, e anuncia `idempotencyKeyHint: true`
+  (a anotação proposta em [`docs/mcp/`](../mcp/idempotency-key-hint.md)).
+  O crédito na conta do cliente (`credit`, uma transação de saldo) o Stripe
+  não deduplica: a Calyx o declara `write once` com
+  `verify(credit_given(...))`.
+- Cada caso cria um pedido novo de US$ 300 (cliente + PaymentIntent pago com
+  o cartão de teste), mata o processo (`kill -9`) e retoma com
+  `calyx resume`. Os reembolsos e créditos são contados **perguntando ao
+  Stripe**, não à Calyx.
+- O controle é o mesmo programa sem os contratos (sem chave, o crédito como
+  `write` comum); a Calyx avisa (`W0601`) e roda mesmo assim.
+
+Duas rodadas, resultado idêntico:
+
+| Ponto de queda | Calyx | Sem os contratos |
+|---|---|---|
+| depois de `get_order` | 1 reembolso, 1 crédito | 1, 1 |
+| depois de `decide` | 1, 1 | 1, 1 |
+| depois do reembolso | 1, 1 | 1, 1 |
+| reembolso a caminho | 1, 1 | **2 reembolsos**, 1 |
+| crédito a caminho | 1, 1 | 1, **2 créditos** |
+| **Certos** | **5 de 5** | **3 de 5** |
+
+No reembolso a caminho, a Calyx reenviou com a mesma chave e o Stripe
+devolveu o reembolso já feito; no crédito a caminho, achou o `begin` sem
+resposta, perguntou ao Stripe, achou o crédito e não reenviou. Sem os
+contratos, os dois são reenviados às cegas e o Stripe aplica de novo.
+
+**Limites.** Um serviço só, cinco pontos de queda, e o modelo é falso
+(latência fixa); a W2 com o Gemini está acima. O resultado mostra que o
+mecanismo funciona contra um serviço que a Calyx não controla, não que todo
+serviço respeita chaves.
+
 ## O que a comparação mostra e o que não mostra
 
 **Mostra:**
