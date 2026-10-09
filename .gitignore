@@ -4,3 +4,4 @@
 # Run directories with journals (calyx run)
 .calyx/
 *.o
+bench/stripe/.work/

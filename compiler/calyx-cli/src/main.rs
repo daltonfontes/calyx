@@ -413,7 +413,7 @@ fn start(origin: Origin, flags: RunFlags) -> ExitCode {
         Ok(c) => c,
         Err(code) => return code,
     };
-    let id = (!flags.no_journal).then(runs::new_id);
+    let id = (!flags.no_journal).then(runs::reserve_id);
     let path = origin.path();
     let opts = calyx_runtime::RunOptions {
         config,

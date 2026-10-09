@@ -441,6 +441,16 @@ e nos baselines ele é opcional. Com o modelo real as contagens são as
 mesmas; a Calyx retoma em no máximo 2,7 s, o Temporal em 11–16 s com os
 timeouts padrão.
 
+*Contra um serviço real.* Repetimos a matriz de quedas contra a API do
+Stripe em modo de teste (`bench/stripe/`): um reembolso no Stripe, cuja
+chave o servidor de tools da Calyx repassa ao `Idempotency-Key` do próprio
+Stripe, e um crédito na conta do cliente (uma transação de saldo), que o
+Stripe não deduplica e a Calyx declara `write once` com `verify`. Morto
+depois de cada passo e com cada efeito a caminho, a Calyx fez exatamente um
+reembolso e um crédito nos cinco casos, contados pelo próprio Stripe, em
+duas rodadas. O mesmo programa sem os contratos fez 3/5: um reembolso e um
+crédito duplicados, ambos com o efeito a caminho.
+
 == Esperando uma pessoa, com prazo (W3)
 
 O reembolso com aprovação humana e prazo, com o processo parado durante a
@@ -625,8 +635,9 @@ as anotações MCP só funciona para servidores que as enviam, e deixa passar
 chaves ignoradas. *Modelos.* A maioria dos experimentos usa modelos falsos;
 W1 e W2 foram repetidos com o Gemini com N pequeno, e na W2 o modelo sempre
 propôs o mesmo valor, então o risco de uma resposta diferente depois de uma
-queda não foi exercitado. *Ambiente.* Uma máquina, sem rede real; as versões
-são fixas. *Estudo de bugs reais.* Issues lidas pelos resumos, um
+queda não foi exercitado. *Ambiente.* Uma máquina; só as rodadas do Stripe usam
+um serviço real pela rede, o resto usa serviços falsos; as versões são
+fixas. *Estudo de bugs reais.* Issues lidas pelos resumos, um
 classificador, uma amostra limitada pela busca do GitHub.
 
 = Trabalhos relacionados

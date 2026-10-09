@@ -91,6 +91,11 @@ also get 6 of 6. The difference is the default, not the ceiling: in Calyx,
 those lines are required. Details in
 [`docs/evaluation/comparacao.md`](docs/evaluation/comparacao.md).
 
+**Against the real Stripe API** (test mode, [`bench/stripe/`](bench/stripe)):
+a refund and a store credit, the process killed at 5 points. Stripe itself
+counts one refund and one credit in all 5 cases. The same program without
+the contracts: 3 of 5, one duplicate refund and one duplicate credit.
+
 ## Calyx is PARALLEL
 
 No `async`, no `parallel`, no threads. Steps that don't depend on each other

@@ -96,6 +96,12 @@ Temporal e LangGraph também fazem 6 de 6. A diferença é o padrão, não o tet
 na Calyx, essas linhas são obrigatórias. Detalhes em
 [`docs/evaluation/comparacao.md`](docs/evaluation/comparacao.md).
 
+**Contra a API real do Stripe** (modo de teste,
+[`bench/stripe/`](bench/stripe)): um reembolso e um crédito, com o processo
+morto em 5 pontos. O próprio Stripe conta um reembolso e um crédito nos 5
+casos. O mesmo programa sem os contratos: 3 de 5, um reembolso e um crédito
+duplicados.
+
 ## A Calyx é PARALELA
 
 Sem `async`, sem `parallel`, sem threads. Passos que não dependem uns dos

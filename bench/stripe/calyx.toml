@@ -1,0 +1,11 @@
+[tools.get_order]
+command = ["python3", "stripe_server.py"]
+
+[tools.refund]
+command = ["python3", "stripe_server.py"]
+
+[tools.credit]
+command = ["python3", "stripe_server.py"]
+
+[tools.credit_given]
+command = ["python3", "stripe_server.py"]
