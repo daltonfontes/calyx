@@ -41,6 +41,16 @@
    "system": "langgraph",
    "n": 5,
    "rep": 0
+  },
+  {
+   "ok": true,
+   "s": 5.69,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 3762,
+   "system": "calyx",
+   "n": 10,
+   "rep": 0
   }
  ]
 }
