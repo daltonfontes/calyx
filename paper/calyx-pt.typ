@@ -238,14 +238,14 @@ passo e o grafo de dependências. A @tab-checks lista as que tratam de estado.
     [`E0640`], [Um agente que recebe uma tool `write once`],
     [`E0671`], [`receive` sem prazo],
     [`E0637`], [Um `batch` que não é lista, ou não é verificado],
-    [`W0701/2`], [Uma declaração que o servidor MCP da tool contradiz (`check --tools`)],
+    [`W0701–3`], [Uma declaração que o servidor MCP da tool contradiz (`check --tools`)],
     thick,
   ),
   caption: [Verificações de estado (parcial; a especificação lista todas).],
 ) <tab-checks>
 
 Várias vieram da avaliação: `W0605` do estudo de bugs reais (§6.6), `E0637`
-e a forma de lista do `verify` do LIMBO (§6.7), e `W0701/2` da observação de
+e a forma de lista do `verify` do LIMBO (§6.7), e `W0701–3` da observação de
 que uma declaração errada é o ponto mais fraco (§6.8).
 
 == O que as regras garantem
@@ -593,8 +593,12 @@ idempotente.
 As anotações pegam tratar uma escrita como leitura e esquecer a chave. Elas
 deixam passar o engano que mais pesou no LIMBO, confiar numa chave que o
 serviço ignora, porque as anotações MCP não têm vocabulário para chaves de
-idempotência @mcp2025spec. Uma anotação dizendo "esta tool respeita uma chave
-de idempotência" fecharia a lacuna.
+idempotência @mcp2025spec. Propomos uma ao MCP, `idempotencyKeyHint`, por
+tool (`docs/mcp/idempotency-key-hint.md`): com nosso adaptador do LIMBO
+declarando-a a partir de quais serviços respeitam a chave, a Calyx avisa
+(`W0703`) as 8 declarações desse tipo, sem novos falsos positivos. Quem
+declara é o adaptador, não o LIMBO: isso mostra o que a conferência faz
+quando os servidores dizem a verdade.
 
 == Escrevendo um workflow real
 

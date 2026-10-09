@@ -210,6 +210,27 @@ plataformas, e nada nas anotações diz isso. Uma anotação nova no MCP, algo
 como "aceita chave de idempotência", fecharia a lacuna. Até lá, essa parte
 do contrato continua só na declaração.
 
+**Com a anotação proposta.** A proposta ao MCP está em
+[`docs/mcp/idempotency-key-hint.md`](../mcp/idempotency-key-hint.md):
+`idempotencyKeyHint`, por tool, diz se o servidor deduplica as chamadas
+pela chave. Com `LIMBO_KEY_HINT=1`, o adaptador manda essa anotação como o
+autor de um servidor mandaria, sabendo quais serviços por trás respeitam a
+chave (`charge`, e `publish_keyed`, que só publica no mastodon), e a Calyx
+avisa (`W0703`) uma `write` com chave numa tool que diz não respeitá-la.
+Rodando de novo com `--key-hint`
+(`bench/results/limbo_declarations_keyhint.json`):
+
+| Declaração perigosa | Sem a anotação | Com `idempotencyKeyHint` |
+|---|---|---|
+| escrita não idempotente declarada `read` | 10 de 10 | 10 de 10 |
+| escrita não idempotente declarada `write` sem chave | 10 de 10 | 10 de 10 |
+| `write` com uma chave que o serviço ignora | 0 de 8 | **8 de 8** |
+| declarações seguras avisadas | 3 de 60 | 3 de 60 |
+
+A anotação é declarada pelo adaptador, não pelo LIMBO: o número mostra o que
+a conferência faz quando o servidor diz a verdade, não que os servidores
+vão dizer.
+
 ## Ameaças
 
 - **Sem modelo.** Os programas não interpretam a instrução, e a Calyx não

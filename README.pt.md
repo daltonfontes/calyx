@@ -245,6 +245,7 @@ modelos, em [`examples/`](examples).
 - Avaliação: [docs/evaluation/](docs/evaluation), contra Python, LangGraph e Temporal, bugs reais e o LIMBO.
 - Benchmarks: [bench/](bench), todo script por trás dos números acima, com os dados em `bench/results/`.
 - Visão geral: [visao-geral.md](docs/visao-geral.md), o estado de cada marco, como compilar e rodar, a pasta de cada parte.
+- Proposta ao MCP: [idempotency-key-hint.md](docs/mcp/idempotency-key-hint.md) (em inglês), chaves de idempotência no `tools/call`, declaradas por tool, com protótipo e medida.
 - Design: [docs/discovery/](docs/discovery), as 35 decisões de design e a pesquisa por trás delas.
 - Demonstração: [make_check_gif.py](media/make_check_gif.py) grava o GIF acima a partir da saída real do `calyx check`.
 
@@ -256,7 +257,9 @@ modelos, em [`examples/`](examples).
 - As garantias dependem de hipóteses declaradas: o serviço respeita a chave
   de idempotência, e o `verify` lê o estado atual. A Calyx não tem como
   conferir um serviço que ignora chaves; `calyx check --tools` pega efeitos
-  errados, não chaves ignoradas.
+  errados, e chaves ignoradas só de servidores que mandam
+  `idempotencyKeyHint`, uma anotação que propomos ao MCP
+  (docs/mcp/idempotency-key-hint.md).
 - `on_uncertain accept_loss` pode perder o efeito. É isso que ele significa.
 - As provas em Lean cobrem uma chamada; programas inteiros têm uma
   verificação limitada. Os dois modelos são escritos à mão, não extraídos
