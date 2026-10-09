@@ -177,7 +177,7 @@ command = ["python3", "tools/fake_search.py"]   # relativo ao calyx.toml
 
 - Paper: [Calyx: A Compiler That Demands the Effect Contract in Agent Workflows](paper/Calyx.pdf) (em inglês; fonte em [`paper/calyx.typ`](paper/calyx.typ), gerado com `typst compile paper/calyx.typ paper/Calyx.pdf`).
 - Especificação: [`docs/spec/calyx.md`](docs/spec/calyx.md).
-- Formalização: [`docs/paper/formal.md`](docs/paper/formal.md), as regras de efeito e os teoremas, com o verificador exaustivo em [`bench/formal/model.py`](bench/formal/model.py).
+- Formalização: [`docs/paper/formal.md`](docs/paper/formal.md), as regras de efeito e os teoremas, com o verificador exaustivo em [`bench/formal/model.py`](bench/formal/model.py) e as provas mecanizadas em Lean em [`formal/Effects.lean`](formal/Effects.lean).
 - Avaliação: [`docs/evaluation/`](docs/evaluation/), com a comparação contra LangGraph e Temporal, o estudo de bugs reais e o LIMBO.
 - Benchmarks: [`bench/`](bench/), todos os scripts que geram os números do paper, e os dados em `bench/results/`.
 

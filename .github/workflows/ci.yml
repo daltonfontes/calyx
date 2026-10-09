@@ -61,3 +61,19 @@ jobs:
         run: |
           ./target/release/calyx build examples/agent.clyx -o "$RUNNER_TEMP/agent"
           cd "$RUNNER_TEMP" && ./agent --fake-models --quiet --question "baterias de sódio"
+
+  lean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lean 4.34.1
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain leanprover/lean4:v4.34.1
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Check the mechanized effect rules
+        run: |
+          lean formal/Effects.lean
+          ! grep -n 'sorry' formal/Effects.lean

@@ -65,8 +65,9 @@ the dependency graph. A program that can duplicate an effect, lose an
 update or leave two writes unordered is rejected or warned about before it
 runs; the runtime records every call in a journal and resumes without
 redoing work. We state the guarantees as three theorems under five explicit
-hypotheses and check them exhaustively on a bounded model, which also
-produces a counterexample for each hypothesis dropped.
+hypotheses, prove the per-call protocols in Lean, and check whole programs
+exhaustively on a bounded model, which also produces a counterexample for
+each hypothesis dropped.
 
 Against LangGraph and Temporal on the same workflows, Calyx gets every
 crash, wait and concurrency scenario right by default; the baselines get
@@ -110,7 +111,8 @@ Our contributions:
 + Compiler checks (§4) that use those declarations to reject programs that
   can duplicate an effect, lose an update, leave writes unordered, wait
   forever, or repeat a payment on every turn of a loop; and a formal core
-  with three theorems, checked exhaustively on a bounded model.
+  with three theorems, proved in Lean for one call and checked
+  exhaustively on a bounded model for whole programs.
 + A runtime (§5) with a per-call journal that resumes without redoing work
   and carries the idempotency key to the tool's server. The mechanisms are
   not new; what is new is a compiler that demands the declarations they rely
@@ -277,7 +279,12 @@ once with `accept_loss`).
 *T3 (nothing done is redone).* A call with `done` on disk is never sent
 again, and resuming uses its recorded answer. Only H1 is needed.
 
-The proofs are paper sketches: T1 follows from the `begin` record reaching
+For one call, the proofs are mechanized in Lean 4
+(`formal/Effects.lean`, checked in CI): `write once` and the keyed write are
+transition systems in which every choice of the world is a step, and an
+inductive invariant gives T1–T3 for every execution; two counterexamples
+show the duplicate when the runtime does not sync. For whole programs the
+argument is a sketch: T1 follows from the `begin` record reaching
 the disk before any send, so every resend passes through D1, which resends
 only when nothing was applied (H3, H5); for keyed writes, R2's sync makes
 the key a function of durable state, so it is the same in every attempt,
@@ -593,9 +600,10 @@ it did not take.
 *Same author on both sides.* The baselines, the bug corpus and the LIMBO
 programs were written by Calyx's author. LIMBO's tasks, faults, grader and
 published baselines are by others, and the LIMBO adapter only uses LIMBO's
-public tools; the independent port (E4) is pending. *Paper proofs.* T1–T3
-have proof sketches and a bounded exhaustive check of a hand-written model,
-not a mechanized proof or a model extracted from the code. *Bugs found in
+public tools; the independent port (E4) is pending. *Proofs.* T1–T3
+are mechanized in Lean only for one call; for whole programs they have
+proof sketches and a bounded exhaustive check. Both models are written by
+hand, not extracted from the code. *Bugs found in
 Calyx.* Several Calyx bugs were found by measuring and fixed before the
 numbers reported; we say where. *Wrong declarations.* The check against MCP
 annotations only works for servers that send them, and misses ignored keys.

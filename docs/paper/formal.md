@@ -7,10 +7,13 @@ garante. Ele traz:
 - os esboços de prova;
 - uma verificação exaustiva limitada (`bench/formal/model.py`), que confirma
   os teoremas em programas pequenos e mostra um contraexemplo para cada
-  hipótese retirada.
+  hipótese retirada;
+- as provas mecanizadas em Lean 4 (`formal/Effects.lean`, seção 6.1), para
+  os protocolos de uma chamada.
 
-**O que este documento não é.** As provas são de papel, não mecanizadas. O
-modelo executável foi escrito à mão a partir de `runtime/src/exec.c` e
+**O que este documento não é.** As provas de T1–T3 para o programa inteiro
+são de papel; mecanizadas estão as dos protocolos de uma chamada (seção
+6.1). O modelo executável foi escrito à mão a partir de `runtime/src/exec.c` e
 `runtime/src/journal.c`, e não extraído deles. Ficam de fora os agentes,
 as entidades e as corridas. Seção 6.
 
@@ -218,6 +221,30 @@ As duas do meio também são as que nenhum cliente resolve: no LIMBO, até o
 oráculo duplica sob reentrega. O modelo e o benchmark concordam sobre
 **onde** a garantia acaba.
 
+### 6.1 Provas mecanizadas em Lean
+
+`formal/Effects.lean` (Lean 4.34.1, só o núcleo, sem Mathlib; a CI confere
+com `lean formal/Effects.lean`) prova, para todas as execuções, os
+protocolos de uma chamada:
+
+- `WriteOnce`: uma chamada `write once` (R3, R4, D1) como sistema de
+  transições em que cada escolha do mundo é um passo (pedido perdido,
+  resposta perdida, queda, o que o `verify` lê, o que a pessoa decide).
+  Prova T1 (`at_most_once`), T2 (`exactly_once`, terminada por `verify` ou
+  `pause`) e T3 (`done_is_final`) por um invariante indutivo.
+- `Keyed`: um `write` cuja chave vem da resposta de um modelo (R1, R2), com
+  queda da máquina e um modelo que responde outra coisa ao ser perguntado
+  de novo. Prova que o serviço aplica a escrita com no máximo uma chave.
+- Dois contraexemplos, `KeyedNoSync.duplicates` e
+  `WriteOnceNoSync.duplicates`: sem os `fsync` (os dois buracos da seção 7),
+  o mesmo mundo faz o efeito acontecer duas vezes.
+
+As hipóteses aparecem como restrições dos passos: H1, o que está no disco
+nenhum passo de queda apaga; H2, `Keyed.apply` não repete chave; H3 e H5,
+os passos de `verify` e da pessoa leem a contagem verdadeira; H4, um envio
+aplica no máximo uma vez. O programa inteiro (várias chamadas, retomadas,
+leituras) continua coberto só pela verificação limitada acima.
+
 ## 7. O que formalizar achou no runtime
 
 Escrever a regra R3 com a hipótese H1 explícita mostrou dois furos, já
@@ -253,6 +280,6 @@ uma versão com prova verificada.
 - **O paralelismo** entra como intercalação. O verificador explora uma
   ordem só, a sequencial; para escritas com ordem não fixada, T1 vale por
   chamada, mas a ordem não é garantida (S7).
-- **O modelo é escrito à mão.** A correspondência com o C é conferida por
+- **Os modelos são escritos à mão** (o Python e o Lean). A correspondência com o C é conferida por
   leitura e pelos testes de queda do próprio runtime (`CALYX_CRASH_AFTER`,
   `CALYX_CRASH_IN_SEND`), não por construção.
