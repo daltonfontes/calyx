@@ -14,7 +14,8 @@ It shows the other side of Calyx's contracts for external writes:
   crashes before sending the first time only; `__slowmail__` sends it and
   answers 3 s later; `__gateway__` sends it and answers with an error
   starting `Timeout:`, as a server in front of a mail gateway that did not
-  answer would. A refund whose request has `__slowpay__` pays and
+  answer would. `email_many` to an address starting `metade@` sends half
+  of its e-mails and crashes, the first time. A refund whose request has `__slowpay__` pays and
   answers 3 s later. The benchmarks (bench/) kill the caller in that window.
 - Every payment made is listed in `payments`, so duplicates can be counted.
 - `email_sent` tells whether an e-mail went out: what `on_uncertain
@@ -81,6 +82,10 @@ TOOLS = [
      "inputSchema": schema(to="string", subject="string", body="string"), "annotations": SEND},
     {"name": "mails_to", "description": "Os ids dos e-mails enviados com esse assunto.",
      "inputSchema": schema(to="string", subject="string"), "annotations": READ},
+    {"name": "email_many", "description": "Envia um e-mail por assunto, na ordem.",
+     "inputSchema": schema(to="string", subjects="array"), "annotations": SEND},
+    {"name": "subjects_sent", "description": "Dos assuntos dados, os já enviados para esse endereço.",
+     "inputSchema": schema(to="string", subjects="array"), "annotations": READ},
 ]
 
 # ----- preconditions (D29) ---------------------------------------------------
@@ -171,6 +176,21 @@ def call(name, args, meta):
         if "__slowmail__" in body:
             time.sleep(3)  # sent; the answer is still on its way
         return text(mid if name == "mail" else "null")
+    if name == "email_many":
+        # To `metade@...`, the first time: sends half of them, then crashes.
+        subjects = args.get("subjects", [])
+        half = args.get("to", "").startswith("metade@") and not db.get("half_done")
+        for k, subject in enumerate(subjects):
+            if half and k == len(subjects) // 2:
+                db["half_done"] = True
+                save(db)
+                sys.exit(3)
+            db["outbox"].append({"to": args.get("to"), "subject": subject, "body": ""})
+            save(db)
+        return text("null")
+    if name == "subjects_sent":
+        sent = {m["subject"] for m in db["outbox"] if m["to"] == args.get("to")}
+        return text(json.dumps([x for x in args.get("subjects", []) if x in sent]))
     if name == "mails_to":
         return text(json.dumps([f"msg-{i + 1}" for i, m in enumerate(db["outbox"])
                                 if m["to"] == args.get("to") and m["subject"] == args.get("subject")]))

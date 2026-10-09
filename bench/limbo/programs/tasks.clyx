@@ -78,12 +78,10 @@ graph customer_notice(run: Text, emails: List[Text], date: Text) -> Text:
     key = create_ticket("COMMS", "Maintenance notice sent for {date}", "Messages: {ids}", "{run}:ticket")
     return key
 
-# O post no x não devolve o id (`write once` com `pause` exige `Unit`).
 graph cross_post(run: Text, text: Text, product: Text) -> Text:
     on_x = publish_x("x", text, "{run}:post:x")
     on_mastodon = post("mastodon", text, "{run}:post:mastodon")
-    sent = send_mail("events@acme.example", "{product} Q&A promoted", "Posted on x and on mastodon ({on_mastodon}).", "{run}:mail")
-    sent after on_x
+    sent = send_mail("events@acme.example", "{product} Q&A promoted", "Posted on x ({on_x}) and on mastodon ({on_mastodon}).", "{run}:mail")
     return sent
 
 graph subscription_upgrade(run: Text, customer: Text, amount: Nat, plan: Text, row: Map[Text, Text], email: Text) -> Text:

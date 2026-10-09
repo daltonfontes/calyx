@@ -399,7 +399,7 @@ recuperação. Detalhes em `docs/evaluation/limbo.md`.
 
 | | Efeito único (EOS) | Duplicata | Tarefa (TS) |
 |---|---|---|---|
-| Calyx, contrato nativo | 76% | 23% | 99,5% |
+| Calyx, contrato nativo | 76% | 24% | 100% |
 | 3 modelos de ponta, vanilla | 74–79% | 20–26% | 99,5–100% |
 | Melhor harness com contratos (`guard`) | 77% | 23% | 100% |
 | Oráculo de resultado | 88% | 12% | 100% |
@@ -409,7 +409,7 @@ No contrato nativo, a Calyx empata com os melhores modelos e não os supera.
 Todas as suas duplicatas vêm de dois modos que nenhum cliente resolve sem
 chave: a reentrega no transporte (74% em todos, inclusive no oráculo) e o
 commit atrasado, em que a escrita ainda está em trânsito quando a releitura
-olha (68%; o `guard` tem 69%). Nos modos que a releitura resolve, a Calyx
+olha (71%; o `guard` tem 69%). Nos modos que a releitura resolve, a Calyx
 não duplicou nenhuma vez. Quando toda escrita aceita chave, a duplicação
 some por construção: a chave está na declaração da tool, e não na decisão
 do modelo a cada chamada. O resultado reforça, de fora, a conclusão do
@@ -431,13 +431,19 @@ declara errado, o compilador acredita. As anotações MCP (`readOnlyHint`,
 tool do LIMBO de cada forma possível, a conferência avisou as 20
 declarações perigosas que tratam uma escrita como leitura ou como `write`
 sem chave. Não avisou nenhuma das 8 que confiam numa chave que o serviço
-ignora, porque as anotações MCP não falam de chaves. Das 56 declarações
+ignora, porque as anotações MCP não falam de chaves. Das 60 declarações
 seguras, 3 receberam aviso.
 
-Ficaram duas, sem correção:
-- o lote que fica pela metade: a resposta a uma pausa não tem como dizer
-  "faça só o que falta";
-- a pessoa que retoma uma pausa não tem como informar a resposta da tool.
+Duas outras lacunas apareceram ao rodar, e também foram corrigidas:
+- o lote que fica pela metade não tinha como terminar. Agora uma escrita
+  pode declarar `batch p`, o `verify` devolve os itens já aplicados, e a
+  Calyx manda de novo só o que falta;
+- quem retoma uma pausa não tinha como dar a resposta da tool. Agora
+  `--uncertain done=<resposta>` informa o que a pessoa achou.
+
+Com as duas correções, a Calyx termina todas as tarefas do LIMBO (TS 100%).
+O lote passou a usar `verify` em vez de `pause`, e isso tem um preço: no
+commit atrasado, ele duplica como as outras escritas que usam `verify`.
 
 ## 7. Ameaças à validade
 

@@ -38,12 +38,16 @@ nenhuma mudança no código do LIMBO.
   - **`write once` com `verify`:** as demais. O `verify` procura a escrita
     com as leituras públicas e espera o atraso que a documentação anuncia
     (weibo, 3 min; pasta de enviados, 2 min).
-  - **`write once` com `pause`:** duas escritas que não há como conferir.
-    O post no x não tem listagem. O lote de linhas pode ficar pela metade, e
-    o `verify` só responde sim ou não.
+  - **O lote de linhas:** `write once` com `batch rows`. Ele pode ficar
+    pela metade; o `verify` acha as linhas já gravadas, e a Calyx manda de
+    novo só as que faltam.
+  - **`write once` com `pause`:** o post no x, que não há como conferir
+    porque o x não tem listagem.
 - **A pausa.** Quando a execução para, o executor faz o papel da pessoa.
   Ele pergunta ao operador do LIMBO (`escalate_to_human`, 15 min simulados,
-  como para os agentes) e retoma com `--uncertain done`, `retry` ou `failed`.
+  como para os agentes) e retoma com `--uncertain done`, `retry` ou
+  `failed`. Quando o operador acha o post, a retomada informa o id dele
+  (`--uncertain done=<id>`), que o resto do programa usa.
 - **O fim.** O executor chama o `finish` do LIMBO com `completed` só se a
   execução terminou bem, e o avaliador do LIMBO dá a nota.
 - **Segundo contrato.** No `keys_everywhere`, a documentação diz que toda
@@ -65,7 +69,7 @@ e o oráculo de resultado).
 
 | Contrato `native` | EOS | Duplicata | TS | Chamadas | Pessoa (min) |
 |---|---|---|---|---|---|
-| **Calyx** | **76,1%** | **23,4%** | **99,5%** | 7,8 | 0,8 |
+| **Calyx** | **76,1%** | **23,9%** | **100%** | 7,9 | 0,4 |
 | gpt-6-sol, vanilla | 79,0% | 20,5% | 99,5% | 8,5¹ | 0,7¹ |
 | claude-opus-5.5, vanilla | 76,6% | 23,4% | 100% | | |
 | gemini-3.8-flash, vanilla | 74,2% | 25,9% | 100% | | |
@@ -80,8 +84,8 @@ Taxa de duplicata por modo de falha (e2k do LIMBO, 3 modelos agregados):
 |---|---|---|---|---|---|
 | timeout depois do commit | 0% | 0% | 0% | 0% | 0% |
 | 500 depois do commit | 0% | 8% | 0% | 0% | 0% |
-| commit atrasado (90 s) | 68% | 58% | 69% | 0% | 2% |
-| lote pela metade | 0% (1 ep.) | 33% (3 ep.) | 0% | 0% | 0% |
+| commit atrasado (90 s) | 71% | 58% | 69% | 0% | 2% |
+| lote pela metade | 0% (1 ep., terminado) | 33% (3 ep.) | 0% | 0% | 0% |
 | reentrega no transporte | 74% | 74% | 74% | 0% | 0% |
 
 No contrato `keys_everywhere`, a Calyx teve 100% de EOS, 0% de duplicata e
@@ -116,19 +120,24 @@ No contrato `keys_everywhere`, a Calyx teve 100% de EOS, 0% de duplicata e
    tornar esse contrato escrito, conferido e igual em toda execução, sem
    tokens: o executor não gasta nenhum, contra cerca de 14 mil por episódio
    dos agentes do artigo.
-4. **O custo de ser cuidadoso aparece onde não há como conferir.** As duas
-   escritas com `pause` (post no x e lote) pararam para a pessoa em 11
-   episódios. Em média são 0,8 min de pessoa por episódio, contra 0,4–0,7
-   min nos agentes. Esperar a pessoa salvou o commit atrasado no x: durante
-   os 15 min o post apareceu, e o operador respondeu "aconteceu". No lote
-   pela metade, a única falha de TS, a Calyx parou sem duplicar, mas não
-   tinha como terminar. A resposta à pausa é `done`, `retry` ou `failed`, e
-   nenhuma diz "faça só o que falta".
+4. **O custo de ser cuidadoso aparece onde não há como conferir.** Só o
+   post no x usa `pause`, e ele parou para a pessoa em 5 episódios. Em
+   média são 0,4 min de pessoa por episódio, como nos agentes (0,4–0,7
+   min). Esperar a pessoa salvou o commit atrasado no x: durante os 15 min
+   o post apareceu, e o operador o achou. A retomada informou o id do post,
+   e o e-mail o cita, como a tarefa pede.
+5. **O lote sai do `pause` para o `verify`, e isso tem preço.** No lote
+   cortado ao meio, a Calyx manda de novo só as 2 linhas que faltam e
+   termina (TS 100%). No commit atrasado, porém, o `verify` não vê as
+   linhas ainda em trânsito e manda o lote de novo, como acontece com toda
+   escrita que usa `verify`. Antes, com `pause`, o operador esperava o
+   commit chegar e evitava a duplicata. O EOS fica igual (76,1%), e a
+   duplicata sobe de 23,4% para 23,9%.
 
 ## O que o LIMBO achou na Calyx
 
-Duas lacunas apareceram ao escrever os programas, e foram corrigidas antes
-dos números acima:
+Quatro lacunas apareceram ao escrever os programas ou ao rodá-los, e
+foram corrigidas antes dos números acima:
 
 - **O `verify` só respondia sim ou não.** Uma tool que devolve algo (o id do
   ticket, da mensagem, do deploy) não podia usar `verify`. Achar a escrita
@@ -143,13 +152,17 @@ dos números acima:
   falhava em vez de aplicar o `on_uncertain`. Agora um erro com texto
   começando por `Timeout:`, `Unavailable:`, `RateLimit:` ou `Network:` é
   tratado como esse erro temporário.
-
-Ficaram duas lacunas, relatadas e não corrigidas:
-
-- o lote pela metade (falta um "faça só o que falta");
-- o `--uncertain done` de uma tool que devolve algo: a pessoa não tem como
-  informar a resposta. Por isso o post no x devolve `Unit` e o e-mail do
-  `cross_post` não traz o id dele. O avaliador do LIMBO não confere esse id.
+- **O lote que fica pela metade não tinha como terminar.** A resposta a uma
+  pausa era `done`, `retry` ou `failed`, e nenhuma diz "faça só o que
+  falta". Agora uma `write once` pode declarar `batch p`, em que `p` é a
+  lista de itens. O `verify` devolve os itens já aplicados, e a Calyx manda
+  de novo só os outros. No LIMBO, o único episódio que a Calyx não
+  terminava passou a terminar.
+- **Quem retoma uma pausa não tinha como dar a resposta da tool.** O
+  `--uncertain done` só servia para tools que devolvem `Unit`. Por isso o
+  post no x devolvia `Unit`, e o e-mail do `cross_post` não trazia o id
+  dele. Agora `--uncertain done=<resposta>` informa o que a pessoa achou.
+  No LIMBO, o id do post vem do registro que o operador achou.
 
 ## Declarações erradas: o que as anotações MCP pegam
 
@@ -165,7 +178,7 @@ O estudo está em `bench/limbo/declarations.py`, e os dados em
 `bench/results/limbo_declarations.json`.
 
 **Como foi medido.**
-- Cada uma das 21 tools dos programas foi declarada, uma vez cada, das
+- Cada uma das 22 tools dos programas foi declarada, uma vez cada, das
   quatro formas possíveis: `read`, `write` sem chave, `write` com chave e
   `write once`.
 - Cada declaração foi conferida contra um ambiente do LIMBO.
@@ -183,7 +196,7 @@ O estudo está em `bench/limbo/declarations.py`, e os dados em
 | escrita não idempotente declarada `write` sem chave | 10 de 10 (`W0702`) |
 | `write` com uma chave que o serviço ignora | **0 de 8** |
 
-Das 56 declarações seguras, 3 receberam aviso: são escritas idempotentes
+Das 60 declarações seguras, 3 receberam aviso: são escritas idempotentes
 (reembolso, mudança de estado e upsert) declaradas `read`. Repetir essas
 escritas não faz mal, mas o aviso está certo: elas mudam coisas.
 

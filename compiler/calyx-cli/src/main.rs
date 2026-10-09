@@ -45,13 +45,15 @@ commands:
       Independent calls run in parallel, up to the graph's `limits threads`
       (8 by default).
   resume <run> [--fake-models] [--quiet] [--config FILE] [--budget USD]
-               [--uncertain done|retry|failed]
+               [--uncertain done|done=ANSWER|retry|failed]
       Continue an interrupted or failed run. Calls already in its journal
       are taken from it, not made (or paid for) again. --budget raises the
       budget of a run that used it up. --uncertain says what happened to
       `write once` calls of unknown outcome (after you checked): `done`
       (it happened), `retry` (it did not: make it) or `failed`; without
-      it, each tool's `on_uncertain` decides.
+      it, each tool's `on_uncertain` decides. For a tool that returns
+      something, `done=ANSWER` gives its answer (what you found it made):
+      JSON, or else taken as text, e.g. `done=post-123`.
   replay <run> [--quiet]
       Run again using only the journal: no model or tool is called.
   runs
@@ -172,7 +174,7 @@ options:
   --deterministic   one call at a time, always in the same order
   --budget USD      replace the program's budget
 
-resume also takes --uncertain done|retry|failed (see `calyx help`).
+resume also takes --uncertain done|done=ANSWER|retry|failed (see `calyx help`).
 ",
         graph = b.graph,
         file = b.file,
@@ -423,6 +425,7 @@ fn start(origin: Origin, flags: RunFlags) -> ExitCode {
         deterministic: flags.deterministic,
         budget_usd: flags.budget_usd,
         uncertain: None,
+        uncertain_value: None,
     };
     if let Some(id) = &id {
         eprintln!("{}: run {id}", command());
@@ -551,6 +554,7 @@ fn rerun(args: &[String], mode: Mode) -> ExitCode {
     let mut deterministic = false;
     let mut budget_usd = None;
     let mut uncertain = None;
+    let mut uncertain_value = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -560,7 +564,20 @@ fn rerun(args: &[String], mode: Mode) -> ExitCode {
             },
             "--uncertain" if mode == Mode::Resume => match it.next().map(String::as_str) {
                 Some(d @ ("done" | "retry" | "failed")) => uncertain = Some(d.to_owned()),
-                _ => return usage_error("--uncertain expects `done`, `retry` or `failed`"),
+                Some(d) if d.starts_with("done=") => {
+                    let text = &d["done=".len()..];
+                    uncertain = Some("done".to_owned());
+                    // JSON, or else the text itself.
+                    uncertain_value = Some(
+                        serde_json::from_str(text)
+                            .unwrap_or_else(|_| serde_json::Value::String(text.to_owned())),
+                    );
+                }
+                _ => {
+                    return usage_error(
+                        "--uncertain expects `done`, `done=ANSWER`, `retry` or `failed`",
+                    );
+                }
             },
             "--fake-models" => fake_models = true,
             "--quiet" => quiet = true,
@@ -610,6 +627,7 @@ fn rerun(args: &[String], mode: Mode) -> ExitCode {
         deterministic,
         budget_usd,
         uncertain,
+        uncertain_value,
     };
     execute(&program, &header.graph, header.args, opts, Some(&id))
 }

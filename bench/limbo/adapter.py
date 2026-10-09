@@ -79,11 +79,6 @@ def publish(a, key):
     return limbo("social_publish", keyed(a, key))["post_id"]
 
 
-def publish_unit(a, key):
-    publish(a, key)
-    return None
-
-
 def charge(a, key):
     args = keyed(a, key)
     args["currency"] = "usd"
@@ -177,6 +172,11 @@ def rows_with(a, key):
     return [r["row_id"] for r in rows]
 
 
+def rows_present(a, key):
+    """The rows of the batch already in the table (as they were asked for)."""
+    return [r for r in a["rows"] if limbo("db_query", {"table": a["table"], "where": r})["rows"]]
+
+
 def runs_of(a, key):
     rows = limbo("deploy_list_runs", {"service": a["service"], "limit": 50})["runs"]
     return [r["run_id"] for r in rows
@@ -184,11 +184,11 @@ def runs_of(a, key):
 
 
 TOOLS = {f.__name__: f for f in (
-    publish, publish_unit, charge, refund, create_ticket, comment, set_status, send_mail, insert_row,
+    publish, charge, refund, create_ticket, comment, set_status, send_mail, insert_row,
     insert_rows, upsert, deploy, wait, status_after, posts_with, tickets_titled, has_comment,
-    mails_sent, rows_with, runs_of)}
+    mails_sent, rows_with, rows_present, runs_of)}
 TOOLS["publish_keyed"] = publish
-TOOLS["publish_x"] = publish_unit
+TOOLS["publish_x"] = publish
 
 # The LIMBO tool each one calls: its MCP annotations are passed on as theirs.
 WRAPS = {
@@ -198,7 +198,7 @@ WRAPS = {
     "insert_row": "db_insert", "insert_rows": "db_insert_many", "upsert": "db_upsert", "deploy": "deploy_trigger",
     "wait": "wait", "status_after": "deploy_get_run", "posts_with": "social_list_posts",
     "tickets_titled": "tickets_list_recent", "has_comment": "tickets_get", "mails_sent": "mail_search_sent",
-    "rows_with": "db_query", "runs_of": "deploy_list_runs",
+    "rows_with": "db_query", "rows_present": "db_query", "runs_of": "deploy_list_runs",
 }
 
 

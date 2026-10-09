@@ -1277,6 +1277,7 @@ fn tool(t: &ToolDecl) -> ir::Tool {
     };
     ir::Tool {
         idempotency_key: single_name("idempotency_key").and_then(|n| param(&n)),
+        batch: single_name("batch").and_then(|n| param(&n)),
         on_uncertain: None,
         returns_unit: matches!(&t.ret.kind, TypeKind::Named { name, args, .. } if name.name == "Unit" && args.is_empty()),
         checks: single_name("checks"),

@@ -236,6 +236,30 @@ prompt summarize(items: List[Text]) -> Text:
     }
 
     #[test]
+    fn a_batch_names_a_list_and_verifies_its_items() {
+        let program = |props: &str, find: &str, ret: &str| {
+            format!(
+                "tool sent(to: Text, xs: List[Text]) -> {find}:\n    effect read\n\n\
+                 tool send_all(to: Text, xs: List[Text]) -> {ret}:\n{props}\n\n\
+                 graph g(to: Text) -> Text:\n    s = send_all(to, [\"a\"])\n    return \"ok\"\n"
+            )
+        };
+        let ok = "    effect write once\n    batch xs\n    on_uncertain verify(sent(to, xs))";
+        assert!(codes(&program(ok, "List[Text]", "Unit")).is_empty());
+        // The verify tool finds items, not a yes or no.
+        assert_eq!(codes(&program(ok, "Bool", "Unit")), vec!["E0633"]);
+        // A batch returns Unit; it names a list; it verifies.
+        assert_eq!(codes(&program(ok, "List[Text]", "Text")), vec!["E0637"]);
+        let not_list = ok.replace("batch xs", "batch to");
+        assert_eq!(
+            codes(&program(&not_list, "List[Text]", "Unit")),
+            vec!["E0637"]
+        );
+        let pause = "    effect write once\n    batch xs\n    on_uncertain pause";
+        assert_eq!(codes(&program(pause, "List[Text]", "Unit")), vec!["E0637"]);
+    }
+
+    #[test]
     fn sending_back_what_was_read_warns_only_when_it_overwrites() {
         let program = |update: &str| {
             format!(

@@ -8,9 +8,11 @@
 #   `set_status`, `upsert` e `refund` (reembolsar de novo responde 409);
 # - `write once`, com `verify` por uma leitura que acha o que a chamada fez:
 #   post no linkedin e no weibo, ticket, comentário, e-mail, linha e deploy;
-# - `write once` com `pause`, onde não há como conferir: post no x (sem
-#   listagem) e o lote de linhas (pode ficar pela metade, e `verify` só diz
-#   sim ou não).
+# - o lote de linhas é `write once` com `batch rows`: pode ficar pela
+#   metade, e o `verify` acha as linhas já gravadas; a Calyx manda de novo
+#   só as que faltam;
+# - `write once` com `pause`, onde não há como conferir: o post no x (sem
+#   listagem). A pessoa que retoma informa o id do post que achou.
 
 tool wait(seconds: Nat) -> Unit:
     effect read
@@ -40,6 +42,10 @@ tool rows_with(table: Text, row: Map[Text, Text]) -> List[Text]:
     effect read
     retry_on [Timeout, Unavailable, RateLimit]
 
+tool rows_present(table: Text, rows: List[Map[Text, Text]]) -> List[Map[Text, Text]]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
 tool runs_of(service: Text, version: Text, environment: Text) -> List[Text]:
     effect read
     retry_on [Timeout, Unavailable, RateLimit]
@@ -52,7 +58,7 @@ tool publish_keyed(platform: Text, text: Text, op: Text) -> Text:
     effect write
     idempotency_key op
 
-tool publish_x(platform: Text, text: Text, op: Text) -> Unit:
+tool publish_x(platform: Text, text: Text, op: Text) -> Text:
     effect write once
     on_uncertain pause
 
@@ -86,7 +92,8 @@ tool insert_row(table: Text, row: Map[Text, Text], op: Text) -> Text:
 
 tool insert_rows(table: Text, rows: List[Map[Text, Text]], op: Text) -> Unit:
     effect write once
-    on_uncertain pause
+    batch rows
+    on_uncertain verify(rows_present(table, rows))
 
 tool upsert(table: Text, key_field: Text, row: Map[Text, Text]) -> Unit:
     effect write

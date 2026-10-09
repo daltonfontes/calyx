@@ -118,6 +118,7 @@ tool NOME(parametros) -> Tipo:
     timeout duração                      # opcional; há padrão por efeito (D22)
     retry_on [Erro, ...]                 # erros temporários, repetidos pelo runtime
     idempotency_key expressão            # para `write`
+    batch parametro                      # `write once` em lote: refaz só os itens que faltam
     on_uncertain verify(f(...)) | pause | accept_loss   # obrigatório para `write once`
     checks TipoDeEstado                  # estado validável no momento do efeito (D29)
     repeatable                           # repetir com os mesmos argumentos é legítimo (D5)
@@ -131,7 +132,8 @@ tool NOME(parametros) -> Tipo:
   - `pause`: a execução para; uma pessoa confere e retoma com `calyx resume <id> --uncertain done|retry|failed`.
   - `accept_loss`: segue como se a chamada tivesse acontecido.
   - `verify(f(a, b))`: chama a tool `f` (`effect read`, `E0631`), com parâmetros da própria tool (`E0632`). Se `f` devolve `Bool`: `true` segue, `false` faz a chamada de novo. Se `f` devolve `List[T]`, com `T` o tipo da resposta da tool (`E0633`), ela **acha de novo o que a chamada fez**: vazia, faz a chamada de novo; senão, o primeiro item é a resposta da chamada (o id do ticket criado, do e-mail enviado), gravado no diário como se tivesse chegado. Se a verificação falha, para como `pause`.
-  - `accept_loss`, o `verify` com `Bool` e `--uncertain done` seguem sem a resposta da tool, então exigem uma tool que devolve `Unit` (`E0634`); o `verify` com `List[T]` não.
+  - `accept_loss` e o `verify` com `Bool` seguem sem a resposta da tool, então exigem uma tool que devolve `Unit` (`E0634`); o `verify` com `List[T]` não. Ao retomar uma pausa, `--uncertain done` também segue sem resposta; para uma tool que devolve algo, a pessoa dá a resposta que achou: `--uncertain done=<resposta>` (JSON, ou o texto como está).
+- `batch p`: a `write once` aplica os itens da lista `p` (`List[T]`) um a um, e pode ficar pela metade. Exige `on_uncertain verify(f(...))` com `f` devolvendo `List[T]`, os itens já aplicados, e uma tool que devolve `Unit` (`E0637`). Quando a chamada pode ter acontecido em parte, o runtime pergunta a `f` e manda de novo só os itens que ela não achou (cada item achado casa com um item pedido); se achou todos, segue.
 - `checks Tipo`: o registro com o estado que a tool valida nas precondições (`E0635`).
 
 **Implementação (D34):** a tool roda num servidor **MCP** separado, escrito em qualquer linguagem. A declaração `tool` é o **contrato** que a Calyx verifica e que o runtime aplica (efeito, limites, timeout, retentativa, idempotência, precondições). O nome da tool e o servidor que a implementa são ligados no `calyx.toml` (seção 11.1).
@@ -680,7 +682,7 @@ Mensagens de erro estruturadas, com **esperado**, **observado** e **local**, par
 | `calyx build` | Gera um executável autocontido para um grafo: `calyx build arquivo.clyx [-o nome] [--graph g]`. É uma cópia do próprio `calyx` com o programa e o `calyx.toml` dentro (D35); não precisa de compilador C, nem de Calyx onde roda. Os parâmetros do grafo viram opções (`./nome --param valor`), e `./nome resume <id>`, `replay` e `runs` funcionam como no `calyx` |
 | `calyx run` | Executa um grafo: `calyx run arquivo.clyx --param valor` (listas e registros em JSON, ou `@arquivo.json`). Chamadas independentes rodam em paralelo; `--deterministic` roda uma por vez; `--budget` troca o orçamento |
 | `calyx fmt` | Formata o código |
-| `calyx resume` | Continua uma execução interrompida ou que falhou: `calyx resume <id>`. Chamadas já no diário não são feitas (nem pagas) de novo. `--budget` aumenta um orçamento esgotado; `--uncertain done\|retry\|failed` diz o que aconteceu com chamadas `write once` de resultado incerto |
+| `calyx resume` | Continua uma execução interrompida ou que falhou: `calyx resume <id>`. Chamadas já no diário não são feitas (nem pagas) de novo. `--budget` aumenta um orçamento esgotado; `--uncertain done\|done=<resposta>\|retry\|failed` diz o que aconteceu com chamadas `write once` de resultado incerto |
 | `calyx replay` | Reexecuta a partir de um diário, sem chamar modelos nem tools: `calyx replay <id>` |
 | `calyx runs` | Lista as execuções, com estado (`finished`, `failed`, `interrupted`, `waiting`), chamadas e retomadas |
 | `calyx deliver` | Entrega uma mensagem a uma execução que espera num `receive`: `calyx deliver <id> Approval Approved` |

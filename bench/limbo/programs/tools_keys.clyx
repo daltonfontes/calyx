@@ -32,6 +32,10 @@ tool rows_with(table: Text, row: Map[Text, Text]) -> List[Text]:
     effect read
     retry_on [Timeout, Unavailable, RateLimit]
 
+tool rows_present(table: Text, rows: List[Map[Text, Text]]) -> List[Map[Text, Text]]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
 tool runs_of(service: Text, version: Text, environment: Text) -> List[Text]:
     effect read
     retry_on [Timeout, Unavailable, RateLimit]
@@ -44,7 +48,7 @@ tool publish_keyed(platform: Text, text: Text, op: Text) -> Text:
     effect write
     idempotency_key op
 
-tool publish_x(platform: Text, text: Text, op: Text) -> Unit:
+tool publish_x(platform: Text, text: Text, op: Text) -> Text:
     effect write
     idempotency_key op
 
