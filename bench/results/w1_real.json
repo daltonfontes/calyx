@@ -51,6 +51,278 @@
    "system": "calyx",
    "n": 10,
    "rep": 0
+  },
+  {
+   "ok": true,
+   "s": 19.58,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 3938,
+   "system": "python sequencial",
+   "n": 10,
+   "rep": 0
+  },
+  {
+   "ok": true,
+   "s": 8.17,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 5895,
+   "system": "python asyncio",
+   "n": 10,
+   "rep": 0
+  },
+  {
+   "ok": true,
+   "s": 8.11,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 4099,
+   "system": "langgraph",
+   "n": 10,
+   "rep": 0
+  },
+  {
+   "ok": true,
+   "s": 11.12,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 3840,
+   "system": "python sequencial",
+   "n": 5,
+   "rep": 1
+  },
+  {
+   "ok": true,
+   "s": 5.18,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 3097,
+   "system": "python asyncio",
+   "n": 5,
+   "rep": 1
+  },
+  {
+   "ok": true,
+   "s": 7.34,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 5151,
+   "system": "langgraph",
+   "n": 5,
+   "rep": 1
+  },
+  {
+   "ok": true,
+   "s": 4.56,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 3299,
+   "system": "calyx",
+   "n": 5,
+   "rep": 1
+  },
+  {
+   "ok": true,
+   "s": 17.33,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 4397,
+   "system": "python sequencial",
+   "n": 10,
+   "rep": 1
+  },
+  {
+   "ok": true,
+   "s": 6.23,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 4136,
+   "system": "python asyncio",
+   "n": 10,
+   "rep": 1
+  },
+  {
+   "ok": true,
+   "s": 6.85,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 3828,
+   "system": "langgraph",
+   "n": 10,
+   "rep": 1
+  },
+  {
+   "ok": true,
+   "s": 6.07,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 5362,
+   "system": "calyx",
+   "n": 10,
+   "rep": 1
+  },
+  {
+   "ok": true,
+   "s": 5.24,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 4189,
+   "system": "python asyncio",
+   "n": 5,
+   "rep": 2
+  },
+  {
+   "ok": true,
+   "s": 6.15,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 3324,
+   "system": "langgraph",
+   "n": 5,
+   "rep": 2
+  },
+  {
+   "ok": true,
+   "s": 5.13,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 4443,
+   "system": "calyx",
+   "n": 5,
+   "rep": 2
+  },
+  {
+   "ok": true,
+   "s": 9.99,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 4158,
+   "system": "python sequencial",
+   "n": 5,
+   "rep": 2
+  },
+  {
+   "ok": true,
+   "s": 6.36,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 3751,
+   "system": "python asyncio",
+   "n": 10,
+   "rep": 2
+  },
+  {
+   "ok": true,
+   "s": 10.2,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 3680,
+   "system": "langgraph",
+   "n": 10,
+   "rep": 2
+  },
+  {
+   "ok": true,
+   "s": 6.58,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 4911,
+   "system": "calyx",
+   "n": 10,
+   "rep": 2
+  },
+  {
+   "ok": true,
+   "s": 16.75,
+   "calls": 11,
+   "retries": 0,
+   "report_chars": 4049,
+   "system": "python sequencial",
+   "n": 10,
+   "rep": 2
+  }
+ ],
+ "summary": [
+  {
+   "system": "calyx",
+   "n": 5,
+   "median_s": 5.13,
+   "min_s": 4.56,
+   "max_s": 5.58,
+   "ok": 3,
+   "runs": 3,
+   "retries": 0
+  },
+  {
+   "system": "python sequencial",
+   "n": 5,
+   "median_s": 10.55,
+   "min_s": 9.99,
+   "max_s": 11.12,
+   "ok": 3,
+   "runs": 3,
+   "retries": 0
+  },
+  {
+   "system": "python asyncio",
+   "n": 5,
+   "median_s": 5.24,
+   "min_s": 5.18,
+   "max_s": 5.68,
+   "ok": 3,
+   "runs": 3,
+   "retries": 0
+  },
+  {
+   "system": "langgraph",
+   "n": 5,
+   "median_s": 7.34,
+   "min_s": 6.15,
+   "max_s": 9.52,
+   "ok": 3,
+   "runs": 3,
+   "retries": 0
+  },
+  {
+   "system": "calyx",
+   "n": 10,
+   "median_s": 6.07,
+   "min_s": 5.69,
+   "max_s": 6.58,
+   "ok": 3,
+   "runs": 3,
+   "retries": 0
+  },
+  {
+   "system": "python sequencial",
+   "n": 10,
+   "median_s": 17.33,
+   "min_s": 16.75,
+   "max_s": 19.58,
+   "ok": 3,
+   "runs": 3,
+   "retries": 0
+  },
+  {
+   "system": "python asyncio",
+   "n": 10,
+   "median_s": 6.36,
+   "min_s": 6.23,
+   "max_s": 8.17,
+   "ok": 3,
+   "runs": 3,
+   "retries": 0
+  },
+  {
+   "system": "langgraph",
+   "n": 10,
+   "median_s": 8.11,
+   "min_s": 6.85,
+   "max_s": 10.2,
+   "ok": 3,
+   "runs": 3,
+   "retries": 0
   }
  ]
 }
