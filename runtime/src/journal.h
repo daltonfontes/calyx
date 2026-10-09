@@ -63,8 +63,14 @@ int cx_journal_uncertain(const cx_journal *j, const char *key);
 /* Creates `dir` and its parents; 0 on success. */
 int cx_mkdirs(const char *dir);
 
-/* Records that a `write once` call is about to start (synced to disk). */
+/* Records that a `write once` call is about to start (synced to disk).
+ * Returns 0 if it may not be on disk: the call must not be made. */
 int cx_journal_begin(cx_journal *j, const char *key, const char *req_hash);
+
+/* Puts every recorded line on disk; 0 on I/O error. Before an external
+ * write, so that what its arguments came from (a model's answer, say) is
+ * found again after the machine crashes, not asked again. */
+int cx_journal_sync(cx_journal *j);
 
 /* Records a completed call. `ok_json` is the answer. Returns 0 on I/O error. */
 int cx_journal_record(cx_journal *j, const char *key, const char *effect, const char *req_hash,

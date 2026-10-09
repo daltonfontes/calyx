@@ -1,0 +1,326 @@
+{
+ "faults": 2,
+ "crashes": 2,
+ "program": [
+  [
+   "m",
+   "model",
+   null
+  ],
+  [
+   "pay",
+   "write",
+   "m"
+  ],
+  [
+   "ref",
+   "write",
+   "const"
+  ],
+  [
+   "mail",
+   "once",
+   "verify"
+  ],
+  [
+   "post",
+   "once",
+   "pause"
+  ],
+  [
+   "note",
+   "once",
+   "accept"
+  ],
+  [
+   "look",
+   "read",
+   null
+  ]
+ ],
+ "results": [
+  {
+   "executions": 53166,
+   "violating": 0,
+   "example": null,
+   "case": "assumptions hold (process crashes)",
+   "assume": {
+    "begin_synced": true,
+    "sync_before_write": true,
+    "machine_crash": false,
+    "keys_honored": true,
+    "verify_fresh": true,
+    "late_commit": false,
+    "redelivery": false
+   }
+  },
+  {
+   "executions": 217928,
+   "violating": 0,
+   "example": null,
+   "case": "assumptions hold (machine crashes too)",
+   "assume": {
+    "begin_synced": true,
+    "sync_before_write": true,
+    "machine_crash": true,
+    "keys_honored": true,
+    "verify_fresh": true,
+    "late_commit": false,
+    "redelivery": false
+   }
+  },
+  {
+   "executions": 257488,
+   "violating": 18500,
+   "example": {
+    "violations": [
+     "pay applied 2 times"
+    ],
+    "choices": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     1,
+     1,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     1,
+     1,
+     0,
+     1,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   "case": "no sync before a keyed write, machine crashes (the bug fixed)",
+   "assume": {
+    "begin_synced": true,
+    "sync_before_write": false,
+    "machine_crash": true,
+    "keys_honored": true,
+    "verify_fresh": true,
+    "late_commit": false,
+    "redelivery": false
+   }
+  },
+  {
+   "executions": 268360,
+   "violating": 49346,
+   "example": {
+    "violations": [
+     "note applied 2 times"
+    ],
+    "choices": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     1,
+     1,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   "case": "begin of write once not on disk, machine crashes",
+   "assume": {
+    "begin_synced": false,
+    "sync_before_write": false,
+    "machine_crash": true,
+    "keys_honored": true,
+    "verify_fresh": true,
+    "late_commit": false,
+    "redelivery": false
+   }
+  },
+  {
+   "executions": 53166,
+   "violating": 24524,
+   "example": {
+    "violations": [
+     "ref applied 2 times"
+    ],
+    "choices": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     1,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   "case": "the service ignores keys",
+   "assume": {
+    "begin_synced": true,
+    "sync_before_write": true,
+    "machine_crash": false,
+    "keys_honored": false,
+    "verify_fresh": true,
+    "late_commit": false,
+    "redelivery": false
+   }
+  },
+  {
+   "executions": 101662,
+   "violating": 11248,
+   "example": {
+    "violations": [
+     "mail applied 2 times"
+    ],
+    "choices": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     1,
+     0,
+     3,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   "case": "the read-back is stale and commits arrive late (LIMBO timeout_late)",
+   "assume": {
+    "begin_synced": true,
+    "sync_before_write": true,
+    "machine_crash": false,
+    "keys_honored": true,
+    "verify_fresh": false,
+    "late_commit": true,
+    "redelivery": false
+   }
+  },
+  {
+   "executions": 95556,
+   "violating": 24856,
+   "example": {
+    "violations": [
+     "note applied 2 times"
+    ],
+    "choices": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     1,
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   "case": "the transport delivers twice (LIMBO duplicate_delivery)",
+   "assume": {
+    "begin_synced": true,
+    "sync_before_write": true,
+    "machine_crash": false,
+    "keys_honored": true,
+    "verify_fresh": true,
+    "late_commit": false,
+    "redelivery": true
+   }
+  }
+ ]
+}
