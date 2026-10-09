@@ -1,0 +1,41 @@
+# The control: refund.clyx with the contracts left out (no key on the
+# refund, the credit a plain `write`). Not what Calyx recommends: it warns
+# (W0601). Used by run_stripe.py to show what the contracts prevent.
+model m = "fake-slow-1000"
+
+type Order:
+    id: Text
+    customer: Text
+    total: Float
+    refunded: Float
+
+type Proposal:
+    amount: Float
+    reason: Text
+
+tool get_order(id: Text) -> Order:
+    effect read
+    retry_on [Timeout, Unavailable, Network, RateLimit]
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    timeout 60 s
+
+tool credit_given(order: Text, request: Text) -> Bool:
+    effect read
+    retry_on [Timeout, Unavailable, Network, RateLimit]
+
+tool credit(order: Text, request: Text, amount: Float) -> Unit:
+    effect write
+    timeout 60 s
+
+prompt decide(order: Order, message: Text) -> Proposal:
+    """Propose a refund for {order} because: {message}"""
+
+graph handle_refund(request: Text, order: Text, message: Text) -> Text:
+    found = get_order(order)
+    proposal = m(decide(found, message))
+    paid = refund(request, order, proposal.amount)
+    apology = credit(order, request, 5.0)
+    apology after paid
+    return "refunded {proposal.amount}"

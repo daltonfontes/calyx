@@ -1,0 +1,47 @@
+# The refund flow against the real Stripe API (test mode), through
+# stripe_server.py. The model is fake (fixed latency), so the only thing
+# outside the run is Stripe.
+#
+# - `refund` is a keyed `write`: the key goes to Stripe's Idempotency-Key.
+# - `credit` (a store credit) is `write once`: Stripe cannot deduplicate it,
+#   so after an uncertain outcome Calyx asks Stripe whether it exists.
+model m = "fake-slow-1000"
+
+type Order:
+    id: Text
+    customer: Text
+    total: Float
+    refunded: Float
+
+type Proposal:
+    amount: Float
+    reason: Text
+
+tool get_order(id: Text) -> Order:
+    effect read
+    retry_on [Timeout, Unavailable, Network, RateLimit]
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    timeout 60 s
+
+tool credit_given(order: Text, request: Text) -> Bool:
+    effect read
+    retry_on [Timeout, Unavailable, Network, RateLimit]
+
+tool credit(order: Text, request: Text, amount: Float) -> Unit:
+    effect write once
+    timeout 60 s
+    on_uncertain verify(credit_given(order, request))
+
+prompt decide(order: Order, message: Text) -> Proposal:
+    """Propose a refund for {order} because: {message}"""
+
+graph handle_refund(request: Text, order: Text, message: Text) -> Text:
+    found = get_order(order)
+    proposal = m(decide(found, message))
+    paid = refund(request, order, proposal.amount)
+    apology = credit(order, request, 5.0)
+    apology after paid
+    return "refunded {proposal.amount}"
