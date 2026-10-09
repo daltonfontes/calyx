@@ -4,11 +4,6 @@ type Proposal:
     amount: Float
     reason: Text
 
-prompt decide(order: Text, message: Text) -> Proposal:
-    """
-    Propose a refund for order {order}: {message}
-    """
-
 tool refund(request: Text, order: Text, amount: Float) -> Unit:
     effect write
     idempotency_key request               # retried or resumed: paid once
@@ -19,6 +14,11 @@ tool email_sent(to: Text, body: Text) -> Bool:
 tool email(to: Text, body: Text) -> Unit:
     effect write once
     on_uncertain verify(email_sent(to, body))   # timed out? look before resending
+
+prompt decide(order: Text, message: Text) -> Proposal:
+    """
+    Propose a refund for order {order}: {message}
+    """
 
 graph handle_refund(request: Text, order: Text, message: Text) -> Text:
     proposal = gemini(decide(order, message))

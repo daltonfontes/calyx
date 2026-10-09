@@ -1,5 +1,7 @@
 # Calyx
 
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="media/check_dark.gif"><img src="media/check.gif" width="640" alt="calyx check refuses a refund workflow that could pay twice; three lines fix it"></picture></p>
+
 AI agents now send e-mails, move money and edit code. When one of those calls
 times out, nobody knows whether it happened. Retry, and the customer is
 refunded twice. Don't, and the refund is lost. Every framework leaves that
@@ -230,6 +232,7 @@ for code agents to per-user memory, debates and model routers, in
 - Spec: [calyx.md](docs/spec/calyx.md), the language, every check and every error code.
 - Evaluation: [docs/evaluation/](docs/evaluation), vs. Python, LangGraph and Temporal, real bugs, and LIMBO.
 - Benches: [bench/](bench), every script behind the numbers above, with the data in `bench/results/`.
+- Demo: [make_check_gif.py](media/make_check_gif.py) records the GIF above from the real `calyx check` output.
 - Design: [docs/discovery/](docs/discovery), the 35 design decisions and the research behind them.
 - Em português: [README.pt.md](README.pt.md), com o estado de cada marco e a pasta de cada parte.
 
