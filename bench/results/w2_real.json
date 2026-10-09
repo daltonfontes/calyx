@@ -1,0 +1,77 @@
+[
+ {
+  "scenario": "after-get_order",
+  "system": "calyx",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "correct_effects": true,
+  "consistent": true,
+  "resume_s": 2.7,
+  "resume_tail": [
+   "   2.70s  finished: 2 model call(s) (65 -> 331 tokens), 2 tool call(s), 0 retry(ies), at most 2 at once, 1 taken from the journal"
+  ]
+ },
+ {
+  "scenario": "after-get_order",
+  "system": "langgraph (padrão)",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "correct_effects": true,
+  "consistent": true,
+  "resume_s": 3.29,
+  "resume_tail": [
+   "llm_calls=2 llm_retries=0"
+  ]
+ },
+ {
+  "scenario": "after-get_order",
+  "system": "langgraph (padrão) + cuidado manual",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "correct_effects": true,
+  "consistent": true,
+  "resume_s": 3.33,
+  "resume_tail": [
+   "llm_calls=2 llm_retries=0"
+  ]
+ },
+ {
+  "scenario": "after-get_order",
+  "system": "langgraph durability=sync",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "correct_effects": true,
+  "consistent": true,
+  "resume_s": 3.16,
+  "resume_tail": [
+   "llm_calls=2 llm_retries=0"
+  ]
+ },
+ {
+  "scenario": "after-get_order",
+  "system": "langgraph durability=sync + cuidado manual",
+  "resume_exit": 0,
+  "payments": 1,
+  "emails": 1,
+  "llm_calls": 2,
+  "llm_calls_redone": 0,
+  "correct_effects": true,
+  "consistent": true,
+  "resume_s": 3.34,
+  "resume_tail": [
+   "llm_calls=2 llm_retries=0"
+  ]
+ }
+]
