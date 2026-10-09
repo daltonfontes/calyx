@@ -1,5 +1,6 @@
 // Calyx: the paper. Build with `typst compile paper/calyx.typ paper/Calyx.pdf`
 // (Typst 0.15). Every number comes from docs/evaluation/ and bench/results/.
+// paper/calyx-pt.typ is its Portuguese translation; change both together.
 
 #set document(
   title: "Calyx: A Compiler That Demands the Effect Contract in Agent Workflows",

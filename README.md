@@ -1,5 +1,7 @@
 # Calyx
 
+*Em português: [README.pt.md](README.pt.md).*
+
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="media/check_dark.gif"><img src="media/check.gif" width="640" alt="calyx check refuses a refund workflow that could pay twice; three lines fix it"></picture></p>
 
 AI agents now send e-mails, move money and edit code. When one of those calls
@@ -227,14 +229,14 @@ for code agents to per-user memory, debates and model routers, in
 
 # References
 
-- Paper: [Calyx: A Compiler That Demands the Effect Contract in Agent Workflows](paper/Calyx.pdf).
+- Paper: [Calyx: A Compiler That Demands the Effect Contract in Agent Workflows](paper/Calyx.pdf) (in Portuguese: [Calyx-pt.pdf](paper/Calyx-pt.pdf)).
 - Formalization: [Effects.lean](formal/Effects.lean), the effect rules and their proofs, in Lean; [formal.md](docs/paper/formal.md) and the bounded checker [model.py](bench/formal/model.py).
 - Spec: [calyx.md](docs/spec/calyx.md), the language, every check and every error code.
 - Evaluation: [docs/evaluation/](docs/evaluation), vs. Python, LangGraph and Temporal, real bugs, and LIMBO.
 - Benches: [bench/](bench), every script behind the numbers above, with the data in `bench/results/`.
 - Demo: [make_check_gif.py](media/make_check_gif.py) records the GIF above from the real `calyx check` output.
 - Design: [docs/discovery/](docs/discovery), the 35 design decisions and the research behind them.
-- Em português: [README.pt.md](README.pt.md), com o estado de cada marco e a pasta de cada parte.
+- Em português: [README.pt.md](README.pt.md), and a project overview with every milestone and folder in [visao-geral.md](docs/visao-geral.md).
 
 # Limitations
 
