@@ -1,7 +1,9 @@
 # Calyx: um compilador que exige o contrato dos efeitos em workflows de agentes
 
-*Rascunho. Os números vêm de [`docs/evaluation/`](../evaluation/) e de
-`bench/results/`; o que ainda falta medir está marcado com **[falta]**.*
+*Rascunho em português, que deu origem ao paper em inglês
+([`paper/Calyx.pdf`](../../paper/Calyx.pdf)). Os números vêm de
+[`docs/evaluation/`](../evaluation/) e de `bench/results/`; o que ainda
+falta medir está marcado com **[falta]**.*
 
 ## Resumo
 
