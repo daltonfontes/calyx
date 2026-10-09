@@ -33,6 +33,27 @@ pub fn new_id() -> String {
     )
 }
 
+/// A new id whose run directory this process has created, so no other run
+/// started in the same second can take it: the id's salt is only 16 bits,
+/// and two runs that drew the same one shared a directory and the second
+/// failed to create its journal.
+pub fn reserve_id() -> String {
+    reserve(Path::new(RUNS_DIR), new_id)
+}
+
+fn reserve(runs: &Path, mut next: impl FnMut() -> String) -> String {
+    let _ = std::fs::create_dir_all(runs);
+    let mut id = next();
+    for _ in 0..1000 {
+        match std::fs::create_dir(runs.join(&id)) {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => id = next(),
+            // Created, or an error the runtime will report with its own words.
+            _ => break,
+        }
+    }
+    id
+}
+
 /// Days since 1970-01-01 to a date (Howard Hinnant's algorithm).
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
@@ -248,6 +269,18 @@ mod tests {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(20_362), (2025, 10, 1));
         assert_eq!(civil_from_days(-1), (1969, 12, 31));
+    }
+
+    #[test]
+    fn a_reserved_id_is_never_given_twice() {
+        let runs = std::env::temp_dir().join(format!("calyx-reserve-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&runs);
+        // Two runs that draw the same salt: the second gets the next id.
+        let mut drawn = ["same", "same", "other"].into_iter().map(String::from);
+        let first = reserve(&runs, || drawn.next().unwrap());
+        let second = reserve(&runs, || drawn.next().unwrap());
+        assert_eq!((first.as_str(), second.as_str()), ("same", "other"));
+        let _ = std::fs::remove_dir_all(&runs);
     }
 
     #[test]
