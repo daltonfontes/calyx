@@ -9,3 +9,16 @@ command = ["python3", "stripe_server.py"]
 
 [tools.credit_given]
 command = ["python3", "stripe_server.py"]
+
+# For `calyx check refund.clyx --tools --probe` (real writes, test mode only).
+[tools.probe_order]
+command = ["python3", "stripe_server.py"]
+
+[tools.refunds_with]
+command = ["python3", "stripe_server.py"]
+
+[tools.refund.probe]
+setup = "probe_order"
+args = { order = "{setup}", amount = 1.0 }
+count = "refunds_with"
+count_args = { order = "{setup}", request = "{key}" }

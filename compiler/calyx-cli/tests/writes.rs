@@ -438,3 +438,54 @@ fn a_run_warns_once_when_a_server_contradicts_a_declaration() {
     );
     assert_eq!(d.sent(), 1);
 }
+
+/// `calyx check --tools --probe`: two calls with one key, then a count.
+fn probe_dir(name: &str) -> Dir {
+    let d = Dir::with_program(name, &program("verify(email_sent(to, subject))"));
+    let toml = std::fs::read_to_string(d.0.join("calyx.toml")).unwrap();
+    let cmd = toml
+        .lines()
+        .find(|l| l.starts_with("command"))
+        .unwrap()
+        .to_owned();
+    let toml = format!(
+        "{toml}[tools.payments_for]\n{cmd}\n\n\
+         [tools.refund.probe]\n\
+         args = {{ order = \"A100\", amount = 1.0 }}\n\
+         count = \"payments_for\"\n\
+         count_args = {{ request = \"{{key}}\" }}\n"
+    );
+    std::fs::write(d.0.join("calyx.toml"), toml).unwrap();
+    d
+}
+
+#[test]
+fn the_probe_passes_a_tool_that_honours_its_key() {
+    let d = probe_dir("probe-ok");
+    let out = d.calyx(&["check", "p.clyx", "--probe"]);
+    let report = text(&out.stdout);
+    assert!(out.status.success(), "{report}{}", text(&out.stderr));
+    assert!(
+        report.contains("probe: tool `refund` applied a repeated key once"),
+        "{report}"
+    );
+}
+
+#[test]
+fn the_probe_catches_a_server_that_ignores_keys_while_claiming_them() {
+    let d = probe_dir("probe-bad");
+    let out = Command::new(env!("CARGO_BIN_EXE_calyx"))
+        .args(["check", "p.clyx", "--probe"])
+        .current_dir(&d.0)
+        .env("CALYX_FAKE_STORE", d.0.join("store.json"))
+        .env("CALYX_FAKE_STORE_IGNORE_KEYS", "1")
+        .output()
+        .unwrap();
+    let report = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{report}");
+    assert!(
+        report.contains("error[E0704]: tool `refund` applied a repeated idempotency key 2 times"),
+        "{report}"
+    );
+    assert!(report.contains("idempotencyKeyHint: true"), "{report}");
+}

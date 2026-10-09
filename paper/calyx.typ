@@ -597,7 +597,12 @@ keys @mcp2025spec. We propose one to MCP, `idempotencyKeyHint`, per tool
 (`docs/mcp/idempotency-key-hint.md`): with our LIMBO adapter declaring it
 from which services honour a key, Calyx warns (`W0703`) on all 8 such
 declarations, with no new false positives. The adapter, not LIMBO, declares
-it: this shows what the check does when servers tell the truth.
+it: this shows what the check does when servers tell the truth. When they
+may not, `calyx check --tools --probe` tests the claim in a service's test
+environment: two calls with the same key, then a count of the effects with
+a read tool. Against Stripe in test mode it passes our server, and flags
+(`E0704`, two refunds) a version of it that stops forwarding the key while
+still claiming `idempotencyKeyHint: true`.
 
 == Writing a real workflow
 

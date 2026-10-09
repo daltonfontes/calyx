@@ -10,6 +10,12 @@
 //! [tools.web_search]
 //! command = ["python3", "tools/fake_search.py"]   # relative to this file
 //!
+//! [tools.refund.probe]           # for `calyx check --tools --probe` only
+//! setup = "probe_order"           # optional: a tool called first, no arguments
+//! args = { order = "{setup}", amount = 1.0 }       # the key's parameter is set by Calyx
+//! count = "refunds_with"          # a read tool that counts the effects
+//! count_args = { order = "{setup}", request = "{key}" }
+//!
 //! [prices."gemini-3.5-flash-lite"]   # USD per million tokens (illustrative)
 //! input = 0.10
 //! output = 0.40
@@ -44,6 +50,48 @@ pub struct ToolServer {
     pub remote_name: Option<String>,
     /// Directory the command runs in (the directory of `calyx.toml`).
     pub dir: PathBuf,
+    /// How `calyx check --tools --probe` tests that the tool honours keys.
+    pub probe: Option<Probe>,
+}
+
+/// A test that a keyed write applies a repeated key once: call it twice
+/// with the same key, then count its effects with a read tool. It makes
+/// real writes, so it is only for a service's test environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Probe {
+    /// A tool (by its name in `[tools]`) called first with no arguments;
+    /// its answer replaces `{setup}` in the arguments.
+    pub setup: Option<String>,
+    /// The write's arguments; `{key}` and `{setup}` are replaced.
+    pub args: serde_json::Map<String, serde_json::Value>,
+    /// A read tool (by its name in `[tools]`) answering how many effects.
+    pub count: String,
+    pub count_args: serde_json::Map<String, serde_json::Value>,
+}
+
+fn probe(v: &toml::Value, owner: &str) -> Result<Option<Probe>, String> {
+    let Some(p) = v.get("probe") else {
+        return Ok(None);
+    };
+    let owner = format!("{owner}.probe");
+    let map = |key: &str| -> Result<serde_json::Map<String, serde_json::Value>, String> {
+        match p.get(key) {
+            None => Ok(Default::default()),
+            Some(t) => match serde_json::to_value(t) {
+                Ok(serde_json::Value::Object(m)) => Ok(m),
+                _ => Err(format!("`{owner}.{key}` must be a table")),
+            },
+        }
+    };
+    Ok(Some(Probe {
+        setup: p
+            .get("setup")
+            .and_then(toml::Value::as_str)
+            .map(str::to_owned),
+        args: map("args")?,
+        count: string(p, "count", &owner)?,
+        count_args: map("count_args")?,
+    }))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -159,6 +207,7 @@ impl Config {
                                 command,
                                 remote_name,
                                 dir: dir.to_path_buf(),
+                                probe: probe(v, &format!("tools.{name}"))?,
                             },
                         );
                     }

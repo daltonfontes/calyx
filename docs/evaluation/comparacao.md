@@ -420,6 +420,18 @@ contratos, os dois são reenviados às cegas e o Stripe aplica de novo.
 mecanismo funciona contra um serviço que a Calyx não controla, não que todo
 serviço respeita chaves.
 
+### O probe: testar a chave antes de confiar nela
+
+A garantia do reembolso depende de o servidor MCP repassar a chave ao
+Stripe. `calyx check --tools --probe` testa isso no ambiente de teste: chama
+a escrita duas vezes com a mesma chave e conta os efeitos com uma tool de
+leitura (`bench/stripe/probe.sh`, `bench/results/stripe_probe.txt`):
+
+| Servidor | Reembolsos para 2 chamadas com a mesma chave | `calyx check --probe` |
+|---|---|---|
+| `stripe_server.py` como é | 1 | passa |
+| o mesmo com `STRIPE_DROP_KEY=1` (não repassa a chave, mas anuncia `idempotencyKeyHint: true`) | 2 | `E0704` |
+
 ## O que a comparação mostra e o que não mostra
 
 **Mostra:**

@@ -18,6 +18,13 @@ Tools (each order is a PaymentIntent whose id is the order id):
   customer (a negative balance transaction), tagged with the request. No
   key: Stripe applies every call. Annotated `idempotencyKeyHint: false`.
 - `credit_given(order, request)`: read. Whether that credit exists.
+- `probe_order()` and `refunds_with(order, request)`: for
+  `calyx check --tools --probe` (calyx.toml): a fresh test order, and how
+  many refunds a request made on it.
+
+With STRIPE_DROP_KEY=1 the server does not forward the key (a bug a server
+can have) while still claiming `idempotencyKeyHint: true`: what the probe
+is for.
 
 Faults, for the crash matrix (bench/stripe/run_stripe.py): a request id
 with `__slowrefund__` or `__slowcredit__` makes the server answer 30 s
@@ -86,7 +93,8 @@ def refund(a, meta):
     out = stripe("POST", "/v1/refunds",
                  {"payment_intent": a["order"], "amount": cents(a["amount"]),
                   "metadata[request]": a["request"]},
-                 idempotency_key=meta.get("calyx/idempotency_key"))
+                 idempotency_key=None if os.environ.get("STRIPE_DROP_KEY") == "1"
+                 else meta.get("calyx/idempotency_key"))
     if "__slowrefund__" in a["request"]:
         time.sleep(SLOW)
     return {"id": out["id"]}
@@ -114,6 +122,20 @@ def credit_given(a, meta):
     return bool(credits_for(a["order"], a["request"]))
 
 
+def probe_order(a, meta):
+    customer = stripe("POST", "/v1/customers", {"description": "calyx probe"})["id"]
+    return stripe("POST", "/v1/payment_intents", {
+        "amount": 1000, "currency": "usd", "customer": customer,
+        "payment_method": "pm_card_visa", "confirm": "true",
+        "automatic_payment_methods[enabled]": "true",
+        "automatic_payment_methods[allow_redirects]": "never"})["id"]
+
+
+def refunds_with(a, meta):
+    rs = stripe("GET", "/v1/refunds", {"payment_intent": a["order"], "limit": 100})["data"]
+    return sum(1 for r in rs if r.get("metadata", {}).get("request") == a["request"])
+
+
 def schema(*names):
     return {"type": "object", "properties": {n: {} for n in names}, "required": list(names)}
 
@@ -128,8 +150,12 @@ TOOLS = [
      "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False,
                      "idempotencyKeyHint": False}},
     {"name": "credit_given", "inputSchema": schema("order", "request"), "annotations": READ},
+    {"name": "probe_order", "inputSchema": schema(),
+     "annotations": {"readOnlyHint": False, "idempotentHint": False}},
+    {"name": "refunds_with", "inputSchema": schema("order", "request"), "annotations": READ},
 ]
-CALLS = {"get_order": get_order, "refund": refund, "credit": credit, "credit_given": credit_given}
+CALLS = {"get_order": get_order, "refund": refund, "credit": credit, "credit_given": credit_given,
+         "probe_order": probe_order, "refunds_with": refunds_with}
 
 
 def text(value, error=False):
