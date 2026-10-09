@@ -1,0 +1,46 @@
+{
+ "model": "gemini-3.5-flash-lite",
+ "pause_s": 65.0,
+ "raw": [
+  {
+   "ok": true,
+   "s": 5.58,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 4292,
+   "system": "calyx",
+   "n": 5,
+   "rep": 0
+  },
+  {
+   "ok": true,
+   "s": 10.55,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 3086,
+   "system": "python sequencial",
+   "n": 5,
+   "rep": 0
+  },
+  {
+   "ok": true,
+   "s": 5.68,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 3944,
+   "system": "python asyncio",
+   "n": 5,
+   "rep": 0
+  },
+  {
+   "ok": true,
+   "s": 9.52,
+   "calls": 6,
+   "retries": 0,
+   "report_chars": 3826,
+   "system": "langgraph",
+   "n": 5,
+   "rep": 0
+  }
+ ]
+}
