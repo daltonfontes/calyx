@@ -1,0 +1,90 @@
+# As tools do LIMBO no contrato "keys_everywhere": a documentação diz que
+# toda escrita aceita chave de idempotência (e que um lote interrompido
+# continua de onde parou). Então toda escrita é `write` com chave, e a Calyx
+# repete sozinha as que falham com erro temporário. As leituras são as mesmas
+# de `tools_native.clyx`; as que só serviam ao `verify` sobram sem uso.
+
+tool wait(seconds: Nat) -> Unit:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool status_after(run_id: Text, seconds: Nat) -> Text:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool posts_with(platform: Text, text: Text) -> List[Text]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool tickets_titled(project: Text, title: Text) -> List[Text]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool has_comment(ticket_key: Text, text: Text) -> Bool:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool mails_sent(to: Text, subject: Text) -> List[Text]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool rows_with(table: Text, row: Map[Text, Text]) -> List[Text]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool runs_of(service: Text, version: Text, environment: Text) -> List[Text]:
+    effect read
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool publish(platform: Text, text: Text, op: Text) -> Text:
+    effect write
+    idempotency_key op
+
+tool publish_keyed(platform: Text, text: Text, op: Text) -> Text:
+    effect write
+    idempotency_key op
+
+tool publish_x(platform: Text, text: Text, op: Text) -> Unit:
+    effect write
+    idempotency_key op
+
+tool charge(customer_id: Text, amount_cents: Nat, description: Text, op: Text) -> Text:
+    effect write
+    idempotency_key op
+
+tool refund(charge_id: Text, reason: Text) -> Unit:
+    effect write
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool create_ticket(project: Text, title: Text, body: Text, op: Text) -> Text:
+    effect write
+    idempotency_key op
+
+tool comment(ticket_key: Text, text: Text, op: Text) -> Unit:
+    effect write
+    idempotency_key op
+
+tool set_status(ticket_key: Text, status: Text) -> Unit:
+    effect write
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool send_mail(to: Text, subject: Text, body: Text, op: Text) -> Text:
+    effect write
+    idempotency_key op
+
+tool insert_row(table: Text, row: Map[Text, Text], op: Text) -> Text:
+    effect write
+    idempotency_key op
+
+tool insert_rows(table: Text, rows: List[Map[Text, Text]], op: Text) -> Unit:
+    effect write
+    idempotency_key op
+
+tool upsert(table: Text, key_field: Text, row: Map[Text, Text]) -> Unit:
+    effect write
+    retry_on [Timeout, Unavailable, RateLimit]
+
+tool deploy(service: Text, version: Text, environment: Text, op: Text) -> Text:
+    effect write
+    idempotency_key op
+

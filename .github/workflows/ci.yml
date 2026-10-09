@@ -37,6 +37,13 @@ jobs:
           ./target/release/calyx run examples/router.clyx --fake-models --ticket "Fui cobrado duas vezes"
           ./target/release/calyx run examples/atendimento.clyx --graph atender --fake-models --cliente ana --pedido A100 --mensagem "Como troco o endereço?"
 
+      - name: The LIMBO programs compile under both contracts
+        run: |
+          for c in native keys; do
+            cat bench/limbo/programs/tools_$c.clyx bench/limbo/programs/tasks.clyx > "$RUNNER_TEMP/limbo_$c.clyx"
+            ./target/release/calyx check "$RUNNER_TEMP/limbo_$c.clyx"
+          done
+
       - name: Wait for a message, deliver it, continue (receive)
         run: |
           set +e

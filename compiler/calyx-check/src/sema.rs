@@ -1176,12 +1176,19 @@ impl<'p> Cx<'_, 'p> {
                         .observed(format!("`effect {}`", sig.effect)),
                     );
                 }
-                let takes_as_done = !matches!(policy, Policy::Pause);
+                // A `verify` that finds what the call made gives its answer.
+                let finds = matches!(policy, Policy::Verify { tool, .. }
+                    if self.tools.get(tool.name.as_str())
+                        .is_some_and(|v| matches!(&v.ret, Ty::List(r, _) if assignable(r, &sig.ret))));
+                let takes_as_done = !matches!(policy, Policy::Pause) && !finds;
                 if takes_as_done && !matches!(sig.ret, Ty::Unit | Ty::Error) {
                     out.push(
                         err("E0634", "this policy needs a tool that returns `Unit`", *span)
                             .expected("`-> Unit`: the run goes on as if the call happened, with no answer to use")
-                            .observed(format!("`-> {}`; use `on_uncertain pause`", sig.ret)),
+                            .observed(format!(
+                                "`-> {}`; use `on_uncertain pause`, or a `verify` tool that returns `List[{}]`",
+                                sig.ret, sig.ret
+                            )),
                     );
                 }
                 if let Policy::Verify { tool, args } = policy {
@@ -1220,11 +1227,26 @@ impl<'p> Cx<'_, 'p> {
                     .observed(format!("`{}` is `{}`", tool.name, v.effect)),
             );
         }
-        if !matches!(v.ret, Ty::Bool | Ty::Error) {
+        // `Bool`: whether the call happened. `List[R]`: what it made, found
+        // again (empty if it did not happen), so its answer can be used.
+        let finds = matches!(&v.ret, Ty::List(r, _) if assignable(r, &sig.ret));
+        if !finds && !matches!(v.ret, Ty::Bool | Ty::Error) {
+            let expected = if matches!(sig.ret, Ty::Unit) {
+                "`-> Bool`: whether the call happened".to_owned()
+            } else {
+                format!(
+                    "`-> Bool` (whether the call happened) or `-> List[{}]` (what it made, found again)",
+                    sig.ret
+                )
+            };
             out.push(
-                err("E0633", "`verify` tool must return `Bool`", tool.span)
-                    .expected("`-> Bool`: whether the call happened")
-                    .observed(format!("`-> {}`", v.ret)),
+                err(
+                    "E0633",
+                    "`verify` tool must return `Bool` or a list of the tool's answer",
+                    tool.span,
+                )
+                .expected(expected)
+                .observed(format!("`-> {}`", v.ret)),
             );
         }
         if args.len() != v.params.len() {

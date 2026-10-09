@@ -8,7 +8,7 @@ warning[W0601]: `write` tool without `idempotency_key`
 - observed : no key: the runtime repeats the call after failures, so the tool itself must be idempotent
 Location: m6_errors.clyx:15:6
 
-error[E0633]: `verify` tool must return `Bool`
+error[E0633]: `verify` tool must return `Bool` or a list of the tool's answer
 - expected : `-> Bool`: whether the call happened
 - observed : `-> Text`
 Location: m6_errors.clyx:20:25
@@ -30,7 +30,7 @@ Location: m6_errors.clyx:28:25
 
 error[E0634]: this policy needs a tool that returns `Unit`
 - expected : `-> Unit`: the run goes on as if the call happened, with no answer to use
-- observed : `-> Text`; use `on_uncertain pause`
+- observed : `-> Text`; use `on_uncertain pause`, or a `verify` tool that returns `List[Text]`
 Location: m6_errors.clyx:32:5
 
 error[E0641]: `on_uncertain` is only for `write once` tools

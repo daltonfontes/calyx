@@ -52,6 +52,8 @@ A analogia mais próxima é o **SQL**: você declara o que quer, e o banco decid
 
 **Comparação com Python, LangGraph e Temporal:** [`docs/evaluation/comparacao.md`](docs/evaluation/comparacao.md). Em 6 pontos de queda do fluxo de reembolso, a Calyx não duplica nenhum pagamento nem e-mail sem código de recuperação; Temporal e LangGraph chegam ao mesmo resultado só com o cuidado manual que a documentação recomenda (sem ele, erram 2 a 3 dos 6). Dos 14 bugs de estado que a Calyx pega antes de rodar, pyright e mypy pegam 2.
 
+**No LIMBO** (benchmark de efeitos duplicados de outros autores): [`docs/evaluation/limbo.md`](docs/evaluation/limbo.md). Com as tools como são, a Calyx empata com os melhores modelos (76% de efeito único, contra 74–79%); quando toda escrita aceita chave, 100%, sem nenhuma duplicata.
+
 **O que ainda não está provado:** a hipótese central foi testada só no papel ([teste no papel](docs/discovery/04-teste-no-papel.md)). As perguntas de pesquisa da [hipótese](docs/discovery/01-hipotese.md) só se respondem com uma implementação.
 
 ## Estado do projeto

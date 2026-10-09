@@ -32,7 +32,10 @@ estado, o compilador recusa 35 antes de rodar e 48 nunca causam dano; num
 estudo de 44 bugs reais relatados nas issues dos três frameworks, porém, o
 compilador não pegou nenhum: as issues relatam o framework errando, não o
 programador. Discutimos o que isso diz sobre a avaliação de linguagens desse
-tipo.
+tipo. No LIMBO, um benchmark de efeitos duplicados de outros autores, os
+programas Calyx empatam com os melhores modelos no contrato nativo das tools
+(76% de efeito único, contra 74–79%) e chegam a 100% quando toda escrita
+aceita chave: a garantia está no contrato, e a Calyx o torna obrigatório.
 
 ## 1. Introdução
 
@@ -353,11 +356,56 @@ pessoa o que ela aprovava (`receive ... about`); e o `W0603` avisava num caso
 em que nada se perdia. Também expôs um limite que a linguagem não resolve: o
 modelo prometeu ações que não fez.
 
+### 6.8 Um benchmark de outros autores: LIMBO
+
+O LIMBO (2026) injeta falhas em seis serviços simulados e confere, num
+livro-razão, o que cada um fez de fato. Escrevemos as 12 tarefas dele como
+programas Calyx, com as tools declaradas só pela documentação que o agente
+vê, e as rodamos na grade E2 do artigo (205 episódios com falha), com o
+injetor e o avaliador do próprio LIMBO, sem mudar o código dele. Não há
+modelo: cada tarefa é um programa fixo, então o que se compara é a
+recuperação. Detalhes em `docs/evaluation/limbo.md`.
+
+| | Efeito único (EOS) | Duplicata | Tarefa (TS) |
+|---|---|---|---|
+| Calyx, contrato nativo | 76% | 23% | 99,5% |
+| 3 modelos de ponta, vanilla | 74–79% | 20–26% | 99,5–100% |
+| Melhor harness com contratos (`guard`) | 77% | 23% | 100% |
+| Oráculo de resultado | 88% | 12% | 100% |
+| Calyx, chave em toda escrita | 100% | 0% | 100% |
+
+No contrato nativo, a Calyx empata com os melhores modelos e não os supera.
+Todas as suas duplicatas vêm de dois modos que nenhum cliente resolve sem
+chave: a reentrega no transporte (74% em todos, inclusive no oráculo) e o
+commit atrasado, em que a escrita ainda está em trânsito quando a releitura
+olha (68%; o `guard` tem 69%). Nos modos que a releitura resolve, a Calyx
+não duplicou nenhuma vez. Quando toda escrita aceita chave, a duplicação
+some por construção: a chave está na declaração da tool, e não na decisão
+do modelo a cada chamada. O resultado reforça, de fora, a conclusão do
+LIMBO: a garantia mora no contrato da tool. A contribuição da Calyx é
+tornar esse contrato escrito e conferido, igual em toda execução e sem
+tokens.
+
+O LIMBO achou duas lacunas na Calyx, corrigidas antes desses números:
+- o `verify` só dizia se a escrita tinha acontecido, e não devolvia o que
+  ela fez (o id do ticket); agora a releitura pode devolver o registro, e
+  foi esse caminho que evitou a duplicata em 40 dos 205 episódios;
+- um servidor de tools não tinha como dizer que o serviço atrás dele não
+  respondeu.
+
+Ficaram duas, sem correção:
+- o lote que fica pela metade: a resposta a uma pausa não tem como dizer
+  "faça só o que falta";
+- a pessoa que retoma uma pausa não tem como informar a resposta da tool.
+
 ## 7. Ameaças à validade
 
 - **Mesmo autor nas duas linguagens.** Os baselines e o corpus foram escritos
-  pelo autor da Calyx. Mitigações: o E4 **[falta]**, e as regras de "cuidado
-  manual" tiradas da documentação de cada sistema.
+  pelo autor da Calyx. Mitigações: o LIMBO (seção 6.8), com tarefas, falhas,
+  avaliador e baselines de outros autores; as regras de "cuidado manual"
+  tiradas da documentação de cada sistema; e o E4 **[falta]**. No LIMBO, os
+  programas Calyx e o adaptador ainda são do autor, mas o adaptador só usa
+  tools públicas do LIMBO.
 - **O que a avaliação achou na própria Calyx.** Três bugs da Calyx foram
   achados medindo (resposta depois do prazo, custo cúbico do agente, `write
   once` em laço) e corrigidos antes destes números. Relatamos os números de
@@ -429,6 +477,8 @@ escreve o cuidado, e a Calyx exige que ele seja escrito**. O custo é baixo
 palavras a mais. A parte mais fraca da avaliação é a que mais importa para a
 tese: se o compilador pega, antes de rodar, os bugs que programadores reais
 cometem. O corpus diz que sim, mas foi escrito pelo autor; as issues públicas
-não dizem nem que sim nem que não. O E4, um estudo com programadores e
-rodar a Calyx no LIMBO, um benchmark de efeitos duplicados feito por outros
-autores, são o próximo passo.
+não dizem nem que sim nem que não. No LIMBO, um benchmark de outros
+autores, a Calyx empata com os melhores modelos quando as tools não aceitam
+chave e chega a zero duplicatas quando aceitam. Isso confirma que a garantia
+mora no contrato, e que exigi-lo vale. O E4, um estudo com programadores, é
+o próximo passo.
