@@ -2,7 +2,7 @@
 
 For each program in programas/ (bNN_*.py): pyright and mypy, both in strict
 mode, then the program itself. Prints a line per program and writes
-bench/results/e4.json. Programs marked `# Não se aplica:` are listed as such.
+bench/results/e4.json. Programs marked `# Not applicable:` (or `# Não se aplica:`) are listed as such.
 
     python bench/e4_porting/run_e4.py [bNN ...]
 
@@ -87,21 +87,21 @@ def main() -> None:
     else:  # b00 is the example of the format, not one of the 54
         paths = [p for p in paths if not os.path.basename(p).startswith("b00_")]
     if not paths:
-        print("nenhum programa em programas/ (bNN_nome.py)")
+        print("no program in programas/ (bNN_name.py)")
         return
     rows = []
     for path in paths:
         name = os.path.basename(path)
-        row: dict = {"program": name, "bug": header(path, "Bug"), "damage_at": header(path, "Dano")}
-        skip = header(path, "Não se aplica")
+        row: dict = {"program": name, "bug": header(path, "Bug"), "damage_at": header(path, "Damage") or header(path, "Dano")}
+        skip = header(path, "Not applicable") or header(path, "Não se aplica")
         if skip:
             row["not_applicable"] = skip
-            print(f"{name:42} não se aplica: {skip}", flush=True)
+            print(f"{name:42} not applicable: {skip}", flush=True)
         else:
             row.update(pyright=pyright(path), mypy=mypy(path), run=run(path))
             print(
                 f"{name:42} pyright={len(row['pyright'])} mypy={len(row['mypy'])} "
-                f"saída={row['run']['exit']} {row['run']['exception'][:60]!r}",
+                f"exit={row['run']['exit']} {row['run']['exception'][:60]!r}",
                 flush=True,
             )
             for e in row["pyright"][:3]:
@@ -112,7 +112,7 @@ def main() -> None:
     if not only:
         with open(RESULTS, "w") as f:
             json.dump(rows, f, indent=1, ensure_ascii=False)
-        print(f"\n{len(rows)} programa(s); resultados em {os.path.relpath(RESULTS)}")
+        print(f"\n{len(rows)} program(s); results in {os.path.relpath(RESULTS)}")
 
 
 if __name__ == "__main__":

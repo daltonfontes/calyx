@@ -1,7 +1,7 @@
-"""O mundo falso em que os programas agem, com tipos para o pyright e o
-mypy conferirem cada chamada: uma loja com pagamentos e e-mail, contas, um
-repositório de código e um modelo. Tudo falso e instantâneo; pode ser
-estendido se um bug precisar de algo que não está aqui.
+"""The fake world the programs act on, typed so pyright and mypy can check
+every call: a store with payments and e-mail, accounts, a code repository
+and a model. All fake and instant; extend it if a bug needs something that
+is not here.
 """
 import os
 import shutil
@@ -44,7 +44,7 @@ class Store:
 
 
 class Account:
-    """A conta de um usuário, que várias execuções podem mudar."""
+    """A user's account, which several runs may change."""
 
     def __init__(self) -> None:
         self.balance = 0.0
@@ -60,7 +60,7 @@ class Account:
 
 
 def llm(prompt: str) -> str:
-    return f"[resposta falsa para: {prompt[:40]}]"
+    return f"[fake answer to: {prompt[:40]}]"
 
 
 def new_repo() -> str:

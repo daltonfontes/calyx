@@ -1,79 +1,89 @@
-# E4: os bugs portados por outra pessoa
+# E4: the bugs, written by someone else
 
-Obrigado por ajudar. Este experimento mede **onde um bug de workflow de
-agentes aparece em Python**: nos checadores de tipo antes de rodar, ao rodar,
-ou em lugar nenhum. Os mesmos bugs já foram escritos numa outra linguagem;
-para a comparação valer, quem os escreve em Python precisa ser outra pessoa,
-escrevendo do seu jeito.
+*Em português: [README.pt.md](README.pt.md).*
 
-## O que fazer
+Thank you for helping. This experiment measures **where a bug in an agent
+workflow shows up in Python**: in the type checkers before running, when
+running, or nowhere. The same bugs were already written in another
+language; for the comparison to be fair, whoever writes them in Python must
+be someone else, writing their own way.
 
-Para cada bug de [`bugs.md`](bugs.md), escreva um programa em
-`programas/bNN_nome.py` (o número com dois dígitos) que:
+## What to do
 
-1. faz o que a coluna "Programa" descreve, **com o erro** da coluna "O erro";
-2. roda sozinho, do começo ao fim, com `python programas/bNN_nome.py`
-   (inclusive a queda e a retomada, quando o bug tem uma: simule a queda
-   como achar mais natural, por exemplo com uma exceção no meio e uma
-   segunda chamada que retoma do checkpoint);
-3. começa com este cabeçalho:
+For each bug in [`bugs.md`](bugs.md), write a program in
+`programas/bNN_name.py` (the number with two digits) that:
+
+1. does what the "Program" column describes, **with the mistake** in the
+   "The mistake" column;
+2. runs on its own, start to finish, with `python programas/bNN_name.py`
+   (including the crash and the resume, when the bug has one: simulate the
+   crash however feels natural, for example with an exception halfway and a
+   second call that resumes from the checkpoint);
+3. starts with this header:
 
    ```python
-   # Bug NN: <a frase da coluna "O erro">
-   # Dano: <onde, no código, o dano acontece, se acontece>
+   # Bug NN: <the sentence from the "The mistake" column>
+   # Damage: <where, in the code, the damage happens, if it does>
    ```
 
-**Escreva como escreveria normalmente** um código de produção cuidadoso:
+**Write it the way you normally would** careful production code:
 
-- com tipos em tudo (`TypedDict` no estado, funções anotadas);
-- com LangGraph (`StateGraph`) quando houver um fluxo de passos, e Python
-  comum quando não houver;
-- usando o mundo falso de [`world.py`](world.py) (loja, contas, repositório,
-  modelo); pode estendê-lo se precisar.
+- with types everywhere (`TypedDict` for the state, annotated functions);
+- with LangGraph (`StateGraph`) when there is a flow of steps, and plain
+  Python when there is not;
+- using the fake world in [`world.py`](world.py) (store, accounts,
+  repository, model); extend it if you need to.
 
-Não tente esconder o erro dos checadores nem facilitar para eles: o erro é o
-que um programador cometeria sem perceber.
+Don't try to hide the mistake from the checkers or make it easy for them:
+the mistake is one a programmer would make without noticing.
 
-**Não abra**, até terminar: `tests/state_bugs/`, `bench/q2_bugs/` e
-`docs/evaluation/`. Eles têm as outras versões e os resultados esperados.
+**Don't open**, until you finish: `tests/state_bugs/`, `bench/q2_bugs/`,
+`docs/evaluation/`, `docs/paper/` and `paper/`, nor the results sections of
+the READMEs. They hold the other versions and the expected results.
 
-Se um bug não tiver equivalente natural em Python, crie o arquivo só com o
-cabeçalho e `# Não se aplica: <motivo>`. Isso também é um resultado.
+If a bug has no natural equivalent in Python, create the file with just the
+header and `# Not applicable: <why>`. That is a result too.
 
-## Preparar
+**Partial work counts.** All 54 take roughly a day; any subset of 10 or more,
+in any order, is already useful. Say which ones you skipped and why in the
+notes.
+
+## Set up
 
 ```sh
 python3 -m venv /tmp/e4 && /tmp/e4/bin/pip install langgraph langgraph-checkpoint-sqlite pyright mypy
 ```
 
-## Conferir enquanto escreve
+## Check while you write
 
 ```sh
-/tmp/e4/bin/python bench/e4_porting/run_e4.py              # todos
-/tmp/e4/bin/python bench/e4_porting/run_e4.py b13          # só um
+/tmp/e4/bin/python bench/e4_porting/run_e4.py              # all
+/tmp/e4/bin/python bench/e4_porting/run_e4.py b13          # just one
 ```
 
-O script roda, para cada programa, o **pyright** e o **mypy no modo
-estrito** e depois o próprio programa, e diz o que cada um encontrou. Não
-mude o programa para "passar" ou "falhar": rode só para ver se ele roda.
+For each program, the script runs **pyright** and **mypy in strict mode**,
+then the program itself, and says what each one found. Don't change the
+program to "pass" or "fail": run it only to see that it runs.
 
-## Entregar
+## Hand in
 
-Os arquivos de `programas/`, e uma nota curta em `programas/NOTAS.md`:
-quanto tempo levou, quais bugs foram difíceis de escrever em Python e por
-quê, e qualquer coisa estranha que tenha notado.
+Fork the repository, write in `bench/e4_porting/programas/` and open a pull
+request with the files in `programas/` and a short note in
+`programas/NOTES.md`: how long it took, which bugs were hard to write in
+Python and why, and anything odd you noticed. You will be credited in the
+paper and in the results, by name or handle, as you prefer.
 
-## Como os resultados são lidos
+## How the results are read
 
-Para cada bug, em que ponto ele aparece primeiro:
+For each bug, where it shows up first:
 
-| Onde | Quando |
+| Where | When |
 |---|---|
-| **pyright** ou **mypy** | O checador aponta um erro relacionado ao bug |
-| **ao rodar, sem dano** | O programa para (exceção) antes do dano |
-| **ao rodar, com dano** | O programa para, mas o dano já aconteceu |
-| **em lugar nenhum** | O programa termina normalmente com o dano |
+| **pyright** or **mypy** | The checker reports an error related to the bug |
+| **when running, no damage** | The program stops (exception) before the damage |
+| **when running, with damage** | The program stops, but the damage already happened |
+| **nowhere** | The program finishes normally, with the damage |
 
-As duas primeiras linhas saem do script. Separar "sem dano" de "com dano" e
-conferir se um erro dos checadores é mesmo sobre o bug é feito depois, lendo
-o programa, por alguém que não o escreveu.
+The first two rows come from the script. Telling "no damage" from "with
+damage", and checking that a checker's error is really about the bug, is
+done afterwards by reading the program, by someone who did not write it.
