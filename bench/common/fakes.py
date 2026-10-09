@@ -33,7 +33,8 @@ def _count():
                 f.write("call\n")
 
 
-atexit.register(lambda: print(f"llm_calls={_calls}", file=sys.stderr))
+_retries = 0
+atexit.register(lambda: print(f"llm_calls={_calls} llm_retries={_retries}", file=sys.stderr))
 
 
 def _answer(prompt: str) -> str:
@@ -41,14 +42,60 @@ def _answer(prompt: str) -> str:
     return f"[resposta falsa para: {first[:60]}]"
 
 
+# With BENCH_MODEL set (e.g. gemini-3.5-flash-lite), the model is real: the
+# same OpenAI-compatible endpoint Calyx's runtime calls, the key from
+# GEMINI_API_KEY, and the same retries (4 attempts, 1-2-4 s, longer when
+# the provider asks, up to 60 s).
+MODEL = os.environ.get("BENCH_MODEL")
+URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+
+
+def _real(prompt: str) -> str:
+    import re
+    import urllib.error
+    import urllib.request
+
+    body = json.dumps({"model": MODEL, "messages": [{"role": "user", "content": prompt}]}).encode()
+    for attempt in range(1, 5):
+        req = urllib.request.Request(URL, data=body, headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + os.environ["GEMINI_API_KEY"],
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                return json.loads(r.read())["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 500, 502, 503, 504) or attempt == 4:
+                raise
+            global _retries
+            with _calls_lock:
+                _retries += 1
+            wait = (2 if e.code == 429 else 1) * 2 ** (attempt - 1)
+            text = e.read().decode(errors="replace")
+            m = re.search(r"retry in ([0-9.]+)\s*s", text) or re.search(r"([0-9.]+)", e.headers.get("Retry-After") or "")
+            if m:
+                wait = max(wait, min(float(m.group(1)), 60.0))
+            time.sleep(wait)
+    raise RuntimeError("unreachable")
+
+
 def llm(prompt: str) -> str:
-    """A model call: `LATENCY` seconds, then a deterministic answer."""
+    """A model call: `LATENCY` seconds, then a deterministic answer (or the
+    real model, with BENCH_MODEL)."""
+    if MODEL:
+        out = _real(prompt)
+        _count()
+        return out
     time.sleep(LATENCY)
     _count()
     return _answer(prompt)
 
 
 async def allm(prompt: str) -> str:
+    if MODEL:
+        out = await asyncio.to_thread(_real, prompt)
+        _count()
+        return out
     await asyncio.sleep(LATENCY)
     _count()
     return _answer(prompt)

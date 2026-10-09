@@ -53,7 +53,7 @@ graph handle_refund(request: Text, order: Text, message: Text) -> Text:
         requires state.refunded + proposal.amount <= state.total
 
     body = m(reply(found, proposal.amount))
-    notice = email(found.email, "Reembolso do pedido {order}", "{body} {message}")
+    notice = email(found.email, "Reembolso do pedido {order}", "{body} {message} (valor {proposal.amount})")
     notice after paid
 
     return "reembolso de {proposal.amount} enviado para {found.email}"

@@ -20,10 +20,18 @@ bench/results/w2.json.
 Temporal runs when TEMPORAL_BIN points to the `temporal` CLI; the harness
 starts its dev server (state in a file, so it outlives the workers).
 
-    python bench/run_w2.py
+    python bench/run_w2.py [--real]
+
+With --real, the model is Gemini (gemini-3.5-flash-lite, key in
+GEMINI_API_KEY) in every system, and runs are spaced by BENCH_PAUSE seconds
+(default 12) for the free tier's limit. A real model proposes a different
+amount each time it is asked, so the results also say whether the amount
+paid is the one the e-mail tells the customer (`consistent`). Results go to
+bench/results/w2_real.json.
 """
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -62,8 +70,31 @@ def store() -> dict:
         return {}
 
 
+REAL = "--real" in sys.argv
+MODEL = "gemini-3.5-flash-lite"
+
+
+def program() -> str:
+    """refund.clyx, with the real model when --real."""
+    if not REAL:
+        return "refund.clyx"
+    src = open(os.path.join(W2, "refund.clyx")).read().replace('"fake-slow-1000"', f'"{MODEL}"')
+    with open(os.path.join(W2, "refund_real.clyx"), "w") as f:
+        f.write(src)
+    return "refund_real.clyx"
+
+
+def consistent(db: dict) -> bool | None:
+    """The amount paid is the one the e-mail tells the customer."""
+    pays, mails = db.get("payments", []), db.get("outbox", [])
+    if not pays or not mails:
+        return None
+    told = [float(m.group(1)) for e in mails for m in [re.search(r"\(valor ([0-9.]+)\)", e["body"])] if m]
+    return bool(told) and all(abs(t - float(p["amount"])) < 1e-6 for t in told for p in pays)
+
+
 def systems(req: str, msg: str, case: str) -> dict[str, dict]:
-    calyx = [CALYX, "run", "refund.clyx", "--request", req, "--order", "A100", "--message", msg]
+    calyx = [CALYX, "run", program(), "--request", req, "--order", "A100", "--message", msg]
     args = [req, "A100", msg]
 
     def py(script: str, *flags: str, with_id: bool = True) -> dict:
@@ -96,6 +127,7 @@ def env(extra: dict | None = None) -> dict:
         BENCH_LLM_LOG=LLM_LOG,
         BENCH_CHECKPOINT=os.path.join(WORK, "checkpoints.sqlite"),
         BENCH_LATENCY="1.0",
+        **({"BENCH_MODEL": MODEL} if REAL else {}),
         TEMPORAL_ADDRESS=f"127.0.0.1:{TEMPORAL_PORT}",
     )
     e.update(extra or {})
@@ -166,6 +198,7 @@ def one(system: str, spec: dict, scenario: dict) -> dict:
         "llm_calls": calls,
         "llm_calls_redone": calls - 2,
         "correct_effects": out.returncode == 0 and payments == 1 and emails == 1,
+        "consistent": consistent(db),
         "resume_s": round(resume_s, 2),
         "resume_tail": (out.stdout + out.stderr).strip().splitlines()[-1:] or [""],
     }
@@ -206,17 +239,21 @@ def main() -> None:
                 rows.append(r)
                 print(
                     f"{name:18} {system:44} pagamentos={r['payments']} e-mails={r['emails']} "
-                    f"llm={r['llm_calls']} saída={r['resume_exit']} retomada={r['resume_s']}s",
+                    f"llm={r['llm_calls']} saída={r['resume_exit']} retomada={r['resume_s']}s "
+                    f"coerente={r['consistent']}",
                     flush=True,
                 )
-                with open(os.path.join(HERE, "results", "w2.json"), "w") as f:
+                out = "w2_real.json" if REAL else "w2.json"
+                with open(os.path.join(HERE, "results", out), "w") as f:
                     json.dump(rows, f, indent=1, ensure_ascii=False)
+                if REAL:
+                    time.sleep(float(os.environ.get("BENCH_PAUSE", "12")))
     finally:
         if server:
             os.killpg(server.pid, signal.SIGKILL)
         shutil.rmtree(WORK, ignore_errors=True)
         shutil.rmtree(os.path.join(W2, ".calyx"), ignore_errors=True)
-        for leftover in (".temporal.db", ".temporal.db-shm", ".temporal.db-wal"):
+        for leftover in (".temporal.db", ".temporal.db-shm", ".temporal.db-wal", "refund_real.clyx"):
             if os.path.exists(os.path.join(W2, leftover)):
                 os.remove(os.path.join(W2, leftover))
 
