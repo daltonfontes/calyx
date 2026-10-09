@@ -1,0 +1,32 @@
+model gemini = "gemini-3.5-flash-lite"
+
+tool web_search(query: Text) -> Text:
+    effect read
+    retry_on [Timeout, RateLimit]
+
+type Plan:
+    questions: List[Text] max 5
+
+prompt split_topic(topic: Text) -> Plan:
+    """
+    Split "{topic}" into at most 5 independent research questions.
+    """
+
+prompt summarize(question: Text, results: Text) -> Text:
+    """
+    Answer "{question}" from these search results, citing sources: {results}
+    """
+
+prompt write_report(topic: Text, findings: List[Text]) -> Text:
+    """
+    Write a report on "{topic}" from these findings: {findings}
+    """
+
+graph research(topic: Text) -> Text:
+    effect read                         # this graph can never write to the world
+    limits threads 8, budget 2 USD
+
+    plan = gemini(split_topic(topic))
+    answers = for each q in plan.questions:     # no `parallel`, no `async`
+        gemini(summarize(q, web_search(q)))
+    return gemini(write_report(topic, answers))

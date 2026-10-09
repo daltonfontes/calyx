@@ -1,0 +1,22 @@
+model gemini = "gemini-3.5-flash-lite"
+
+type Proposal:
+    amount: Float
+    reason: Text
+
+tool refund(order: Text, amount: Float) -> Unit:
+    effect write
+
+tool email(to: Text, body: Text) -> Unit:
+    effect write once
+
+prompt decide(order: Text, message: Text) -> Proposal:
+    """
+    Propose a refund for order {order}: {message}
+    """
+
+graph handle_refund(order: Text, message: Text) -> Text:
+    proposal = gemini(decide(order, message))
+    paid = refund(order, proposal.amount)
+    notice = email("ana@example.com", "refunded {proposal.amount}")
+    return "done"
