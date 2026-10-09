@@ -354,6 +354,12 @@ yet (§6.3).
 and in `calyx check --tools` without running, Calyx compares them with the
 declaration and warns on a contradiction (§6.8).
 
+*Programs as servers.* `calyx serve` turns a program into an MCP server:
+each graph is a tool, annotated from the program (`readOnlyHint` when no
+step writes, else `idempotencyKeyHint`). The key hint holds by
+construction: a call with a key is tied to one run, and the same key
+returns its answer, or resumes it if it died, instead of running it again.
+
 = Evaluation
 
 We ask: is derived parallelism good (Q1)? Does the compiler catch state bugs

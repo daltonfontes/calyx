@@ -5,6 +5,7 @@
 
 mod bundle;
 mod runs;
+mod serve;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -49,6 +50,13 @@ commands:
       --budget replaces the program's budget (in USD).
       Independent calls run in parallel, up to the graph's `limits threads`
       (8 by default).
+  serve <file.clyx> [--fake-models] [--config FILE]
+      Serve the program over MCP (stdio): each graph is a tool, for any MCP
+      client (Claude Desktop, an IDE, another agent). A graph that writes is
+      annotated `idempotencyKeyHint`, and keeps it: a call with an
+      idempotency key (`idempotencyKey`, or `calyx/idempotency_key` in
+      `_meta`) is tied to one run; the same key returns its answer, or
+      resumes it if it did not finish, instead of running it again.
   resume <run> [--fake-models] [--quiet] [--config FILE] [--budget USD]
                [--uncertain done|done=ANSWER|retry|failed]
       Continue an interrupted or failed run. Calls already in its journal
@@ -104,6 +112,7 @@ fn main() -> ExitCode {
         Some("runs") => list_runs(),
         Some("deliver") => deliver(&args[1..]),
         Some("tick") => tick(&args[1..]),
+        Some("serve") => serve::serve(&args[1..]),
         Some("version" | "--version" | "-V") => {
             println!("calyx {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
