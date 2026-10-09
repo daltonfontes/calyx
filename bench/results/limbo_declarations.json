@@ -281,6 +281,46 @@
    "warned": []
   },
   {
+   "tool": "rows_present",
+   "limbo_tool": "db_query",
+   "declared": "read",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "rows_present",
+   "limbo_tool": "db_query",
+   "declared": "write",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "rows_present",
+   "limbo_tool": "db_query",
+   "declared": "write+key",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
+   "tool": "rows_present",
+   "limbo_tool": "db_query",
+   "declared": "write once",
+   "write": false,
+   "idempotent": true,
+   "honors_key": false,
+   "dangerous": false,
+   "warned": []
+  },
+  {
    "tool": "runs_of",
    "limbo_tool": "deploy_list_runs",
    "declared": "read",
@@ -889,7 +929,7 @@
  ],
  "dangerous": 28,
  "dangerous_warned": 20,
- "safe": 56,
+ "safe": 60,
  "safe_warned": 3,
  "by_kind": {
   "read": [

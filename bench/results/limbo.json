@@ -3,13 +3,13 @@
   "episodes": 217,
   "faulted": 205,
   "EOS": 76.1,
-  "dup": 23.4,
-  "TS": 99.5,
-  "overclaim": 23.4,
+  "dup": 23.9,
+  "TS": 100.0,
+  "overclaim": 23.9,
   "clean_EOS": 100.0,
-  "paused": 11,
-  "human_minutes_mean": 0.8,
-  "calls_mean": 7.8,
+  "paused": 5,
+  "human_minutes_mean": 0.37,
+  "calls_mean": 7.9,
   "by_mode": {
    "duplicate_delivery": {
     "n": 34,
@@ -37,14 +37,14 @@
    },
    "partial_timeout": {
     "n": 1,
-    "EOS": 0.0,
+    "EOS": 100.0,
     "dup": 0.0,
-    "TS": 0.0
+    "TS": 100.0
    },
    "timeout_late": {
     "n": 34,
-    "EOS": 32.4,
-    "dup": 67.6,
+    "EOS": 29.4,
+    "dup": 70.6,
     "TS": 100.0
    },
    "timeout_post": {

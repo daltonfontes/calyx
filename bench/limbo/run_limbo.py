@@ -109,13 +109,22 @@ def run_calyx(argv: list[str], cwd: str, env: dict) -> tuple[int, str]:
     return out.returncode, out.stderr + out.stdout
 
 
+# What the person reads from the record LIMBO's operator found, for a tool
+# that returns something: `--uncertain done=<that>`.
+ANSWER_FIELD = {"social_publish": "post_id"}
+
+
 def operator_decision(obs: dict, tool_names: set[str]) -> str:
-    """`done`, `retry` or `failed`, from what LIMBO's operator found."""
+    """`done` (with the answer found), `retry` or `failed`, from what LIMBO's operator found."""
     findings = ((obs.get("result") or {}).get("findings")) or []
     if not obs.get("ok") or not findings:
         return "failed"
-    f = findings[-1]["operator_finding"]
+    last = findings[-1]
+    f = last["operator_finding"]
     if f == "DID take effect":
+        field = ANSWER_FIELD.get(last.get("tool"))
+        if field and (last.get("record") or {}).get(field):
+            return f"done={last['record'][field]}"
         return "done"
     if f == "did NOT take effect":
         return "retry"

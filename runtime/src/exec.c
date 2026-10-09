@@ -219,6 +219,8 @@ struct exec {
      * about `write once` calls of unknown outcome. NULL: apply each tool's
      * `on_uncertain`. */
     const char *decision;
+    /* `--uncertain done=<value>`: the answer of the uncertain call. */
+    cx_value *decision_value;
     /* Pending calls by key: open addressing, capacity a power of two. */
     pending **ptab;
     size_t pcap, pused;
@@ -804,8 +806,8 @@ static void stop_run(exec *x, job *j, const char *msg) {
  * `on_uncertain verify(f(a, b))`: asks the `read` tool `f`, with the same
  * arguments, whether the call happened. 1: it did; 0: it did not; -1: the
  * question failed (`why` says why). A tool that returns a list answers with
- * what the call made, found again: empty if it did not happen, else its
- * first item goes in `*found`.
+ * what the call made, found again (empty if it did not happen); the list
+ * goes in `*found`.
  */
 static int verify_happened(exec *x, cx_arena *a, job *j, cx_value *policy, cx_value **found,
                            char *why, size_t why_len) {
@@ -846,7 +848,7 @@ static int verify_happened(exec *x, cx_arena *a, job *j, cx_value *policy, cx_va
                       result ? "true" : "false", cx_get_str(j->spec, "name", "?"));
             } else if (v && v->kind == CX_LIST) {
                 result = len_of(v) > 0;
-                if (result) *found = at(v, 0);
+                *found = v;
                 trace(x, j->label, "read  %s  -> %s  (verifying `%s`)", vname,
                       result ? "found" : "not found", cx_get_str(j->spec, "name", "?"));
             } else {
@@ -866,6 +868,52 @@ static int verify_happened(exec *x, cx_arena *a, job *j, cx_value *policy, cx_va
 }
 
 enum { R_DONE, R_REDO, R_FAIL, R_STOP };
+
+/*
+ * A batch write (`batch p`) that may have happened in part: `applied` are
+ * the items `verify` found. Leaves in the request only the items of `p` not
+ * among them (each found item matches one requested item) and returns how
+ * many are left; 0 means all were applied.
+ */
+static size_t batch_remaining(cx_arena *a, job *j, cx_value *applied) {
+    size_t idx = (size_t)cx_get_num(j->spec, "batch", 0);
+    const char *pname = at(cx_get(j->spec, "params"), idx)->u.str.s;
+    cx_value *req = cx_parse(a, j->req, strlen(j->req), NULL);
+    cx_value *args = cx_get(req, "args");
+    cx_value *items = cx_get(args, pname);
+    size_t n = len_of(items), m = len_of(applied), left = 0;
+    char *used = cx_alloc(a, m + 1);
+    memset(used, 0, m + 1);
+    cx_value **keep = cx_alloc(a, (n ? n : 1) * sizeof *keep);
+    for (size_t i = 0; i < n; i++) {
+        size_t k = 0;
+        while (k < m && (used[k] || !cx_equal(at(items, i), at(applied, k)))) k++;
+        if (k < m)
+            used[k] = 1;
+        else
+            keep[left++] = at(items, i);
+    }
+    if (left == 0 || left == n) return left;
+    /* The same request, with the items left. */
+    const char **akeys = cx_alloc(a, args->u.rec.len * sizeof *akeys);
+    cx_value **avals = cx_alloc(a, args->u.rec.len * sizeof *avals);
+    for (size_t i = 0; i < args->u.rec.len; i++) {
+        akeys[i] = args->u.rec.keys[i];
+        avals[i] = strcmp(akeys[i], pname) == 0 ? cx_list(a, keep, left) : args->u.rec.vals[i];
+    }
+    const char **rkeys = cx_alloc(a, req->u.rec.len * sizeof *rkeys);
+    cx_value **rvals = cx_alloc(a, req->u.rec.len * sizeof *rvals);
+    for (size_t i = 0; i < req->u.rec.len; i++) {
+        rkeys[i] = req->u.rec.keys[i];
+        rvals[i] = strcmp(rkeys[i], "args") == 0 ? cx_rec(a, akeys, avals, args->u.rec.len)
+                                                 : req->u.rec.vals[i];
+    }
+    cx_buf b = {0};
+    cx_write(&b, cx_rec(a, rkeys, rvals, req->u.rec.len));
+    free(j->req);
+    j->req = cx_buf_take(&b);
+    return left;
+}
 
 /*
  * A `write once` call that may or may not have happened (decision D2):
@@ -892,13 +940,19 @@ static int resolve_uncertain(exec *x, cx_arena *a, job *j, const char *cause, cx
                      name);
             return R_FAIL;
         }
+        if (x->decision_value) {
+            /* `--uncertain done=<value>`: what the person found it made. */
+            *found = x->decision_value;
+            snprintf(how, how_len, "taken as done with the answer given when resuming");
+            return R_DONE;
+        }
         if (unit) {
             snprintf(how, how_len, "taken as done: decided when resuming");
             return R_DONE;
         }
         snprintf(why, why_len,
-                 "`--uncertain done` needs a tool that returns Unit (`%s` has an answer to "
-                 "use); resume with `--uncertain retry` or `--uncertain failed`",
+                 "`%s` has an answer to use: resume with `--uncertain done=<answer>` (JSON, or "
+                 "the text), `--uncertain retry` or `--uncertain failed`",
                  name);
         return R_STOP;
     }
@@ -909,6 +963,23 @@ static int resolve_uncertain(exec *x, cx_arena *a, job *j, const char *cause, cx
     if (strcmp(pname, "verify") == 0) {
         char verr[512] = "";
         int happened = verify_happened(x, a, j, policy, found, verr, sizeof verr);
+        cx_value *bp = cx_get(j->spec, "batch");
+        if (happened >= 0 && bp && bp->kind == CX_NUM) {
+            size_t total = len_of(cx_get(cx_get(cx_parse(a, j->req, strlen(j->req), NULL), "args"),
+                                         at(cx_get(j->spec, "params"), (size_t)bp->u.num)->u.str.s));
+            size_t left = batch_remaining(a, j, *found);
+            *found = NULL;
+            if (left == 0) {
+                snprintf(how, how_len, "done: verify found all %zu items applied", total);
+                return R_DONE;
+            }
+            snprintf(how, how_len, "repeated with the %zu of %zu items verify did not find", left,
+                     total);
+            return R_REDO;
+        }
+        /* A list: what the call made; its first item is the answer. */
+        if (happened == 1 && *found && (*found)->kind == CX_LIST) *found = at(*found, 0);
+        if (happened == 0) *found = NULL;
         if (happened == 1 && (unit || *found)) {
             snprintf(how, how_len, *found ? "done: verify found what it made"
                                           : "done: verify says it happened");
@@ -3130,6 +3201,8 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
     if (budget_override > 0) x->budget = budget_override;
     x->deterministic = cx_get_bool(options, "deterministic", 0);
     x->decision = cx_get_str(options, "uncertain", NULL);
+    x->decision_value = cx_get(options, "uncertain_value");
+    if (x->decision_value && x->decision_value->kind == CX_NULL) x->decision_value = NULL;
     x->nworkers = x->deterministic ? 1 : cpu_count();
     x->nio = x->deterministic ? 1 : threads < 1 ? 1 : threads > 256 ? 256 : (int)threads;
 

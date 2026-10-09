@@ -299,6 +299,10 @@ pub struct Tool {
     pub repeatable: bool,
     /// The parameter whose value is the idempotency key (`write` tools).
     pub idempotency_key: Option<usize>,
+    /// The list parameter of a batch write (`batch p`): when the call may
+    /// have happened in part, `verify` finds the items applied, and the
+    /// call is made again with the others.
+    pub batch: Option<usize>,
     /// What to do when a `write once` call may or may not have happened.
     pub on_uncertain: Option<Uncertain>,
     /// The tool returns `Unit`: nothing to make up when a call is taken as

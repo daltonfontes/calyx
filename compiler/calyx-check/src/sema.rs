@@ -63,6 +63,8 @@ struct ToolSig {
     checks: Option<Ident>,
     /// Declares `idempotency_key`.
     keyed: bool,
+    /// `batch p`: the type of the items of the list parameter `p`.
+    batch: Option<Ty>,
 }
 
 /// What a `write once` tool does when a call may or may not have happened.
@@ -442,6 +444,7 @@ impl<'p> Cx<'_, 'p> {
         let mut policy = None;
         let mut checks = None;
         let mut keyed = false;
+        let mut batch = None;
         let mut seen = HashSet::new();
         for p in &t.props {
             let key = p.key.name.as_str();
@@ -509,6 +512,27 @@ impl<'p> Cx<'_, 'p> {
                         );
                     }
                 }
+                "batch" => match p.value.as_slice() {
+                    [Expr { kind: ExprKind::Ident(n), span }] => {
+                        match params.iter().find(|(pn, _)| pn == n) {
+                            Some((_, Ty::List(item, _))) => batch = Some((**item).clone()),
+                            Some((_, Ty::Error)) => batch = Some(Ty::Error),
+                            found => {
+                                // Poison: one error, not another on `verify`.
+                                batch = Some(Ty::Error);
+                                self.push(
+                                err("E0637", "`batch` must name a list parameter of the tool", *span)
+                                    .expected("a parameter of type `List[T]`: the items the call applies")
+                                    .observed(match found {
+                                        Some((_, t)) => format!("`{n}: {t}`"),
+                                        None => format!("`{n}` is not a parameter"),
+                                    }),
+                                )
+                            }
+                        }
+                    }
+                    _ => self.bad_prop(p, "a parameter name"),
+                },
                 "checks" => match p.value.as_slice() {
                     [Expr { kind: ExprKind::Ident(n), span }] => {
                         checks = Some(Ident {
@@ -525,7 +549,7 @@ impl<'p> Cx<'_, 'p> {
                 }
                 _ => self.push(
                     err("E0301", "unknown tool property", p.key.span)
-                        .expected("`effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `checks`, `repeatable` or `description`")
+                        .expected("`effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `batch`, `checks`, `repeatable` or `description`")
                         .observed(format!("`{key}`")),
                 ),
             }
@@ -558,6 +582,23 @@ impl<'p> Cx<'_, 'p> {
                     .observed("no `on_uncertain` property"),
             );
         }
+        if batch.is_some() {
+            let verify = matches!(policy, Some((Policy::Verify { .. }, _)));
+            if parsed != Some(Effect::WriteOnce) || !verify {
+                self.push(
+                    err("E0637", "a `batch` tool is a `write once` that verifies", t.name.span)
+                        .expected("`effect write once` and `on_uncertain verify(f(...))`, where `f` finds the items already applied")
+                        .observed(format!("`effect {effect}`{}", if verify { "" } else { " without `verify`" })),
+                );
+            }
+            if !matches!(ret, Ty::Unit | Ty::Error) {
+                self.push(
+                    err("E0637", "a `batch` tool returns `Unit`", t.ret.span)
+                        .expected("`-> Unit`: a call made in parts has no single answer")
+                        .observed(format!("`-> {ret}`")),
+                );
+            }
+        }
         ToolSig {
             params,
             ret,
@@ -565,6 +606,7 @@ impl<'p> Cx<'_, 'p> {
             policy,
             checks,
             keyed,
+            batch,
         }
     }
 
@@ -1229,8 +1271,24 @@ impl<'p> Cx<'_, 'p> {
         }
         // `Bool`: whether the call happened. `List[R]`: what it made, found
         // again (empty if it did not happen), so its answer can be used.
-        let finds = matches!(&v.ret, Ty::List(r, _) if assignable(r, &sig.ret));
-        if !finds && !matches!(v.ret, Ty::Bool | Ty::Error) {
+        // A batch: `List[T]`, the items already applied.
+        let finds = match &sig.batch {
+            Some(item) => matches!(&v.ret, Ty::List(r, _) if assignable(item, r)),
+            None => matches!(&v.ret, Ty::List(r, _) if assignable(r, &sig.ret)),
+        };
+        if let Some(item) = &sig.batch {
+            if !finds && !matches!(v.ret, Ty::Error) {
+                out.push(
+                    err(
+                        "E0633",
+                        "the `verify` tool of a batch returns the items already applied",
+                        tool.span,
+                    )
+                    .expected(format!("`-> List[{item}]`"))
+                    .observed(format!("`-> {}`", v.ret)),
+                );
+            }
+        } else if !finds && !matches!(v.ret, Ty::Bool | Ty::Error) {
             let expected = if matches!(sig.ret, Ty::Unit) {
                 "`-> Bool`: whether the call happened".to_owned()
             } else {

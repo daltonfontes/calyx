@@ -63,6 +63,9 @@ pub struct RunOptions {
     /// outcome: `done`, `retry` or `failed`. `None`: each tool's
     /// `on_uncertain` decides.
     pub uncertain: Option<String>,
+    /// With `done`: the answer of the uncertain call, when its tool has one
+    /// (`--uncertain done=<answer>`).
+    pub uncertain_value: Option<serde_json::Value>,
 }
 
 /// Runs `graph` of a compiled program (the IR in JSON) with `args` (a JSON
@@ -87,6 +90,7 @@ pub fn run(
         "deterministic": opts.deterministic,
         "budget_usd": opts.budget_usd,
         "uncertain": opts.uncertain,
+        "uncertain_value": opts.uncertain_value,
     });
     io::configure(opts.config, opts.fake_models);
     io::declare(annotations::declared(ir_json));

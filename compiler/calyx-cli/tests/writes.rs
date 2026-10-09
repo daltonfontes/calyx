@@ -47,6 +47,26 @@ tool mail(to: Text, subject: Text, body: Text) -> Text:
 graph send(body: Text) -> Text:
     return mail("ana@exemplo.org", "oi", body)
 
+tool post(to: Text, subject: Text, body: Text) -> Text:
+    effect write once
+    timeout 1 s
+    on_uncertain pause
+
+graph post_one(body: Text) -> Text:
+    return post("ana@exemplo.org", "oi", body)
+
+tool subjects_sent(to: Text, subjects: List[Text]) -> List[Text]:
+    effect read
+
+tool email_many(to: Text, subjects: List[Text]) -> Unit:
+    effect write once
+    batch subjects
+    on_uncertain verify(subjects_sent(to, subjects))
+
+graph notify(to: Text) -> Text:
+    sent = email_many(to, ["a", "b", "c", "d"])
+    return "ok"
+
 graph pay(request: Text, order: Text, amount: Float, body: Text) -> Text:
     paid = refund(request, order, amount):
         requires state.status == Delivered
@@ -81,10 +101,20 @@ impl Dir {
             .canonicalize()
             .unwrap();
         let cmd = format!("command = [\"python3\", \"{}\"]\n", store.display());
-        let toml: String = ["refund", "email", "email_sent", "mail", "mails_to"]
-            .iter()
-            .map(|t| format!("[tools.{t}]\n{cmd}\n"))
-            .collect();
+        let toml: String = [
+            "refund",
+            "email",
+            "email_sent",
+            "mail",
+            "mails_to",
+            "email_many",
+            "subjects_sent",
+        ]
+        .iter()
+        .map(|t| format!("[tools.{t}]\n{cmd}\n"))
+        .collect();
+        // `post` is the store's `mail`, declared with `on_uncertain pause`.
+        let toml = format!("{toml}[tools.post]\n{cmd}name = \"mail\"\n");
         std::fs::write(dir.join("calyx.toml"), toml).unwrap();
         std::fs::write(dir.join("p.clyx"), text).unwrap();
         Dir(dir)
@@ -236,6 +266,55 @@ fn verify_finds_what_a_lost_call_made_and_goes_on_with_it() {
     // Replaying the run gives the same answer, from the journal.
     let out = d.calyx(&["replay", &run_id(&out), "--quiet"]);
     assert_eq!(text(&out.stdout).trim(), "msg-1", "{}", text(&out.stderr));
+}
+
+#[test]
+fn a_person_gives_the_answer_of_a_call_that_has_one() {
+    let d = Dir::new("done-answer", "pause");
+    // Sent, then no answer: the run stops for a person.
+    let out = d.calyx(&["run", "p.clyx", "--graph", "post_one", "--body", "__lost__"]);
+    let err = text(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    let id = run_id(&out);
+    // `done` alone is not enough: the program uses the answer.
+    let out = d.calyx(&["resume", &id, "--quiet", "--uncertain", "done"]);
+    assert!(
+        text(&out.stderr).contains("--uncertain done=<answer>"),
+        "{}",
+        text(&out.stderr)
+    );
+    // The person found the message and gives its id.
+    let out = d.calyx(&["resume", &id, "--quiet", "--uncertain", "done=msg-1"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout).trim(), "msg-1");
+    assert_eq!(d.sent(), 1, "not sent again");
+}
+
+#[test]
+fn a_batch_cut_in_half_sends_only_what_is_missing() {
+    let d = Dir::new("batch-half", "pause");
+    // The store sends 2 of the 4 e-mails and crashes.
+    let out = d.calyx(&[
+        "run",
+        "p.clyx",
+        "--graph",
+        "notify",
+        "--to",
+        "metade@exemplo.org",
+    ]);
+    let err = text(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert!(
+        err.contains("repeated with the 2 of 4 items verify did not find"),
+        "{err}"
+    );
+    let subjects: Vec<String> = d.store()["outbox"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["subject"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(subjects, ["a", "b", "c", "d"], "each once, in order");
 }
 
 #[test]

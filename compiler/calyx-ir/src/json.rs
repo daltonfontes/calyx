@@ -167,6 +167,8 @@ fn tool(o: &mut String, t: &Tool) {
     o.push_str(&format!(",\"repeatable\":{}", t.repeatable));
     o.push_str(",\"idempotency_key\":");
     opt_u64(o, t.idempotency_key.map(|i| i as u64));
+    o.push_str(",\"batch\":");
+    opt_u64(o, t.batch.map(|i| i as u64));
     o.push_str(",\"on_uncertain\":");
     match &t.on_uncertain {
         None => o.push_str("null"),
