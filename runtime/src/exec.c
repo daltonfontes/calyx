@@ -1001,10 +1001,21 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
             trace(x, j->label, "write once %s  %s", name, how);
         }
     }
-    if (write_once && x->journal && !j->uncertain) {
+    /* Before an external write, the journal reaches the disk: a `write
+     * once` with its "begin" (after a crash it is uncertain, never made
+     * again blindly), any write with what its arguments came from (after a
+     * machine crash, a model is not asked again for a different key). */
+    if (!j->is_model && x->journal && !j->uncertain &&
+        cx_journal_get_mode(x->journal) != CX_JOURNAL_REPLAY &&
+        (write_once || strcmp(effect, "write") == 0)) {
         pthread_mutex_lock(&x->jmu);
-        cx_journal_begin(x->journal, j->key, j->req_hash);
+        int synced = write_once ? cx_journal_begin(x->journal, j->key, j->req_hash)
+                                : cx_journal_sync(x->journal);
         pthread_mutex_unlock(&x->jmu);
+        if (!synced) {
+            snprintf(why, why_len, "cannot write the journal before calling `%s`", name);
+            return NULL;
+        }
     }
     for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         pthread_mutex_lock(&x->mu);

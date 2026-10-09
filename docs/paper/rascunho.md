@@ -192,8 +192,31 @@ Duas delas vieram da avaliação: `W0605`, do estudo de bugs reais (seção
 aplica uma mudança sobre o estado atual (`notas + [nota]`), depois que o
 exemplo de atendimento mostrou o falso positivo.
 
-**[falta]** Formalizar as regras de efeito e o que cada verificação garante
-(e não garante).
+**O que as regras garantem.** As regras de efeito estão formalizadas em
+[`formal.md`](formal.md), num núcleo com o diário e quedas de processo e de
+máquina. Os teoremas, sob cinco hipóteses explícitas, dizem que cada
+`write once` e cada escrita com chave é aplicada no máximo uma vez (T1);
+exatamente uma vez quando a execução termina (T2); e que nada já feito é
+refeito (T3). As hipóteses são:
+- o diário obedece ao `fsync`;
+- o serviço respeita a chave;
+- o `verify` é fresco;
+- o transporte não reentrega;
+- a pessoa decide conforme o que aconteceu.
+
+As provas são esboços de papel. Um verificador exaustivo limitado
+(`bench/formal/model.py`) confirma os teoremas em mais de 270 mil execuções
+de um programa com sete chamadas, até 2 falhas e 2 quedas por execução. Ele
+também mostra um contraexemplo para cada hipótese retirada. As três
+hipóteses que dependem do mundo real (chave respeitada, `verify` fresco,
+transporte sem reentrega) são, no modelo, as três causas de duplicata que o
+LIMBO mediu (seção 6.8).
+
+Formalizar achou dois furos no runtime, já corrigidos:
+- o registro de início de uma `write once` podia falhar em silêncio;
+- uma escrita com chave não sincronizava o diário antes de sair. Depois de
+  uma queda da máquina, a chave podia ser recalculada a partir de uma nova
+  resposta do modelo.
 
 ## 5. O runtime
 
@@ -416,6 +439,9 @@ Ficaram duas, sem correção:
   tiradas da documentação de cada sistema; e o E4 **[falta]**. No LIMBO, os
   programas Calyx e o adaptador ainda são do autor, mas o adaptador só usa
   tools públicas do LIMBO.
+- **Provas de papel.** T1–T3 têm esboço de prova e verificação exaustiva
+  limitada sobre um modelo escrito à mão a partir do runtime, não prova
+  mecanizada nem modelo extraído do código.
 - **O que a avaliação achou na própria Calyx.** Três bugs da Calyx foram
   achados medindo (resposta depois do prazo, custo cúbico do agente, `write
   once` em laço) e corrigidos antes destes números. Relatamos os números de
@@ -464,8 +490,10 @@ provadas em Coq; modela chamadas de tool como efeito, sem distinguir as
 repetíveis das irreversíveis. O LLMbda (Garby, Gordon e Sands, 2026) trata
 fluxo de informação e injeção de prompt. Pangolin (Tan et al., 2025) e Wang
 (2025) usam efeitos algébricos para compor chamadas a LLM e paralelizá-las.
-A formalização das regras de efeito da Calyx (**[falta]**, seção 4) pode
-partir do λ_A, estendendo-o com efeitos externos e recuperação.
+O núcleo formal da Calyx (seção 4) é ortogonal ao λ_A. Ele refina o efeito
+de tool em leitura, escrita com chave e escrita única, e acrescenta o diário
+e as quedas. Mecanizar os teoremas estendendo o λ_A é o caminho para uma
+versão com prova verificada.
 
 **Frameworks de agentes.** O ReAct (Yao et al., 2022) intercala raciocínio e
 ação num laço decidido pelo modelo; a Calyx o oferece como um construto

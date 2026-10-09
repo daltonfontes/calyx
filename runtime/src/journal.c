@@ -121,11 +121,12 @@ static char *read_file(cx_arena *a, const char *path, size_t *len) {
     return data;
 }
 
-static void sync_file(cx_journal *j) {
-    if (!j->f) return;
-    fflush(j->f);
-    fsync(fileno(j->f));
+/* 0 if the journal may not be on disk. */
+static int sync_file(cx_journal *j) {
+    if (!j->f) return 1;
+    int ok = fflush(j->f) == 0 && fsync(fileno(j->f)) == 0;
     j->last_sync = now();
+    return ok;
 }
 
 /* Appends one line; it reaches the OS before this returns. */
@@ -133,8 +134,13 @@ static int append(cx_journal *j, const char *line, size_t len, int must_sync) {
     if (!j->f) return 1;
     if (fwrite(line, 1, len, j->f) != len || fputc('\n', j->f) == EOF || fflush(j->f) != 0)
         return 0;
-    if (must_sync || now() - j->last_sync >= SYNC_INTERVAL) sync_file(j);
+    if (must_sync) return sync_file(j);
+    if (now() - j->last_sync >= SYNC_INTERVAL) sync_file(j);
     return 1;
+}
+
+int cx_journal_sync(cx_journal *j) {
+    return sync_file(j);
 }
 
 /*
