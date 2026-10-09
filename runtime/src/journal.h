@@ -76,6 +76,11 @@ int cx_journal_sync(cx_journal *j);
 int cx_journal_record(cx_journal *j, const char *key, const char *effect, const char *req_hash,
                       const char *ok_json, size_t ok_len);
 
+/* Calls `fn` for every recorded call whose key starts with `prefix`, with
+ * its answer (answers kept in blobs are skipped: what this is for is small). */
+void cx_journal_each(cx_journal *j, const char *prefix,
+                     void (*fn)(void *ud, const char *key, cx_value *ok), void *ud);
+
 /* Records the result or the error of the run. */
 void cx_journal_end(cx_journal *j, const char *ok_json, const char *error);
 

@@ -51,3 +51,9 @@ command = ["python3", "tools/sandbox_tools.py"]
 
 [tools.diff]
 command = ["python3", "tools/sandbox_tools.py"]
+
+[tools.charge]
+command = ["python3", "tools/fake_store.py"]
+
+[tools.uncharge]
+command = ["python3", "tools/fake_store.py"]

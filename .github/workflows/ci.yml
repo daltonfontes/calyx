@@ -36,6 +36,7 @@ jobs:
           ./target/release/calyx run examples/debate.clyx --fake-models --question "IA vai substituir programadores?"
           ./target/release/calyx run examples/race.clyx --fake-models --question "Qual a capital da Austrália?"
           ./target/release/calyx run examples/router.clyx --fake-models --ticket "Fui cobrado duas vezes"
+          ./target/release/calyx run examples/saga.clyx --request R1
           ./target/release/calyx run examples/atendimento.clyx --graph atender --fake-models --cliente ana --pedido A100 --mensagem "Como troco o endereço?"
 
       - name: The README snippets check, and the unsafe one is refused

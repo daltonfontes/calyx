@@ -110,6 +110,7 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
             && let Some((i, _)) = cx.tools.get(t.name.name.as_str())
         {
             out.tools[*i].on_uncertain = cx.uncertain(t);
+            out.tools[*i].compensate = cx.compensate(t);
         }
     }
     for d in &program.decls {
@@ -723,6 +724,32 @@ impl Lower<'_> {
     }
 
     /// The `on_uncertain` policy of a tool, if it has one.
+    /// `compensate f(a, b)`: `f`, and `a` and `b` as parameters of `t`.
+    fn compensate(&self, t: &ToolDecl) -> Option<(usize, Vec<usize>)> {
+        let p = t.props.iter().find(|p| p.key.name == "compensate")?;
+        let [
+            Expr {
+                kind: ExprKind::Call { callee, args },
+                ..
+            },
+        ] = p.value.as_slice()
+        else {
+            return None;
+        };
+        let ExprKind::Ident(f) = &callee.kind else {
+            return None;
+        };
+        let (tool, _) = self.tools.get(f.as_str())?;
+        let args = args
+            .iter()
+            .filter_map(|a| match &a.value.kind {
+                ExprKind::Ident(n) => t.params.iter().position(|p| p.name.name == *n),
+                _ => None,
+            })
+            .collect();
+        Some((*tool, args))
+    }
+
     fn uncertain(&self, t: &ToolDecl) -> Option<ir::Uncertain> {
         let p = t.props.iter().find(|p| p.key.name == "on_uncertain")?;
         match p.value.as_slice() {
@@ -1279,6 +1306,7 @@ fn tool(t: &ToolDecl) -> ir::Tool {
         idempotency_key: single_name("idempotency_key").and_then(|n| param(&n)),
         batch: single_name("batch").and_then(|n| param(&n)),
         on_uncertain: None,
+        compensate: None,
         returns_unit: matches!(&t.ret.kind, TypeKind::Named { name, args, .. } if name.name == "Unit" && args.is_empty()),
         checks: single_name("checks"),
         borrows: t

@@ -242,6 +242,26 @@ graph ask(question: Text) -> Text:
         on limit: last
 ```
 
+### Races undo the loser == `compensate` (a saga)
+
+Two strategies race; the loser may already have paid. A tool that declares
+how it is undone gets undone, once, before the race finishes, also after a
+crash ([`saga.clyx`](examples/saga.clyx)):
+
+```python
+tool charge(request: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    compensate uncharge(request)        # a keyed write that undoes it
+
+graph main(request: Text) -> Text:
+    how = race first:
+        card: by_card(request)          # charges, then a slow check
+        wallet: by_wallet(request)      # faster: wins
+        on none: fail "no way to pay"
+    return "paid by {how}"              # the card's charge was undone
+```
+
 The full programs behind these snippets are in
 [`examples/readme/`](examples/readme), checked in CI. More, from sandboxes
 for code agents to per-user memory, debates and model routers, in

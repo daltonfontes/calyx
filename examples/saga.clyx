@@ -1,0 +1,41 @@
+# saga.clyx: a race whose losing branch already paid (decision D12, saga).
+#
+# Two ways to settle an order race; the first to finish wins. The card
+# branch charges and then waits on a slow check; the wallet branch is
+# faster and wins. The card branch had already charged: `charge` declares
+# `compensate uncharge(request)`, so when its branch loses the race, Calyx
+# undoes it, once, and the race finishes only after that. The undo is in
+# the journal: after a crash it is not sent twice, nor forgotten.
+#
+#   calyx run examples/saga.clyx --request R1
+model slow_check = "fake-slow-1500"
+model fast_check = "fake-slow-500"
+
+tool charge(request: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    compensate uncharge(request)
+
+tool uncharge(request: Text) -> Unit:
+    effect write
+    idempotency_key request
+
+prompt approve(request: Text) -> Text:
+    """Approve the payment {request}."""
+
+graph by_card(request: Text) -> Text:
+    paid = charge("{request}-card", 30.0)
+    ok = slow_check(approve(request))
+    ok after paid
+    return "card ({ok})"
+
+graph by_wallet(request: Text) -> Text:
+    ok = fast_check(approve(request))
+    return "wallet ({ok})"
+
+graph main(request: Text) -> Text:
+    how = race first:
+        card: by_card(request)
+        wallet: by_wallet(request)
+        on none: fail "no way to pay"
+    return "paid by {how}"

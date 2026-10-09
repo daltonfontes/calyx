@@ -265,6 +265,17 @@ cx_value *cx_journal_lookup(cx_journal *j, const char *key, const char *req_hash
     return data ? cx_parse(j->arena, data, len, NULL) : NULL;
 }
 
+void cx_journal_each(cx_journal *j, const char *prefix,
+                     void (*fn)(void *ud, const char *key, cx_value *ok), void *ud) {
+    size_t n = strlen(prefix);
+    for (size_t i = 0; i < j->cap; i++) {
+        slot *s = &j->slots[i];
+        if (!s->key || !s->finished || strncmp(s->key, prefix, n) != 0) continue;
+        cx_value *ok = cx_get(s->entry, "ok");
+        if (ok) fn(ud, s->key, ok);
+    }
+}
+
 int cx_journal_uncertain(const cx_journal *j, const char *key) {
     slot *s = find(j, key);
     return s && !s->finished;
