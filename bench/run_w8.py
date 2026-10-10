@@ -58,6 +58,7 @@ AGENT = """model busy = "fake-busy"
 
 tool web_search(query: Text) -> Text:
     effect read
+    max_output 4000 tokens
 
 prompt investigate(question: Text) -> Text:
     \"\"\"Responda: {question}\"\"\"
