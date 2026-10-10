@@ -7,6 +7,22 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # The journal in PostgreSQL (tests/postgres.rs): a database for the tests.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: calyx
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U calyx"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CALYX_TEST_DATABASE_URL: postgresql://calyx@127.0.0.1:5432/calyx
     steps:
       - uses: actions/checkout@v4
 

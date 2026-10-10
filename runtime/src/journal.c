@@ -25,11 +25,25 @@ typedef struct {
     int finished;    /* 0 for a "begin" without its "call" */
 } slot;
 
+/* The journal in PostgreSQL (runtime/rs/pg.rs), with CALYX_DATABASE_URL. */
+int calyx_pg_enabled(void);
+int calyx_pg_create(const char *run);
+int calyx_pg_status(const char *run, const char *status);
+int calyx_pg_append(const char *run, const char *line, size_t len);
+char *calyx_pg_read(const char *run);
+int calyx_pg_blob_put(const char *hash, const char *data, size_t len);
+char *calyx_pg_blob_get(const char *hash);
+void calyx_string_free(char *s);
+
 struct cx_journal {
     cx_arena *arena;
     char *dir;
     cx_journal_mode mode;
     FILE *f; /* NULL in replay mode: nothing is written */
+    /* In PostgreSQL: the lines and blobs go there, under the run's id (the
+     * last part of `dir`); `dir` still holds what is local to a machine. */
+    int pg;
+    const char *run;
     double last_sync;
     slot *slots; /* open addressing; capacity is a power of two */
     size_t cap, used;
@@ -121,9 +135,15 @@ static char *read_file(cx_arena *a, const char *path, size_t *len) {
     return data;
 }
 
-/* 0 if the journal may not be on disk. */
+/* Lines may be written (not a replay). */
+static int writable(const cx_journal *j) {
+    return j->pg ? j->mode != CX_JOURNAL_REPLAY : j->f != NULL;
+}
+
+/* 0 if the journal may not be on disk. In PostgreSQL every line is
+ * committed as it is appended. */
 static int sync_file(cx_journal *j) {
-    if (!j->f) return 1;
+    if (j->pg || !j->f) return 1;
     int ok = fflush(j->f) == 0 && fsync(fileno(j->f)) == 0;
     j->last_sync = now();
     return ok;
@@ -131,6 +151,7 @@ static int sync_file(cx_journal *j) {
 
 /* Appends one line; it reaches the OS before this returns. */
 static int append(cx_journal *j, const char *line, size_t len, int must_sync) {
+    if (j->pg) return j->mode == CX_JOURNAL_REPLAY ? 1 : calyx_pg_append(j->run, line, len);
     if (!j->f) return 1;
     if (fwrite(line, 1, len, j->f) != len || fputc('\n', j->f) == EOF || fflush(j->f) != 0)
         return 0;
@@ -150,9 +171,22 @@ int cx_journal_sync(cx_journal *j) {
 static long load(cx_journal *j, const char *ir_hash, cx_buf *err) {
     size_t len = 0;
     char *path = path_join(j->arena, j->dir, CX_JOURNAL_FILE);
-    char *data = read_file(j->arena, path, &len);
+    char *data = NULL;
+    if (j->pg) {
+        char *text = calyx_pg_read(j->run);
+        if (text) {
+            len = strlen(text);
+            data = cx_strndup(j->arena, text, len);
+            calyx_string_free(text);
+        }
+    } else {
+        data = read_file(j->arena, path, &len);
+    }
     if (!data) {
-        cx_buf_printf(err, "cannot read the journal `%s`", path);
+        if (j->pg)
+            cx_buf_printf(err, "no run `%s` in the journal database", j->run);
+        else
+            cx_buf_printf(err, "cannot read the journal `%s`", path);
         return -1;
     }
     size_t pos = 0, valid = 0;
@@ -207,7 +241,24 @@ cx_journal *cx_journal_open(cx_arena *a, const char *dir, cx_journal_mode mode,
     j->dir = cx_strndup(a, dir, strlen(dir));
     j->mode = mode;
     char *path = path_join(a, dir, CX_JOURNAL_FILE);
+    if (calyx_pg_enabled()) {
+        const char *slash = strrchr(dir, '/');
+        j->pg = 1;
+        j->run = cx_strndup(a, slash ? slash + 1 : dir, strlen(slash ? slash + 1 : dir));
+    }
 
+    if (mode == CX_JOURNAL_NEW && j->pg) {
+        /* The local directory keeps what stays on this machine (sandboxes). */
+        if (cx_mkdirs(dir) != 0) {
+            cx_buf_printf(err, "cannot create the run directory `%s`", dir);
+            return NULL;
+        }
+        if (!calyx_pg_create(j->run) || !append(j, header_json, strlen(header_json), 1)) {
+            cx_buf_printf(err, "cannot create run `%s` in the journal database", j->run);
+            return NULL;
+        }
+        return j;
+    }
     if (mode == CX_JOURNAL_NEW) {
         if (cx_mkdirs(dir) != 0 || cx_mkdirs(path_join(a, dir, "blobs")) != 0) {
             cx_buf_printf(err, "cannot create the run directory `%s`", dir);
@@ -230,6 +281,21 @@ cx_journal *cx_journal_open(cx_arena *a, const char *dir, cx_journal_mode mode,
     if (valid < 0) {
         free(j->slots);
         return NULL;
+    }
+    if (mode == CX_JOURNAL_RESUME && j->pg) {
+        if (cx_mkdirs(dir) != 0) {
+            cx_buf_printf(err, "cannot create the run directory `%s`", dir);
+            free(j->slots);
+            return NULL;
+        }
+        char line[128];
+        snprintf(line, sizeof line, "{\"type\":\"resume\",\"at\":%lld}", (long long)time(NULL));
+        if (!append(j, line, strlen(line), 1) || !calyx_pg_status(j->run, "running")) {
+            cx_buf_printf(err, "cannot append to run `%s` in the journal database", j->run);
+            free(j->slots);
+            return NULL;
+        }
+        return j;
     }
     if (mode == CX_JOURNAL_RESUME) {
         /* Drop a torn last line before appending after it. */
@@ -259,6 +325,13 @@ cx_value *cx_journal_lookup(cx_journal *j, const char *key, const char *req_hash
     if (ok) return ok;
     const char *blob = cx_get_str(s->entry, "blob", NULL);
     if (!blob) return NULL;
+    if (j->pg) {
+        char *text = calyx_pg_blob_get(blob);
+        if (!text) return NULL;
+        cx_value *v = cx_parse(j->arena, text, strlen(text), NULL);
+        calyx_string_free(text);
+        return v;
+    }
     size_t len = 0;
     char *name = path_join(j->arena, "blobs", blob);
     char *data = read_file(j->arena, path_join(j->arena, j->dir, name), &len);
@@ -293,6 +366,7 @@ int cx_journal_begin(cx_journal *j, const char *key, const char *req_hash) {
 
 /* Writes a blob once, atomically: a temporary file renamed into place. */
 static int write_blob(cx_journal *j, const char *hash, const char *data, size_t len) {
+    if (j->pg) return calyx_pg_blob_put(hash, data, len);
     char *name = path_join(j->arena, "blobs", hash);
     char *path = path_join(j->arena, j->dir, name);
     struct stat st;
@@ -309,7 +383,7 @@ static int write_blob(cx_journal *j, const char *hash, const char *data, size_t 
 
 int cx_journal_record(cx_journal *j, const char *key, const char *effect, const char *req_hash,
                       const char *ok_json, size_t ok_len) {
-    if (!j->f) return 1;
+    if (!writable(j)) return 1;
     cx_buf line = {0};
     cx_buf_puts(&line, "{\"type\":\"call\",\"key\":");
     cx_buf_json_str(&line, key, strlen(key));
@@ -335,7 +409,7 @@ int cx_journal_record(cx_journal *j, const char *key, const char *effect, const 
 }
 
 void cx_journal_end(cx_journal *j, const char *ok_json, const char *error) {
-    if (!j->f) return;
+    if (!writable(j)) return;
     cx_buf line = {0};
     cx_buf_puts(&line, "{\"type\":\"end\",");
     if (ok_json) {
@@ -348,6 +422,10 @@ void cx_journal_end(cx_journal *j, const char *ok_json, const char *error) {
     cx_buf_putc(&line, '}');
     append(j, line.data, line.len, 1);
     cx_buf_free(&line);
+    if (j->pg)
+        calyx_pg_status(j->run, ok_json                                 ? "finished"
+                                : error && strncmp(error, "waiting: ", 9) == 0 ? "waiting"
+                                                                               : "failed");
 }
 
 void cx_journal_close(cx_journal *j) {

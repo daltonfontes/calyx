@@ -617,7 +617,7 @@ graph solve(issue: Text, repo: Sandbox) -> Text:
 - Uma entrada **por chamada** de modelo ou tool, mais timers, mensagens recebidas e escolhas não-determinísticas (vencedor de `race`, modelo do roteador).
 - Escrito só no fim do arquivo, em lotes. Conteúdos grandes ficam fora, referenciados por hash.
 - **Suspender, retomar e se recuperar de uma queda são a mesma operação:** reconstruir o estado a partir do diário.
-- Armazenamento: formato próprio em arquivo local; PostgreSQL depois, para várias máquinas.
+- Armazenamento: formato próprio em arquivo local, ou PostgreSQL, para várias máquinas (abaixo).
 
 **Como está implementado (M3):**
 
@@ -631,6 +631,15 @@ graph solve(issue: Text, repo: Sandbox) -> Text:
 - Uma linha cortada no meio por uma queda é descartada na retomada.
 - **Esperas (`receive`):** o diretório da execução guarda `waits.jsonl` (o prazo de cada espera) e `inbox.jsonl` (as mensagens entregues). Uma execução que espera termina com o estado `waiting`.
 - **Sandboxes:** a resposta de uma chamada que edita uma sandbox leva o hash do snapshot depois dela; a retomada põe cada sandbox de volta ao último snapshot do diário (seção 7.3).
+
+**Várias máquinas: o diário no PostgreSQL.** Com `CALYX_DATABASE_URL` (`postgres://usuario@host:porta/banco`), as linhas do diário e os blobs vão para o PostgreSQL, nas mesmas linhas e na mesma ordem do arquivo: o interpretador lê e escreve do mesmo jeito (`runtime/rs/pg.rs`, chamado por `journal.c`). As tabelas (`calyx_runs`, `calyx_journal`, `calyx_blobs`) são criadas na primeira conexão.
+
+- **Durabilidade:** cada linha é uma transação confirmada antes de a chamada seguinte começar; com o `synchronous_commit` padrão do servidor, confirmada é gravada no disco dele, o que o arquivo tem do `fsync`.
+- **Uma máquina por execução:** a execução roda sob um *advisory lock* de sessão com o id dela. Outro processo, nesta máquina ou em outra, que tenta `calyx resume` recebe o código 5. Se o processo ou a máquina morre, o PostgreSQL derruba a sessão e o lock vai junto.
+- **Qualquer máquina retoma:** `calyx runs`, `calyx resume` e `calyx replay` leem do banco. O caminho do programa gravado no diário precisa existir na outra máquina (o mesmo código, no mesmo lugar).
+- **`calyx worker`:** em cada máquina, assume as execuções sem fim no diário e sem processo dono (as de uma máquina que morreu) e as termina, conferindo de novo a cada poucos segundos (`--every`, 5 por padrão; `--once` para uma passada).
+- **Ainda não:** entidades (estado em arquivos), `receive` (esperas e mensagens em arquivos) e sandboxes (diretórios de uma máquina) são recusados com o diário no PostgreSQL. A conexão não tem TLS: use um banco numa rede privada ou por um túnel.
+- **Testes:** `compiler/calyx-cli/tests/postgres.rs` (com `CALYX_TEST_DATABASE_URL`; a CI sobe um PostgreSQL): uma máquina morre depois do pagamento e a outra termina a execução, com um pagamento e um e-mail; uma execução em andamento não é tomada; programas com estado local são recusados.
 
 ### 9.4 Atores do runtime (D10)
 
@@ -750,7 +759,7 @@ Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*`
 ## 13. Fora da v1
 
 - Políticas de roteamento além de `cheapest_that_passes` (D30).
-- Várias máquinas (backend PostgreSQL do diário) (D6).
+- Várias máquinas, segunda parte: entidades, `receive` e sandboxes no PostgreSQL, e TLS na conexão (D6).
 - Provas opcionais sobre grafos.
 - Execução especulativa e *hedging* entre provedores.
 - Edição arbitrária do grafo durante a execução (D4, nível 4).

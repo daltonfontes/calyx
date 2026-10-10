@@ -76,6 +76,17 @@ pub struct Header {
 }
 
 fn lines(id: &str) -> Result<Vec<Value>, String> {
+    if calyx_runtime::pg::enabled() {
+        return match calyx_runtime::pg::lines(id)? {
+            Some(lines) => Ok(lines
+                .iter()
+                .filter_map(|l| serde_json::from_str(l).ok())
+                .collect()),
+            None => Err(format!(
+                "no run `{id}` in the journal database; `calyx runs` lists the runs"
+            )),
+        };
+    }
     let path = dir(id).join(JOURNAL);
     let text = std::fs::read_to_string(&path).map_err(|_| {
         format!(
@@ -113,14 +124,24 @@ pub struct Summary {
 
 /// All runs, oldest first.
 pub fn list() -> Vec<Summary> {
-    let Ok(entries) = std::fs::read_dir(RUNS_DIR) else {
-        return Vec::new();
+    let mut ids: Vec<String> = if calyx_runtime::pg::enabled() {
+        match calyx_runtime::pg::runs() {
+            Ok(runs) => runs.into_iter().map(|(id, _)| id).collect(),
+            Err(e) => {
+                eprintln!("calyx: journal database: {e}");
+                Vec::new()
+            }
+        }
+    } else {
+        let Ok(entries) = std::fs::read_dir(RUNS_DIR) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter(|e| e.path().join(JOURNAL).is_file())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect()
     };
-    let mut ids: Vec<String> = entries
-        .filter_map(Result::ok)
-        .filter(|e| e.path().join(JOURNAL).is_file())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
     ids.sort();
     ids.into_iter()
         .map(|id| {
@@ -135,6 +156,13 @@ pub fn list() -> Vec<Summary> {
                     "waiting".to_owned()
                 }
                 Some(l) if l["type"] == "end" => "failed".to_owned(),
+                // With the journal in PostgreSQL, a run with no end may be
+                // running right now, on any machine.
+                _ if calyx_runtime::pg::enabled()
+                    && calyx_runtime::pg::run_is_held(&id).unwrap_or(false) =>
+                {
+                    "running".to_owned()
+                }
                 _ => "interrupted".to_owned(),
             };
             Summary {

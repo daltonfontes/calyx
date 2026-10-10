@@ -11,6 +11,7 @@ pub mod config;
 pub mod io;
 mod llm;
 mod mcp;
+pub mod pg;
 pub mod sandbox;
 pub mod verify;
 
