@@ -1,0 +1,11 @@
+# Padrão: limitar quantas chamadas rodam ao mesmo tempo (limite do provedor).
+model m = "fake-model"
+
+prompt summarize(q: Text) -> Text:
+    """{q}"""
+
+graph g(items: List[Text]) -> List[Text]:
+    limits threads 4
+    out = for each i in items:
+        m(summarize(i))
+    return out

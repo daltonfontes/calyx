@@ -1,0 +1,9 @@
+# Padrão: escritas em paralelo em recursos diferentes (um reembolso por pedido), cada uma com chave.
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+
+graph g(orders: List[Text]) -> Text:
+    done = for each o in orders:
+        refund("r-{o}", o, 10.0)
+    return "ok"

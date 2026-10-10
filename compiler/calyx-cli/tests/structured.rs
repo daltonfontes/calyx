@@ -24,6 +24,15 @@ tool pulls(query: Text) -> List[Pull]:
     effect read
     max_output 100 tokens
 
+tool note(query: Text) -> Unit:
+    effect read
+
+graph noted(query: Text) -> Text:
+    done = note(query)
+    out = "anotado"
+    out after done
+    return out
+
 graph latest(query: Text) -> Release:
     return release(query)
 
@@ -44,7 +53,7 @@ impl Dir {
             .join("../../examples/tools/fake_search.py")
             .canonicalize()
             .unwrap();
-        let toml: String = ["release", "pulls"]
+        let toml: String = ["release", "pulls", "note"]
             .iter()
             .map(|t| {
                 format!(
@@ -179,4 +188,13 @@ fn an_answer_without_a_declared_field_is_a_decode_failure() {
         "{}",
         text(&out.stderr)
     );
+}
+
+#[test]
+fn a_unit_tool_takes_any_answer() {
+    let d = Dir::new("unit");
+    // The server answers plain text, not JSON: nothing for a `Unit` to decode.
+    let out = d.calyx(&["run", "p.clyx", "--graph", "noted", "--query", "x"]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout).trim(), "anotado");
 }

@@ -1,0 +1,16 @@
+# Padrão: fan-out e fan-in (map-reduce): N buscas e resumos em paralelo, um relatório.
+model m = "fake-model"
+
+tool web_search(query: Text) -> Text:
+    effect read
+
+prompt summarize(q: Text, r: Text) -> Text:
+    """{q}: {r}"""
+
+prompt report(xs: List[Text]) -> Text:
+    """{xs}"""
+
+graph g(questions: List[Text]) -> Text:
+    answers = for each q in questions:
+        m(summarize(q, web_search(q)))
+    return m(report(answers))

@@ -1,0 +1,26 @@
+# Padrão: laço de novas tentativas com uma escrita idempotente (mesma chave a cada volta).
+model m = "fake-model"
+
+type Check = Pass | Retry
+
+tool publish(key: Text, text: Text) -> Unit:
+    effect write
+    idempotency_key key
+
+prompt draft(t: Text) -> Text:
+    """{t}"""
+
+prompt review(t: Text) -> Check:
+    """{t}"""
+
+graph g(request: Text, topic: Text) -> Text:
+    final = loop text = topic, max 3:
+        d = m(draft(text))
+        published = publish(request, d)
+        match m(review(d)):
+            case Pass:
+                done d
+            case Retry:
+                next d
+        on limit: last
+    return final

@@ -1,0 +1,27 @@
+# Padrão: corrida entre estratégias que escrevem, com a escrita do perdedor desfeita (saga).
+model m = "fake-model"
+
+tool reserve(request: Text, supplier: Text) -> Unit:
+    effect write
+    idempotency_key request
+    compensate release(request, supplier)
+
+tool release(request: Text, supplier: Text) -> Unit:
+    effect write
+    idempotency_key request
+
+prompt confirm(s: Text) -> Text:
+    """{s}"""
+
+graph via(request: Text, supplier: Text) -> Text:
+    done = reserve("{request}-{supplier}", supplier)
+    ok = m(confirm(supplier))
+    ok after done
+    return ok
+
+graph g(request: Text) -> Text:
+    who = race first:
+        a: via(request, "A")
+        b: via(request, "B")
+        on none: fail "nenhum fornecedor"
+    return who

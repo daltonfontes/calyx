@@ -1,0 +1,14 @@
+# Padrão: contador compartilhado incrementado em paralelo (por itens e por execuções simultâneas).
+entity Counter(key name: Text):
+    state count: Nat = 0
+
+    on Add():
+        next count = count + 1
+
+    on Get() -> Nat:
+        return count
+
+graph g(name: Text, items: List[Text]) -> Nat:
+    sent = for each i in items:
+        send Counter(name).Add()
+    return 0

@@ -1,0 +1,17 @@
+# Padrão: ramos independentes calculam partes diferentes de um resultado.
+model m = "fake-model"
+
+type Review:
+    summary: Text
+    risks: Text
+
+prompt summarize(t: Text) -> Text:
+    """{t}"""
+
+prompt risks(t: Text) -> Text:
+    """{t}"""
+
+graph g(text: Text) -> Review:
+    s = m(summarize(text))
+    r = m(risks(text))
+    return Review(summary=s, risks=r)

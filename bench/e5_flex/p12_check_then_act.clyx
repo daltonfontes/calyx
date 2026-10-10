@@ -1,0 +1,17 @@
+# Padrão: conferir e agir de forma atômica (otimista): o reembolso só se o pedido ainda estiver entregue.
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+    refunded: Float
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    checks OrderState
+
+graph g(request: Text, order: Text) -> Text:
+    paid = refund(request, order, 10.0):
+        requires state.status == Delivered
+    return "ok"

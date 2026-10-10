@@ -1,0 +1,13 @@
+# Padrão: ler-alterar-gravar atômico num estado compartilhado (o depósito somado no handler).
+entity Account(key id: Text):
+    state balance: Int = 0
+
+    on Deposit(amount: Int):
+        next balance = balance + amount
+
+    on Balance() -> Int:
+        return balance
+
+graph g(id: Text, amount: Int) -> Int:
+    send Account(id).Deposit(amount)
+    return 0

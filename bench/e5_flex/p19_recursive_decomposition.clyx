@@ -1,0 +1,20 @@
+# Padrão: decomposição recursiva (dividir a tarefa em subtarefas até ficarem simples).
+model m = "fake-model"
+
+prompt split(t: Text) -> List[Text] max 3:
+    """{t}"""
+
+prompt solve(t: Text) -> Text:
+    """{t}"""
+
+prompt merge(xs: List[Text]) -> Text:
+    """{xs}"""
+
+graph work(task: Text, depth: Nat) -> Text:
+    decreases depth
+    if depth == 0:
+        return m(solve(task))
+    parts = m(split(task))
+    subs = for each p in parts:
+        work(p, depth - 1)
+    return m(merge(subs))

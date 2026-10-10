@@ -1,0 +1,15 @@
+# Padrão: esperar uma pessoa com prazo, em paralelo com outro trabalho.
+model m = "fake-model"
+
+message Approval = Approved | Denied(reason: Text)
+
+prompt propose(r: Text) -> Text:
+    """{r}"""
+
+graph g(request: Text) -> Text:
+    p = m(propose(request))
+    a = receive Approval about p, timeout 3 days:
+        on timeout: Denied(reason="sem resposta")
+    return match a:
+        case Approved: "ok: {p}"
+        case Denied(reason): "não: {reason}"

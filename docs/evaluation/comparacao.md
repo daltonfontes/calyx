@@ -498,6 +498,16 @@ contando.
 (sem perda de pacotes nem variação), e o servidor está na mesma máquina que
 os clientes. Os modelos são falsos.
 
+## E5: contratos e concorrência, ganho e custo
+
+Quanto os contratos obrigatórios e a análise estática reduzem erros de
+concorrência, e quanto custam em flexibilidade e desempenho, está em
+[`contratos-e-concorrencia.md`](contratos-e-concorrencia.md): 22 dos 25 bugs
+de concorrência do corpus impedidos (14 antes de rodar), 16 de 21 padrões
+corretos aceitos como escritos, e os custos concentrados em três lugares
+(`after` que põe escritas em série, o quórum que não existe, as chamadas a um
+mesmo servidor MCP em série).
+
 ## O que a comparação mostra e o que não mostra
 
 **Mostra:**
