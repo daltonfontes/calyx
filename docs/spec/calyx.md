@@ -122,9 +122,17 @@ tool NOME(parametros) -> Tipo:
     on_uncertain verify(f(...)) | pause | accept_loss   # obrigatório para `write once`
     checks TipoDeEstado                  # estado validável no momento do efeito (D29)
     compensate g(param, ...)             # a escrita que desfaz esta, se o ramo da corrida perder (D12)
+    resource Tipo(param)                 # o recurso externo que a tool toca, e o parâmetro que diz qual (W0606, W0607)
     repeatable                           # repetir com os mesmos argumentos é legítimo (D5)
     description "texto"                  # o que a tool faz, para modelos que a chamam (agentes)
 ```
+
+**Recursos (`resource Pedido(id)`):** opcional. Diz que a tool toca um recurso externo do tipo `Pedido`, e qual: o do parâmetro `id`. Tools diferentes falam do mesmo recurso pelo mesmo tipo (`get_order(id)` com `resource Order(id)`, `refund(request, order, ...)` com `resource Order(order)`). Com isso o compilador avisa:
+
+- `W0606` (conferir, depois agir): uma escrita que depende de uma leitura do mesmo recurso, com a mesma chave (o mesmo nome, campo ou texto), sem `requires`. Entre a leitura e a escrita o recurso pode mudar; `requires` faz o serviço conferir no momento da escrita (seção 5.11).
+- `W0607`: uma escrita nos itens de um `for each` cuja chave não depende do item: todos os itens escrevem o mesmo recurso ao mesmo tempo.
+
+Sem `resource`, nada disso é julgado: o compilador não sabe o que uma tool toca. Uma chave que não é um nome, um campo ou um texto não é comparada (sem falso alarme). Na E5, os bugs 20 e 22 do corpus, que passavam, são pegos assim.
 
 **Contratos de escrita (implementados no M6a):**
 

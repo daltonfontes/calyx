@@ -1,0 +1,14 @@
+warning[W0606]: a write decided on a read of the same resource, without `requires`
+- expected : `requires` on the write, checked by the service when it writes (its tool declares `checks`); else `Order` may have changed since `o` read it
+- observed : `o` reads Order `id`, and `paid` writes it
+Location: resources.clyx:36:12
+
+warning[W0607]: the items of a `for each` write the same resource at once
+- expected : a key that depends on `id` (one File per item), or the write after the `for each`
+- observed : every item writes the same File
+Location: resources.clyx:56:33
+
+error[E0307]: `resource` names something that is not a parameter
+- expected : `resource Kind(param)`: the parameter that says which one the tool touches
+- observed : `nope`
+Location: resources.clyx:70:20

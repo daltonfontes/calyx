@@ -71,6 +71,9 @@ struct ToolSig {
     /// `compensate f(a, b)`: the tool that undoes a call, called with
     /// these parameters of this tool (D12, saga).
     compensate: Option<(Ident, Vec<Ident>)>,
+    /// `resource Order(id)`: the external thing the tool touches, by kind,
+    /// and the parameter that says which one (W0606, W0607).
+    resource: Option<(String, usize)>,
 }
 
 /// What a `write once` tool does when a call may or may not have happened.
@@ -457,6 +460,7 @@ impl<'p> Cx<'_, 'p> {
         let mut on_uncertain = false;
         let mut policy = None;
         let mut checks = None;
+        let mut resource = None;
         let mut keyed = false;
         let mut batch = None;
         let mut compensate = None;
@@ -591,6 +595,25 @@ impl<'p> Cx<'_, 'p> {
                     }
                     _ => self.bad_prop(p, "a call `tool(param, ...)`: the tool that undoes this one"),
                 },
+                "resource" => match p.value.as_slice() {
+                    [Expr { kind: ExprKind::Call { callee, args }, .. }]
+                        if matches!(&callee.kind, ExprKind::Ident(_)) && args.len() == 1 =>
+                    {
+                        let ExprKind::Ident(kind) = &callee.kind else { continue };
+                        match &args[0].value.kind {
+                            ExprKind::Ident(n) => match params.iter().position(|(pn, _)| pn == n) {
+                                Some(i) => resource = Some((kind.clone(), i)),
+                                None => self.push(
+                                    err("E0307", "`resource` names something that is not a parameter", args[0].value.span)
+                                        .expected("`resource Kind(param)`: the parameter that says which one the tool touches")
+                                        .observed(format!("`{n}`")),
+                                ),
+                            },
+                            _ => self.bad_prop(p, "`Kind(param)`: a kind of resource and the parameter that names one"),
+                        }
+                    }
+                    _ => self.bad_prop(p, "`Kind(param)`: a kind of resource and the parameter that names one"),
+                },
                 "repeatable" => {
                     if !p.value.is_empty() {
                         self.bad_prop(p, "no value");
@@ -598,7 +621,7 @@ impl<'p> Cx<'_, 'p> {
                 }
                 _ => self.push(
                     err("E0301", "unknown tool property", p.key.span)
-                        .expected("`effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `batch`, `compensate`, `checks`, `repeatable` or `description`")
+                        .expected("`effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `batch`, `compensate`, `checks`, `resource`, `repeatable` or `description`")
                         .observed(format!("`{key}`")),
                 ),
             }
@@ -657,6 +680,7 @@ impl<'p> Cx<'_, 'p> {
             keyed,
             batch,
             compensate,
+            resource,
         }
     }
 
@@ -1968,6 +1992,7 @@ impl<'p> Cx<'_, 'p> {
 
         let commute = self.commuting(&unordered, &index, &deps);
         self.unordered_writes(&locals, &deps, &ids, &nodes, &commute);
+        self.resource_races(&locals, &deps);
         self.lost_updates(&locals, &data_deps);
 
         // Results nobody uses: wasted money for `llm` and `read` nodes.
@@ -2327,6 +2352,116 @@ impl<'p> Cx<'_, 'p> {
                         .expected(format!("`{bn} after {an}` (or `{an} after {bn}`), a value one passes to the other, or `unordered {an}, {bn}` if the writes commute"))
                         .observed(format!("`{an}` and `{bn}` both write outside the run and may run at the same time")),
                 );
+            }
+        }
+    }
+
+    /// Calls of tools that declare `resource Kind(param)`, in `e`: the kind,
+    /// the key (as text, when it is a name, a field or a literal), the
+    /// effect, whether `requires` guards it, and where.
+    fn resource_calls(&self, e: &Expr) -> Vec<ResourceCall> {
+        let mut guarded = HashSet::new();
+        walk_expr(e, &mut |x| {
+            if let ExprKind::Guarded { call, .. } = &x.kind {
+                guarded.insert((call.span.start, call.span.end));
+            }
+        });
+        let mut out = Vec::new();
+        walk_expr(e, &mut |x| {
+            let ExprKind::Call { callee, args } = &x.kind else {
+                return;
+            };
+            let ExprKind::Ident(n) = &callee.kind else {
+                return;
+            };
+            let Some(sig) = self.tools.get(n.as_str()) else {
+                return;
+            };
+            let Some((kind, i)) = &sig.resource else {
+                return;
+            };
+            let pname = &sig.params[*i].0;
+            let arg = args
+                .iter()
+                .find(|a| a.name.as_ref().is_some_and(|m| m.name == *pname))
+                .or_else(|| args.iter().filter(|a| a.name.is_none()).nth(*i));
+            let Some(arg) = arg else { return };
+            out.push(ResourceCall {
+                kind: kind.clone(),
+                key: key_text(&arg.value),
+                key_expr: arg.value.clone(),
+                writes: sig.effect >= Effect::Write,
+                guarded: guarded.contains(&(x.span.start, x.span.end)),
+                span: x.span,
+            });
+        });
+        out
+    }
+
+    /// With `resource` declared on tools (decision D29):
+    /// - W0606: a write that depends on a read of the same resource (same
+    ///   kind, same key) without `requires`: the resource may change in
+    ///   between (check, then act);
+    /// - W0607: a write in the items of a `for each` whose key does not
+    ///   depend on the item: every item writes the same resource at once.
+    fn resource_races(&mut self, locals: &[Local], deps: &[Vec<usize>]) {
+        let calls: Vec<Vec<ResourceCall>> = locals
+            .iter()
+            .map(|l| {
+                let mut v = self.resource_calls(l.value);
+                if let Some((_, over)) = l.fan_out {
+                    v.extend(self.resource_calls(over));
+                }
+                v
+            })
+            .collect();
+        let before = |start: usize| {
+            let mut seen = HashSet::new();
+            let mut stack = deps[start].clone();
+            while let Some(d) = stack.pop() {
+                if seen.insert(d) {
+                    stack.extend(deps[d].iter().copied());
+                }
+            }
+            seen
+        };
+        for (i, l) in locals.iter().enumerate() {
+            let earlier = before(i);
+            for w in calls[i].iter().filter(|c| c.writes && !c.guarded) {
+                let Some(key) = &w.key else { continue };
+                let read = earlier.iter().find(|&&r| {
+                    calls[r]
+                        .iter()
+                        .any(|c| !c.writes && c.kind == w.kind && c.key.as_ref() == Some(key))
+                });
+                if let Some(&r) = read {
+                    self.push(
+                        warn("W0606", "a write decided on a read of the same resource, without `requires`", w.span)
+                            .expected(format!("`requires` on the write, checked by the service when it writes (its tool declares `checks`); else `{}` may have changed since `{}` read it", w.kind, locals[r].name.name))
+                            .observed(format!("`{}` reads {} `{}`, and `{}` writes it", locals[r].name.name, w.kind, key.split_once(':').map_or(key.as_str(), |(_, k)| k), l.name.name)),
+                    );
+                }
+            }
+            // The items of a `for each` step, and `for each` expressions.
+            let mut items: Vec<(String, Expr)> = Vec::new();
+            if let Some((var, _)) = l.fan_out {
+                items.push((var.name.clone(), l.value.clone()));
+            }
+            walk_expr(l.value, &mut |x| {
+                if let ExprKind::Each { var, body, .. } = &x.kind {
+                    items.push((var.name.clone(), (**body).clone()));
+                }
+            });
+            for (var, body) in &items {
+                for w in self.resource_calls(body).iter().filter(|c| c.writes) {
+                    if !mentions(&w.key_expr, var) {
+                        self.push(
+                            warn("W0607", "the items of a `for each` write the same resource at once", w.span)
+                                .expected(format!("a key that depends on `{var}` (one {} per item), or the write after the `for each`", w.kind))
+                                .observed(format!("every item writes the same {}", w.kind)),
+                        );
+                    }
+                }
             }
         }
     }
@@ -3906,6 +4041,57 @@ impl Typed {
             effect: Effect::Pure,
         }
     }
+}
+
+/// A call of a tool that declares `resource` (see `resource_calls`).
+struct ResourceCall {
+    kind: String,
+    key: Option<String>,
+    key_expr: Expr,
+    writes: bool,
+    guarded: bool,
+    span: Span,
+}
+
+/// A key as text, when two keys can be compared by what is written: a
+/// name, a field of one, or a literal.
+fn key_text(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Ident(n) => Some(format!("name:{n}")),
+        ExprKind::Str(s) => Some(format!("text:{}", s.text)),
+        ExprKind::Field { base, name } => key_text(base).map(|b| format!("{b}.{}", name.name)),
+        _ => None,
+    }
+}
+
+/// Does `e` use the name `var` (also inside `{...}` of a text)?
+fn mentions(e: &Expr, var: &str) -> bool {
+    let mut found = false;
+    walk_expr(e, &mut |x| match &x.kind {
+        ExprKind::Ident(n) if n == var => found = true,
+        ExprKind::Str(s) => {
+            let t = &s.text;
+            let mut rest = t.as_str();
+            while let Some(i) = rest.find('{') {
+                rest = &rest[i + 1..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if name == var {
+                    found = true;
+                }
+            }
+        }
+        _ => {}
+    });
+    found
+}
+
+/// Visits `e` and every expression inside it.
+fn walk_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    let mut g = |x: &Expr| f(x);
+    for_each_expr(&Stmt::Return(e.clone()), &mut g);
 }
 
 /// Visits every expression in a statement (including nested ones).

@@ -2,6 +2,7 @@
 tool refund(request: Text, order: Text, amount: Float) -> Unit:
     effect write
     idempotency_key request
+    resource Order(order)
 
 graph g(orders: List[Text]) -> Text:
     done = for each o in orders:

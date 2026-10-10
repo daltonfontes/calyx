@@ -1,0 +1,70 @@
+# `resource Kind(param)`: o recurso externo que a tool toca (W0606, W0607).
+model m = "m"
+
+type Status = Pending | Delivered | Cancelled
+
+type OrderState:
+    status: Status
+    total: Float
+
+type Order:
+    id: Text
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+    resource Order(id)
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    checks OrderState
+    resource Order(order)
+
+tool save(path: Text, text: Text) -> Unit:
+    effect write
+    idempotency_key path
+    resource File(path)
+
+prompt decide(o: Order) -> Float:
+    """{o}"""
+
+# Conferir e agir separados: avisa.
+graph check_then_act(request: Text, id: Text) -> Text:
+    o = get_order(id)
+    amount = m(decide(o))
+    paid = refund(request, id, amount)
+    return "ok"
+
+# O mesmo com `requires`: o serviço confere ao escrever. Não avisa.
+graph guarded(request: Text, id: Text) -> Text:
+    o = get_order(id)
+    amount = m(decide(o))
+    paid = refund(request, id, amount):
+        requires state.status == Delivered
+    return "ok"
+
+# Outro pedido: não é o mesmo recurso. Não avisa.
+graph other_order(request: Text, id: Text, other: Text) -> Text:
+    o = get_order(id)
+    amount = m(decide(o))
+    paid = refund(request, other, amount)
+    return "ok"
+
+# Todos os itens gravam o mesmo arquivo: avisa.
+graph same_file(ids: List[Text]) -> Text:
+    saved = for each id in ids: save("relatorio.txt", id)
+    return "ok"
+
+# Um arquivo por item: não avisa.
+graph file_per_item(ids: List[Text]) -> Text:
+    saved = for each id in ids: save("relatorio-{id}.txt", id)
+    return "ok"
+
+graph bad_resource(id: Text) -> Text:
+    return "ok"
+
+tool broken(id: Text) -> Unit:
+    effect write
+    idempotency_key id
+    resource Order(nope)
