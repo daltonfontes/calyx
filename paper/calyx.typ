@@ -357,6 +357,12 @@ yet (§6.3).
 and in `calyx check --tools` without running, Calyx compares them with the
 declaration and warns on a contradiction (§6.8).
 
+*Several machines.* With the journal in PostgreSQL, the same lines go to a
+table, each committed before the next call; a run is executed under a
+session advisory lock on its id, which PostgreSQL drops with the session of
+a process that dies, so a worker on another machine takes the run over and
+finishes it from the journal.
+
 *Programs as servers.* `calyx serve` turns a program into an MCP server:
 each graph is a tool, annotated from the program (`readOnlyHint` when no
 step writes, else `idempotencyKeyHint`). The key hint holds by
@@ -638,8 +644,9 @@ annotations only works for servers that send them, and misses ignored keys.
 *Models.* Most experiments use fake models; W1 and W2 were repeated with
 Gemini at small N, and in W2 the model always proposed the same amount, so
 the risk of a different answer after a crash was not exercised. *Setting.*
-One machine; only the Stripe runs use a real service over the network, the
-rest use fake services; versions are pinned. *Real-bug study.* Issues
+One machine (the PostgreSQL journal, which lets another machine take over a
+run, is tested but not measured); only the Stripe runs use a real service
+over the network, the rest use fake services; versions are pinned. *Real-bug study.* Issues
 read from their summaries, one classifier, a sample limited by GitHub
 search.
 

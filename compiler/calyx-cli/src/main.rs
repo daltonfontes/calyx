@@ -57,6 +57,14 @@ commands:
       idempotency key (`idempotencyKey`, or `calyx/idempotency_key` in
       `_meta`) is tied to one run; the same key returns its answer, or
       resumes it if it did not finish, instead of running it again.
+  worker [--fake-models] [--quiet] [--config FILE] [--every SECONDS] [--once]
+      With the journal in PostgreSQL (CALYX_DATABASE_URL), several machines
+      share the runs: any of them lists, resumes or replays any run, and a
+      run is run by one process at a time. The worker takes over every run
+      whose process died (no end in its journal, no process holding it)
+      and finishes it, checking again every few seconds (5 by default).
+      Programs with entities, `receive` or sandboxes keep state on one
+      machine and are refused with the journal in PostgreSQL, for now.
   resume <run> [--fake-models] [--quiet] [--config FILE] [--budget USD]
                [--uncertain done|done=ANSWER|retry|failed]
       Continue an interrupted or failed run. Calls already in its journal
@@ -113,6 +121,7 @@ fn main() -> ExitCode {
         Some("deliver") => deliver(&args[1..]),
         Some("tick") => tick(&args[1..]),
         Some("serve") => serve::serve(&args[1..]),
+        Some("worker") => worker(&args[1..]),
         Some("version" | "--version" | "-V") => {
             println!("calyx {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -826,6 +835,73 @@ fn tick(args: &[String]) -> ExitCode {
     worst
 }
 
+/// `calyx worker`: with the journal in PostgreSQL, takes over the runs
+/// whose process died, on any machine, and finishes them (D6). A run is
+/// taken when it has no end in its journal and no process holds it (its
+/// lock went with the session of the process that died).
+fn worker(args: &[String]) -> ExitCode {
+    let mut pass = Vec::new();
+    let mut once = false;
+    let mut every = 5.0;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--once" => once = true,
+            "--every" => match it.next().and_then(|s| s.parse::<f64>().ok()) {
+                Some(s) if s > 0.0 => every = s,
+                _ => return usage_error("--every expects a number of seconds"),
+            },
+            "--fake-models" | "--quiet" => pass.push(arg.clone()),
+            "--config" => match it.next() {
+                Some(c) => pass.extend([arg.clone(), c.clone()]),
+                None => return usage_error("--config expects a file"),
+            },
+            a => return usage_error(&format!("unknown option `{a}`")),
+        }
+    }
+    if !calyx_runtime::pg::enabled() {
+        eprintln!(
+            "{}: the worker needs the journal in PostgreSQL: set {}",
+            command(),
+            calyx_runtime::pg::URL_ENV
+        );
+        return ExitCode::from(2);
+    }
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("calyx"));
+    loop {
+        let orphans: Vec<String> = runs::list()
+            .into_iter()
+            .filter(|r| r.status == "interrupted")
+            .map(|r| r.id)
+            .collect();
+        let children: Vec<_> = orphans
+            .iter()
+            .filter_map(|id| {
+                eprintln!("{}: taking over run {id}", command());
+                std::process::Command::new(&exe)
+                    .arg("resume")
+                    .arg(id)
+                    .args(&pass)
+                    .spawn()
+                    .ok()
+                    .map(|c| (id, c))
+            })
+            .collect();
+        for (id, mut c) in children {
+            match c.wait().map(|s| s.code()) {
+                Ok(Some(0)) => eprintln!("{}: run {id} finished", command()),
+                // Another worker took it first.
+                Ok(Some(5)) => {}
+                other => eprintln!("{}: run {id} stopped ({other:?})", command()),
+            }
+        }
+        if once {
+            return ExitCode::SUCCESS;
+        }
+        std::thread::sleep(std::time::Duration::from_secs_f64(every));
+    }
+}
+
 fn list_runs() -> ExitCode {
     let all = runs::list();
     if all.is_empty() {
@@ -899,6 +975,24 @@ fn load_config(
     })
 }
 
+/// What a program uses that lives on one machine's disk, and so cannot
+/// move with its run to another machine yet.
+fn not_shared(program: &calyx_ir::Program) -> Option<&'static str> {
+    if !program.entities.is_empty() {
+        Some("entities keep their state in files")
+    } else if !program.messages.is_empty() {
+        Some("`receive` keeps its waits and messages in files")
+    } else if program
+        .tools
+        .iter()
+        .any(|t| t.borrows.iter().any(Option::is_some))
+    {
+        Some("sandboxes are directories on one machine")
+    } else {
+        None
+    }
+}
+
 fn execute(
     program: &calyx_ir::Program,
     graph: &str,
@@ -907,6 +1001,36 @@ fn execute(
     id: Option<&str>,
 ) -> ExitCode {
     let mode = opts.mode;
+    // The journal in PostgreSQL, shared by several machines (D6): one
+    // process runs a run at a time; what lives on one machine's disk is
+    // not shared yet.
+    if calyx_runtime::pg::enabled()
+        && mode != Mode::Replay
+        && let Some(id) = id
+    {
+        if let Some(why) = not_shared(program) {
+            eprintln!(
+                "{}: {why}: not yet with the journal in PostgreSQL ({})",
+                command(),
+                calyx_runtime::pg::URL_ENV
+            );
+            return ExitCode::from(2);
+        }
+        match calyx_runtime::pg::lock_run(id) {
+            Ok(true) => {}
+            Ok(false) => {
+                eprintln!(
+                    "{}: run {id} is being run by another process (on this machine or another)",
+                    command()
+                );
+                return ExitCode::from(5);
+            }
+            Err(e) => {
+                eprintln!("{}: journal database: {e}", command());
+                return ExitCode::from(2);
+            }
+        }
+    }
     match calyx_runtime::run(&program.to_json(), graph, &args, opts) {
         Ok(serde_json::Value::String(s)) => {
             println!("{s}");

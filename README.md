@@ -91,6 +91,11 @@ also get 6 of 6. The difference is the default, not the ceiling: in Calyx,
 those lines are required. Details in
 [`docs/evaluation/comparacao.md`](docs/evaluation/comparacao.md).
 
+**On another machine.** With the journal in PostgreSQL
+(`CALYX_DATABASE_URL`), machines share runs: if one dies mid-run, a
+`calyx worker` on another takes the run over and finishes it from the
+journal, and a run is never run by two machines at once.
+
 **Against the real Stripe API** (test mode, [`bench/stripe/`](bench/stripe)):
 a refund and a store credit, the process killed at 5 points. Stripe itself
 counts one refund and one credit in all 5 cases. The same program without
@@ -141,7 +146,7 @@ run's answer, or resumes it if it died, and never runs it twice.
 **Target:** check any program in under 1 second, so an agent can check after
 every edit. **Status:** the 155-line customer-service example
 ([`atendimento.clyx`](examples/atendimento.clyx)) checks in **0.5 ms**.
-The checker and runtime compile to native code; `calyx` is one ~3 MB binary.
+The checker and runtime compile to native code; `calyx` is one ~5 MB binary.
 
 ## Calyx is PROVEN, within limits
 
@@ -294,7 +299,9 @@ for code agents to per-user memory, debates and model routers, in
 - The Lean proofs cover one call; whole programs get a bounded check. Both
   models are written by hand, not extracted from the C runtime.
 - Agents cannot call `write once` tools.
-- One machine: the journal is local files. No distributed execution yet.
+- Several machines share runs only through the journal in PostgreSQL;
+  programs with entities, `receive` or sandboxes still run on one machine.
+  The database connection has no TLS yet.
 - Tools only as MCP servers over stdio; models only via OpenAI-compatible APIs.
 - The pure layer has no recursion, by design (every program must terminate).
 - No language server, debugger or REPL.

@@ -96,6 +96,11 @@ Temporal e LangGraph também fazem 6 de 6. A diferença é o padrão, não o tet
 na Calyx, essas linhas são obrigatórias. Detalhes em
 [`docs/evaluation/comparacao.md`](docs/evaluation/comparacao.md).
 
+**Em outra máquina.** Com o diário no PostgreSQL (`CALYX_DATABASE_URL`), as
+máquinas compartilham as execuções: se uma morre no meio, um `calyx worker`
+em outra assume a execução e a termina a partir do diário, e uma execução
+nunca roda em duas máquinas ao mesmo tempo.
+
 **Contra a API real do Stripe** (modo de teste,
 [`bench/stripe/`](bench/stripe)): um reembolso e um crédito, com o processo
 morto em 5 pontos. O próprio Stripe conta um reembolso e um crédito nos 5
@@ -149,7 +154,7 @@ devolve a resposta dela, ou a retoma se ela morreu, e nunca roda duas vezes.
 agente possa verificar a cada mudança. **Situação:** o exemplo de atendimento
 ao cliente, de 155 linhas ([`atendimento.clyx`](examples/atendimento.clyx)),
 é verificado em **0,5 ms**. O verificador e o runtime compilam para código
-nativo; o `calyx` é um binário só, de ~3 MB.
+nativo; o `calyx` é um binário só, de ~5 MB.
 
 ## A Calyx é PROVADA, dentro de limites
 
@@ -307,7 +312,9 @@ modelos, em [`examples/`](examples).
   verificação limitada. Os dois modelos são escritos à mão, não extraídos
   do runtime em C.
 - Agentes não podem chamar tools `write once`.
-- Uma máquina só: o diário são arquivos locais. Ainda sem execução distribuída.
+- Várias máquinas compartilham execuções só pelo diário no PostgreSQL;
+  programas com entidades, `receive` ou sandboxes ainda rodam numa máquina.
+  A conexão com o banco ainda não tem TLS.
 - Tools só como servidores MCP via stdio; modelos só por APIs compatíveis com
   a da OpenAI.
 - A camada pura não tem recursão, de propósito (todo programa termina).

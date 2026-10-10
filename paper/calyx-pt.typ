@@ -365,6 +365,12 @@ resposta atrasada não vale mesmo que ninguém tenha retomado a execução ainda
 tool, e em `calyx check --tools` sem rodar, a Calyx as compara com a
 declaração e avisa numa contradição (§6.8).
 
+*Várias máquinas.* Com o diário no PostgreSQL, as mesmas linhas vão para uma
+tabela, cada uma confirmada antes da próxima chamada; uma execução roda sob
+um *advisory lock* de sessão com o id dela, que o PostgreSQL solta com a
+sessão de um processo que morre, então um worker em outra máquina assume a
+execução e a termina a partir do diário.
+
 *Programas como servidores.* `calyx serve` transforma um programa num
 servidor MCP: cada grafo é uma tool, anotada a partir do programa
 (`readOnlyHint` quando nenhum passo escreve, senão `idempotencyKeyHint`). A
@@ -650,7 +656,9 @@ as anotações MCP só funciona para servidores que as enviam, e deixa passar
 chaves ignoradas. *Modelos.* A maioria dos experimentos usa modelos falsos;
 W1 e W2 foram repetidos com o Gemini com N pequeno, e na W2 o modelo sempre
 propôs o mesmo valor, então o risco de uma resposta diferente depois de uma
-queda não foi exercitado. *Ambiente.* Uma máquina; só as rodadas do Stripe usam
+queda não foi exercitado. *Ambiente.* Uma máquina (o diário no PostgreSQL, que deixa outra
+máquina assumir uma execução, tem testes, mas não foi medido); só as rodadas
+do Stripe usam
 um serviço real pela rede, o resto usa serviços falsos; as versões são
 fixas. *Estudo de bugs reais.* Issues lidas pelos resumos, um
 classificador, uma amostra limitada pela busca do GitHub.
