@@ -15,21 +15,47 @@
 model gemini = "gemini-3.5-flash-lite":
     max_output 2000 tokens
 
-tool get_latest_release(owner: Text, repo: Text) -> Text:
+# O que o agente precisa de cada resposta. O servidor devolve muito mais
+# (URLs, ids, os arquivos de cada versão, quem os enviou...): a Calyx guarda
+# só estes campos, confere os tipos, e só então aplica o `max_output`. O
+# modelo lê menos, e o diário guarda só isto.
+type Release:
+    tag_name: Text
+    name: Text
+    body: Text
+    published_at: Text
+
+type Author:
+    login: Text
+
+type Pull:
+    number: Nat
+    title: Text
+    state: Text
+    user: Author
+
+type CommitInfo:
+    message: Text
+
+type Commit:
+    sha: Text
+    commit: CommitInfo
+
+tool get_latest_release(owner: Text, repo: Text) -> Release:
     effect read
-    max_output 3000 tokens
+    max_output 2000 tokens
     retry_on [Timeout, RateLimit]
     description "A última versão publicada do repositório: tag, data e notas."
 
-tool list_pull_requests(owner: Text, repo: Text, state: Text, perPage: Nat) -> Text:
+tool list_pull_requests(owner: Text, repo: Text, state: Text, perPage: Nat) -> List[Pull]:
     effect read
-    max_output 6000 tokens
+    max_output 2000 tokens
     retry_on [Timeout, RateLimit]
     description "Pull requests do repositório. state: open, closed ou all. perPage: quantos (até 100)."
 
-tool list_commits(owner: Text, repo: Text, perPage: Nat) -> Text:
+tool list_commits(owner: Text, repo: Text, perPage: Nat) -> List[Commit]:
     effect read
-    max_output 4000 tokens
+    max_output 2000 tokens
     retry_on [Timeout, RateLimit]
     description "Os commits mais recentes da branch padrão."
 

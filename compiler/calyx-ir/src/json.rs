@@ -160,6 +160,12 @@ fn tool(o: &mut String, t: &Tool) {
     o.push_str(",\"retry_on\":");
     strings(o, &t.retry_on);
     o.push_str(&format!(",\"returns_text\":{}", t.returns_text));
+    o.push_str(",\"returns\":");
+    o.push_str(if t.returns.is_empty() {
+        "null"
+    } else {
+        &t.returns
+    });
     o.push_str(",\"schema\":");
     o.push_str(&t.schema);
     o.push_str(",\"description\":");

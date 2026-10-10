@@ -745,13 +745,155 @@ static cx_value *decode_model(cx_arena *a, cx_value *prompt, cx_value *ok, const
     return v;
 }
 
-/* A tool's answer: its text, its structured content, or its text as JSON. */
-static cx_value *decode_tool(cx_arena *a, cx_value *tool, cx_value *ok) {
+/* The fields of `v` that `schema` (a type of the program) has, at every
+ * level: a server's answer, kept to what the program declared. */
+static cx_value *project(cx_arena *a, cx_value *v, cx_value *schema) {
+    if (!v || !schema || schema->kind != CX_REC) return v;
+    cx_value *any = cx_get(schema, "anyOf");
+    if (any) {
+        for (size_t i = 0; i < len_of(any); i++) {
+            const char *why = NULL;
+            cx_value *p = project(a, v, at(any, i));
+            if (conforms(p, at(any, i), &why)) return p;
+        }
+        return v;
+    }
+    if (v->kind == CX_LIST) {
+        cx_value *items = cx_get(schema, "items");
+        if (!items) return v;
+        size_t n = v->u.list.len;
+        cx_value **out = cx_alloc(a, (n ? n : 1) * sizeof *out);
+        for (size_t i = 0; i < n; i++) out[i] = project(a, v->u.list.items[i], items);
+        return cx_list(a, out, n);
+    }
+    if (v->kind != CX_REC) return v;
+    cx_value *props = cx_get(schema, "properties");
+    cx_value *each = cx_get(schema, "additionalProperties");
+    size_t n = props && props->kind == CX_REC ? props->u.rec.len : v->u.rec.len;
+    const char **keys = cx_alloc(a, (n ? n : 1) * sizeof *keys);
+    cx_value **vals = cx_alloc(a, (n ? n : 1) * sizeof *vals);
+    size_t k = 0;
+    if (props && props->kind == CX_REC) {
+        for (size_t i = 0; i < n; i++) {
+            cx_value *f = cx_get(v, props->u.rec.keys[i]);
+            if (!f) continue;
+            keys[k] = props->u.rec.keys[i];
+            vals[k++] = project(a, f, props->u.rec.vals[i]);
+        }
+    } else if (each) {
+        for (size_t i = 0; i < n; i++) {
+            keys[k] = v->u.rec.keys[i];
+            vals[k++] = project(a, v->u.rec.vals[i], each);
+        }
+    } else {
+        return v;
+    }
+    return cx_rec(a, keys, vals, k);
+}
+
+static size_t json_size(const cx_value *v) {
+    cx_buf b = {0};
+    cx_write(&b, v);
+    size_t n = b.len;
+    cx_buf_free(&b);
+    return n;
+}
+
+/* The longest list (in JSON) with more than one item, and the longest text,
+ * in `*slot`. */
+static void largest(cx_value **slot, cx_value ***list, size_t *list_size, cx_value ***str) {
+    cx_value *v = *slot;
+    if (v->kind == CX_LIST) {
+        size_t size = v->u.list.len > 1 ? json_size(v) : 0;
+        if (size > *list_size) {
+            *list_size = size;
+            *list = slot;
+        }
+        for (size_t i = 0; i < v->u.list.len; i++) largest(&v->u.list.items[i], list, list_size, str);
+    } else if (v->kind == CX_REC) {
+        for (size_t i = 0; i < v->u.rec.len; i++) largest(&v->u.rec.vals[i], list, list_size, str);
+    } else if (v->kind == CX_STR && (!*str || v->u.str.len > (**str)->u.str.len)) {
+        *str = slot;
+    }
+}
+
+/* Brings `v`, a value of its own (changed in place), within `limit` bytes of
+ * JSON: the last items of the longest lists go first, then the second half
+ * of the longest texts. 1 if anything was cut. */
+static int shrink(cx_arena *a, cx_value **v, size_t limit) {
+    int cut = 0;
+    while (json_size(*v) > limit) {
+        cx_value **list = NULL, **str = NULL;
+        size_t list_size = 0;
+        largest(v, &list, &list_size, &str);
+        if (list) {
+            (*list)->u.list.len--;
+        } else if (str && (*str)->u.str.len > 64) {
+            size_t n = (*str)->u.str.len / 2;
+            const char *t = (*str)->u.str.s;
+            while (n > 0 && ((unsigned char)t[n] & 0xC0) == 0x80) n--;
+            char *s2 = cx_alloc(a, n + 4);
+            memcpy(s2, t, n);
+            memcpy(s2 + n, "\xE2\x80\xA6", 3); /* … */
+            *str = cx_str(a, s2, n + 3);
+        } else {
+            break;
+        }
+        cut = 1;
+    }
+    return cut;
+}
+
+/*
+ * A tool's answer as a value of its type. A tool that returns `Text` gets
+ * the text (already cut at `max_output` by the I/O layer). Any other type
+ * is read from the structured content, or from the text as JSON, whole;
+ * only the fields the type declares are kept, and checked; then
+ * `max_output` applies to what is left (4 bytes of JSON per token). With
+ * `record`, what to write to the journal: that value, not the server's
+ * whole answer.
+ */
+static cx_value *decode_tool(cx_arena *a, cx_value *tool, cx_value *ok, cx_value **record) {
+    if (record) *record = ok;
     if (cx_get_bool(tool, "returns_text", 1)) return cx_get(ok, "text");
-    cx_value *j = cx_get(ok, "json");
-    if (j && j->kind != CX_NULL) return j;
-    cx_value *t = cx_get(ok, "text");
-    return t ? cx_parse(a, t->u.str.s, t->u.str.len, NULL) : NULL;
+    cx_value *v = cx_get(ok, "json");
+    if (!v || v->kind == CX_NULL) {
+        cx_value *t = cx_get(ok, "text");
+        v = t ? cx_parse(a, t->u.str.s, t->u.str.len, NULL) : NULL;
+    }
+    cx_value *schema = cx_get(tool, "returns");
+    if (!v || !schema || schema->kind != CX_REC) return v;
+    v = project(a, v, schema);
+    const char *why = NULL;
+    if (!conforms(v, schema, &why)) return NULL;
+    int cut = cx_get_bool(ok, "truncated", 0);
+    cx_value *max = cx_get(tool, "max_output");
+    if (max && max->kind == CX_NUM && json_size(v) > (size_t)max->u.num * 4) {
+        /* A copy of its own to cut. */
+        cx_buf b = {0};
+        cx_write(&b, v);
+        v = cx_parse(a, b.data, b.len, NULL);
+        cx_buf_free(&b);
+        cut |= shrink(a, &v, (size_t)max->u.num * 4);
+    }
+    if (record) {
+        const char *keys[4] = {"json", "text", "truncated", "ms"};
+        cx_value *ms = cx_get(ok, "ms");
+        cx_value *vals[4] = {v, cx_null(a), cx_bool(a, cut), ms ? ms : cx_num(a, 0)};
+        *record = cx_rec(a, keys, vals, 4);
+    }
+    return v;
+}
+
+/* `max_output` for a call: the I/O layer cuts a tool's text, but the
+ * answer of a tool with a type is cut once it is kept to its fields
+ * (decode_tool). */
+static void put_max_output(cx_buf *b, cx_value *tool) {
+    cx_buf_puts(b, ",\"max_output\":");
+    if (cx_get_bool(tool, "returns_text", 1))
+        cx_write(b, cx_get(tool, "max_output"));
+    else
+        cx_buf_puts(b, "null");
 }
 
 /* Tokens and cost of an answer, for the totals and the budget. With `mu` held. */
@@ -852,7 +994,7 @@ static int verify_happened(exec *x, cx_arena *a, job *j, cx_value *policy, cx_va
         cx_value *ans = io_call(a, calyx_io_tool_call, b.data);
         cx_value *ok = cx_get(ans, "ok");
         if (ok) {
-            cx_value *v = decode_tool(a, vtool, ok);
+            cx_value *v = decode_tool(a, vtool, ok, NULL);
             if (v && v->kind == CX_BOOL) {
                 result = v->u.b != 0;
                 trace(x, j->label, "read  %s  -> %s  (verifying `%s`)", vname,
@@ -1185,9 +1327,10 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
         double hint = 0;
         if (ok) {
             const char *perr = NULL;
+            cx_value *record = ok;
             cx_value *v = j->raw        ? ok
                           : j->is_model ? decode_model(a, j->prompt, ok, &perr)
-                                        : decode_tool(a, j->spec, ok);
+                                        : decode_tool(a, j->spec, ok, &record);
             if (j->is_model) {
                 pthread_mutex_lock(&x->mu);
                 account(x, name, ok);
@@ -1202,19 +1345,21 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
             } else {
                 trace(x, j->label, "%-5s %s  %.2f s%s%s", effect, name,
                       cx_get_num(ok, "ms", 0) / 1000.0,
-                      cx_get_bool(ok, "truncated", 0) ? "  (output cut at max_output)" : "",
+                      cx_get_bool(record, "truncated", 0) ? "  (output cut at max_output)" : "",
                       attempt > 1 ? "  (retry)" : "");
             }
             if (v) {
                 /* Only answers that decode are recorded. */
-                if (!journal_record(x, j, effect, ok)) {
+                if (!journal_record(x, j, effect, record)) {
                     snprintf(why, why_len, "cannot write the journal");
                     return NULL;
                 }
                 return v;
             }
             if (!j->is_model) {
-                snprintf(why, why_len, "tool `%s` failed: Decode: the output is not JSON", name);
+                snprintf(why, why_len,
+                         "tool `%s` failed: Decode: the output is not JSON of its declared type",
+                         name);
                 return NULL;
             }
             /* The answer does not match the prompt's type: ask again. */
@@ -1404,7 +1549,7 @@ static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_v
             cx_value *v = kind == CALL_CHAT     ? hit
                           : kind == CALL_ENTITY ? cx_get(hit, "value")
                           : is_model            ? decode_model(&c->w->arena, prompt, hit, &why)
-                                                : decode_tool(&c->w->arena, spec, hit);
+                                                : decode_tool(&c->w->arena, spec, hit, NULL);
             if (!v) {
                 fail_locked(x, graph, c->node, "the journal's answer does not decode");
             } else {
@@ -1615,8 +1760,8 @@ static cx_value *tool_request(ctx *c, cx_value *tool, cx_value **args, size_t n,
         cx_buf_putc(&req, ':');
         cx_write(&req, args[i]);
     }
-    cx_buf_puts(&req, "},\"max_output\":");
-    cx_write(&req, cx_get(tool, "max_output"));
+    cx_buf_putc(&req, '}');
+    put_max_output(&req, tool);
     cx_buf_printf(&req, ",\"timeout_ms\":%.0f", cx_get_num(tool, "timeout_ms", 30000));
     /* The idempotency key: the value of the parameter the tool names. */
     cx_value *kp = cx_get(tool, "idempotency_key");
@@ -3076,8 +3221,8 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
                     cx_buf_putc(&req, ':');
                     cx_write(&req, bound[tk][p]);
                 }
-                cx_buf_puts(&req, "},\"max_output\":");
-                cx_write(&req, cx_get(tool, "max_output"));
+                cx_buf_putc(&req, '}');
+                put_max_output(&req, tool);
                 cx_buf_printf(&req, ",\"timeout_ms\":%.0f", cx_get_num(tool, "timeout_ms", 30000));
                 put_borrows(&req, tool, bound[tk], np);
                 cx_buf_putc(&req, '}');

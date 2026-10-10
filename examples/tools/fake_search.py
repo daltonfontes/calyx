@@ -58,7 +58,22 @@ for line in sys.stdin:
     elif method == "tools/call":
         args = msg["params"].get("arguments", {})
         query = args.get("query", "")
-        if "__big__" in query:
+        if "__release__" in query or "__nobody__" in query:
+            # Shaped like GitHub's (structured tool returns): many fields the
+            # program does not declare, and a long list of them.
+            release = {"tag_name": "v9.9.9", "name": "v9.9.9", "body": "notas da versão",
+                       "draft": False,
+                       "assets": [{"id": i, "name": f"calyx-{i}.tar.gz", "size": 2000000,
+                                   "uploader": {"login": "bot", "url": "https://exemplo.org/bot"}}
+                                  for i in range(60)]}
+            if "__nobody__" in query:
+                del release["body"]
+            answer(msg_id, {"content": [{"type": "text", "text": json.dumps(release)}]})
+        elif "__prs__" in query:
+            prs = [{"number": i, "title": f"PR {i}", "body": "x" * 500, "state": "closed",
+                    "user": {"login": "ana"}} for i in range(1, 51)]
+            answer(msg_id, {"content": [{"type": "text", "text": json.dumps(prs)}]})
+        elif "__big__" in query:
             # Large outputs test how the journal stores big answers (by hash, D20).
             answer(msg_id, {"content": [{"type": "text", "text": "x" * 10000}]})
         elif "__slow__" in query:

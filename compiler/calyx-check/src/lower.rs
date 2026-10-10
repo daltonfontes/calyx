@@ -96,6 +96,9 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
                     name
                 })
                 .collect();
+            if !ir_tool.returns_text && !ir_tool.returns_unit {
+                ir_tool.returns = cx.schema(&t.ret, 0);
+            }
             ir_tool.schema = format!(
                 "{{\"type\":\"object\",\"properties\":{{{}}},\"required\":[{}]}}",
                 props.join(","),
@@ -1324,6 +1327,7 @@ fn tool(t: &ToolDecl) -> ir::Tool {
         timeout_ms: timeout_ms.unwrap_or(default),
         retry_on,
         returns_text: is_text(&t.ret),
+        returns: String::new(),
     }
 }
 
