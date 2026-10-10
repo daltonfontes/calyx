@@ -32,6 +32,7 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
         raw_write: false,
         raw_write_graphs: HashSet::new(),
         recursing: None,
+        policies: HashMap::new(),
     };
     cx.collect(program);
     cx.resolve_signatures(program);
@@ -167,6 +168,8 @@ struct Cx<'a, 'p> {
     /// While checking a graph that calls itself: its name and the parameter
     /// it `decreases` (decision D17).
     recursing: Option<(String, String)>,
+    /// `policy tool:` declarations, by tool (decision D36).
+    policies: HashMap<&'p str, &'p PolicyDecl>,
 }
 
 fn err(code: &'static str, msg: impl Into<String>, span: Span) -> Diagnostic {
@@ -188,6 +191,10 @@ impl<'p> Cx<'_, 'p> {
     fn collect(&mut self, program: &'p Program) {
         let mut seen: HashMap<&str, Span> = HashMap::new();
         for d in &program.decls {
+            // A policy is named by its tool, declared elsewhere.
+            if matches!(d, Decl::Policy(_)) {
+                continue;
+            }
             let name = d.name();
             // Built-in functions (`len`, ...) may be redeclared: the
             // program's own name wins.
@@ -307,7 +314,7 @@ impl<'p> Cx<'_, 'p> {
                     let ret = self.ty(&d.ret);
                     self.defs.insert(&d.name.name, DefSig { params, ret });
                 }
-                Decl::Model(_) | Decl::Type(_) | Decl::Router(_) => {}
+                Decl::Model(_) | Decl::Type(_) | Decl::Router(_) | Decl::Policy(_) => {}
             }
         }
         self.check_write_contracts(program);
@@ -326,6 +333,187 @@ impl<'p> Cx<'_, 'p> {
             if let Decl::Entity(e) = d {
                 self.check_entity(e);
             }
+        }
+        for d in &program.decls {
+            if let Decl::Policy(p) = d {
+                self.check_policy(p);
+            }
+        }
+    }
+
+    // ----- policies (D36) ---------------------------------------------------
+
+    /// A `policy`: its tool exists and has one policy; `require` and
+    /// `deny in agent if` are pure conditions on the tool's parameters;
+    /// `from` names a parameter and a place in what another tool returns,
+    /// of the parameter's type.
+    fn check_policy(&mut self, p: &'p PolicyDecl) {
+        let tool = p.tool.name.as_str();
+        let Some(sig) = self.tools.get(tool) else {
+            self.push(
+                err("E0720", "a policy for an unknown tool", p.tool.span)
+                    .expected("a tool declared with `tool`")
+                    .observed(format!("`{tool}`")),
+            );
+            return;
+        };
+        if self.policies.contains_key(tool) {
+            self.push(
+                err("E0720", "the tool already has a policy", p.tool.span)
+                    .expected(format!("every rule for `{tool}` in one `policy {tool}:`")),
+            );
+            return;
+        }
+        self.policies.insert(tool, p);
+        let params = sig.params.clone();
+        let mut gc = GraphCx::default();
+        for (n, t) in &params {
+            gc.scope.insert(n.clone(), t.clone());
+        }
+        if p.rules.is_empty() {
+            self.push(
+                err("E0721", "a policy with no rules", p.tool.span).expected(
+                    "`require condition`, `require param from tool.field` or `deny in agent`",
+                ),
+            );
+        }
+        for r in &p.rules {
+            match &r.kind {
+                RuleKind::Require(cond) | RuleKind::DenyInAgent(Some(cond)) => {
+                    let t = self.pure_expr(cond, &gc);
+                    if !matches!(t, Ty::Bool | Ty::Error) {
+                        self.push(
+                            err("E0721", "a policy's condition is true or false", cond.span)
+                                .expected(format!(
+                                    "a `Bool` computed from the parameters of `{tool}`"
+                                ))
+                                .observed(format!("`{t}`")),
+                        );
+                    }
+                }
+                RuleKind::DenyInAgent(None) => {}
+                RuleKind::From {
+                    param,
+                    tool: source,
+                    path,
+                } => self.check_from(tool, &params, param, source, path),
+            }
+        }
+    }
+
+    fn check_from(
+        &mut self,
+        tool: &str,
+        params: &[(String, Ty)],
+        param: &Ident,
+        source: &Ident,
+        path: &[Ident],
+    ) {
+        let Some((_, pty)) = params.iter().find(|(n, _)| *n == param.name) else {
+            self.push(
+                err("E0722", "not a parameter of the tool", param.span)
+                    .expected(format!("a parameter of `{tool}` before `from`"))
+                    .observed(format!("`{}`", param.name)),
+            );
+            return;
+        };
+        let pty = pty.clone();
+        let Some(src) = self.tools.get(source.name.as_str()) else {
+            self.push(
+                err("E0722", "not a tool", source.span)
+                    .expected("the tool whose answers the value must come from")
+                    .observed(format!("`{}`", source.name)),
+            );
+            return;
+        };
+        // Lists are looked into: `from get_orders.items.email` is any
+        // item's `email`.
+        let mut ty = src.ret.clone();
+        for f in path {
+            while let Ty::List(item, _) = ty {
+                ty = *item;
+            }
+            ty = self.field_of(&ty, &f.name, f.span);
+        }
+        while let Ty::List(item, _) = ty {
+            ty = *item;
+        }
+        if ty != Ty::Error && !assignable(&ty, &pty) {
+            let at = path.last().map_or(source.span, |f| f.span);
+            self.push(
+                err("E0722", "the value cannot come from there", at)
+                    .expected(format!("a place of type `{pty}`, as `{}` is", param.name))
+                    .observed(format!("`{ty}`")),
+            );
+        }
+    }
+
+    /// A call of a tool with a policy, in a graph: a `require` that its
+    /// arguments, known when the program is written, already break (E0723).
+    fn policy_of_call(&mut self, tool: &str, params: &[(String, Ty)], args: &[Arg], span: Span) {
+        let Some(p) = self.policies.get(tool).copied() else {
+            return;
+        };
+        let mut env: HashMap<&str, Const> = HashMap::new();
+        let mut next = 0;
+        for a in args {
+            let name = match &a.name {
+                Some(n) => n.name.as_str(),
+                None => {
+                    next += 1;
+                    match params.get(next - 1) {
+                        Some((n, _)) => n.as_str(),
+                        None => continue,
+                    }
+                }
+            };
+            if let Some(v) = fold(&a.value, &HashMap::new()) {
+                env.insert(name, v);
+            }
+        }
+        for r in &p.rules {
+            if let RuleKind::Require(cond) = &r.kind
+                && fold(cond, &env) == Some(Const::Bool(false))
+            {
+                let shown: Vec<String> = params
+                    .iter()
+                    .filter_map(|(n, _)| env.get(n.as_str()).map(|v| format!("{n} = {v}")))
+                    .collect();
+                let why = r
+                    .message
+                    .as_ref()
+                    .map_or(String::new(), |m| format!(": {}", m.text));
+                self.push(
+                    err(
+                        "E0723",
+                        format!("this call breaks the policy of `{tool}`"),
+                        span,
+                    )
+                    .expected(format!("arguments for which `{}` holds{why}", show(cond)))
+                    .observed(shown.join(", ")),
+                );
+            }
+        }
+    }
+
+    /// An agent may use a tool unless its policy denies it to agents with
+    /// no condition (E0724).
+    fn policy_of_agent_tool(&mut self, t: &Ident) {
+        let Some(p) = self.policies.get(t.name.as_str()).copied() else {
+            return;
+        };
+        if p.rules
+            .iter()
+            .any(|r| matches!(r.kind, RuleKind::DenyInAgent(None)))
+        {
+            self.push(
+                err("E0724", "the tool's policy keeps it from agents", t.span)
+                    .expected(format!(
+                        "calls of `{}` as steps of the graph, with values the graph checked",
+                        t.name
+                    ))
+                    .observed(format!("`deny in agent` in `policy {}`", t.name)),
+            );
         }
     }
 
@@ -3497,6 +3685,7 @@ impl<'p> Cx<'_, 'p> {
                     }
                 }
             }
+            self.policy_of_agent_tool(t);
             match self.tools.get(t.name.as_str()) {
                 None => self.push(
                     err("E0626", "not a tool", t.span)
@@ -3701,6 +3890,7 @@ impl<'p> Cx<'_, 'p> {
                 self.raw_write = true;
             }
             let inner = self.args(n, &params, args, e.span, gc);
+            self.policy_of_call(n, &params, args, e.span);
             return Typed {
                 ty: ret,
                 kind: NodeKind::Tool { tool: n.to_owned() },
@@ -4051,6 +4241,121 @@ struct ResourceCall {
     writes: bool,
     guarded: bool,
     span: Span,
+}
+
+/// A value known when the program is written (D36: policies of calls with
+/// literal arguments).
+#[derive(Debug, Clone, PartialEq)]
+enum Const {
+    Num(f64),
+    Text(String),
+    Bool(bool),
+}
+
+impl std::fmt::Display for Const {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Const::Num(n) => write!(f, "{n}"),
+            Const::Text(t) => write!(f, "{t:?}"),
+            Const::Bool(b) => write!(f, "{b}"),
+        }
+    }
+}
+
+/// The value of `e` when it is known from literals and `env`; `None` when
+/// it depends on something else. `and` and `or` are known when one side
+/// decides them.
+fn fold(e: &Expr, env: &HashMap<&str, Const>) -> Option<Const> {
+    match &e.kind {
+        ExprKind::Int { value, .. } => Some(Const::Num(*value as f64)),
+        ExprKind::Float { value, .. } => Some(Const::Num(*value)),
+        ExprKind::Bool(b) => Some(Const::Bool(*b)),
+        ExprKind::Str(lit) if !lit.text.contains('{') && !lit.text.contains('\\') => {
+            Some(Const::Text(lit.text.clone()))
+        }
+        ExprKind::Ident(n) => env.get(n.as_str()).cloned(),
+        ExprKind::Unary { op, value } => match (op.as_str(), fold(value, env)?) {
+            ("not", Const::Bool(b)) => Some(Const::Bool(!b)),
+            ("-", Const::Num(n)) => Some(Const::Num(-n)),
+            _ => None,
+        },
+        ExprKind::Binary { op, left, right } => {
+            let (l, r) = (fold(left, env), fold(right, env));
+            match op.as_str() {
+                "and" => match (l, r) {
+                    (Some(Const::Bool(false)), _) | (_, Some(Const::Bool(false))) => {
+                        Some(Const::Bool(false))
+                    }
+                    (Some(Const::Bool(true)), Some(Const::Bool(true))) => Some(Const::Bool(true)),
+                    _ => None,
+                },
+                "or" => match (l, r) {
+                    (Some(Const::Bool(true)), _) | (_, Some(Const::Bool(true))) => {
+                        Some(Const::Bool(true))
+                    }
+                    (Some(Const::Bool(false)), Some(Const::Bool(false))) => {
+                        Some(Const::Bool(false))
+                    }
+                    _ => None,
+                },
+                _ => {
+                    let (l, r) = (l?, r?);
+                    Some(match (op.as_str(), &l, &r) {
+                        ("==", _, _) => Const::Bool(l == r),
+                        ("!=", _, _) => Const::Bool(l != r),
+                        ("<", Const::Num(a), Const::Num(b)) => Const::Bool(a < b),
+                        ("<=", Const::Num(a), Const::Num(b)) => Const::Bool(a <= b),
+                        (">", Const::Num(a), Const::Num(b)) => Const::Bool(a > b),
+                        (">=", Const::Num(a), Const::Num(b)) => Const::Bool(a >= b),
+                        ("<", Const::Text(a), Const::Text(b)) => Const::Bool(a < b),
+                        ("<=", Const::Text(a), Const::Text(b)) => Const::Bool(a <= b),
+                        (">", Const::Text(a), Const::Text(b)) => Const::Bool(a > b),
+                        (">=", Const::Text(a), Const::Text(b)) => Const::Bool(a >= b),
+                        ("+", Const::Num(a), Const::Num(b)) => Const::Num(a + b),
+                        ("-", Const::Num(a), Const::Num(b)) => Const::Num(a - b),
+                        ("*", Const::Num(a), Const::Num(b)) => Const::Num(a * b),
+                        ("in", Const::Text(a), Const::Text(b)) => {
+                            Const::Bool(b.contains(a.as_str()))
+                        }
+                        _ => return None,
+                    })
+                }
+            }
+        }
+        _ => None,
+    }
+}
+
+/// An expression written back as source, for diagnostics.
+fn show(e: &Expr) -> String {
+    match &e.kind {
+        ExprKind::Ident(n) => n.clone(),
+        ExprKind::Int { value, unit } => match unit {
+            Some(u) => format!("{value} {u}"),
+            None => value.to_string(),
+        },
+        ExprKind::Float { value, unit } => match unit {
+            Some(u) => format!("{value} {u}"),
+            None => value.to_string(),
+        },
+        ExprKind::Bool(b) => b.to_string(),
+        ExprKind::Str(lit) => format!("\"{}\"", lit.text),
+        ExprKind::Field { base, name } => format!("{}.{}", show(base), name.name),
+        ExprKind::Unary { op, value } if op == "not" => format!("not {}", show(value)),
+        ExprKind::Unary { op, value } => format!("{op}{}", show(value)),
+        ExprKind::Binary { op, left, right } => {
+            format!("{} {op} {}", show(left), show(right))
+        }
+        ExprKind::Call { callee, args } => {
+            let args: Vec<String> = args.iter().map(|a| show(&a.value)).collect();
+            format!("{}({})", show(callee), args.join(", "))
+        }
+        ExprKind::List(items) => {
+            let items: Vec<String> = items.iter().map(show).collect();
+            format!("[{}]", items.join(", "))
+        }
+        _ => "...".to_owned(),
+    }
 }
 
 /// A key as text, when two keys can be compared by what is written: a

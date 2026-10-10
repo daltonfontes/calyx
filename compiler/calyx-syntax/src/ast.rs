@@ -25,6 +25,7 @@ pub enum Decl {
     Entity(EntityDecl),
     Def(DefDecl),
     Router(RouterDecl),
+    Policy(PolicyDecl),
 }
 
 impl Decl {
@@ -38,6 +39,7 @@ impl Decl {
             Decl::Entity(d) => &d.name,
             Decl::Def(d) => &d.name,
             Decl::Router(d) => &d.name,
+            Decl::Policy(d) => &d.tool,
         }
     }
 }
@@ -52,6 +54,43 @@ pub struct RouterDecl {
     /// `policy name(check)`: the policy and the `def` that checks answers.
     pub policy: Option<(Ident, Ident)>,
     pub span: Span,
+}
+
+/// `policy tool:` then rules every call of the tool must pass, checked
+/// before the call is made, whoever makes it (decision D36). The rules
+/// name the tool's parameters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolicyDecl {
+    pub tool: Ident,
+    pub rules: Vec<PolicyRule>,
+    pub span: Span,
+}
+
+/// One line of a policy, with the message given to whoever is refused
+/// (`else "text"`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolicyRule {
+    pub kind: RuleKind,
+    /// The rule as written, without its message.
+    pub text: String,
+    pub message: Option<StrLit>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuleKind {
+    /// `require cond`: a pure condition on the arguments.
+    Require(Expr),
+    /// `require param from tool.field.field`: the argument is a value an
+    /// earlier call of `tool` in this run returned at that place.
+    From {
+        param: Ident,
+        tool: Ident,
+        path: Vec<Ident>,
+    },
+    /// `deny in agent` or `deny in agent if cond`: a model never chooses
+    /// this call (when `cond` holds); a graph may make it.
+    DenyInAgent(Option<Expr>),
 }
 
 /// `model claude = "id"`, optionally followed by a block with `max_output`.

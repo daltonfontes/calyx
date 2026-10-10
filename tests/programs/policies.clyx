@@ -1,0 +1,73 @@
+# `policy tool:`: regras checadas antes de cada chamada da tool (D36).
+model m = "m"
+
+type Order:
+    id: Text
+    email: Text
+    total: Float
+
+tool get_order(id: Text) -> Order:
+    effect read
+    max_output 500 tokens
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    max_output 100 tokens
+
+tool send_email(to: Text, body: Text) -> Unit:
+    effect write
+    idempotency_key body
+    max_output 100 tokens
+
+tool delete_account(id: Text) -> Unit:
+    effect write
+    idempotency_key id
+    max_output 100 tokens
+
+policy refund:
+    require amount > 0
+    require amount <= 500 else "acima de 500 precisa de uma pessoa"
+    deny in agent if amount > 100
+
+policy send_email:
+    require to from get_order.email
+
+policy delete_account:
+    deny in agent
+
+prompt help(q: Text) -> Text:
+    """{q}"""
+
+# Argumentos literais que quebram um `require`: erro antes de rodar.
+graph too_much(request: Text, id: Text) -> Text:
+    paid = refund(request, id, 900)
+    return "ok"
+
+# Valores que só se sabem rodando: checados no runtime.
+graph from_order(request: Text, id: Text, amount: Float) -> Text:
+    o = get_order(id)
+    paid = refund(request, o.id, amount)
+    sent = send_email(o.email, "reembolsado")
+    sent after paid
+    return "ok"
+
+# Um agente não pode receber uma tool negada a agentes.
+graph support(q: Text) -> Text:
+    answer = agent m:
+        tools [get_order, refund, delete_account]
+        max_turns 5
+        task help(q)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer
+
+# Erros na própria política.
+policy nothing_here:
+    require true
+
+policy get_order:
+    require id + 1
+    require who from get_order.email
+    require id from get_order.missing
+    require id from get_order.total

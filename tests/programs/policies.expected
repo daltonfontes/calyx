@@ -1,0 +1,33 @@
+error[E0723]: this call breaks the policy of `refund`
+- expected : arguments for which `amount <= 500` holds: acima de 500 precisa de uma pessoa
+- observed : amount = 900
+Location: policies.clyx:44:12
+
+error[E0724]: the tool's policy keeps it from agents
+- expected : calls of `delete_account` as steps of the graph, with values the graph checked
+- observed : `deny in agent` in `policy delete_account`
+Location: policies.clyx:58:35
+
+error[E0720]: a policy for an unknown tool
+- expected : a tool declared with `tool`
+- observed : `nothing_here`
+Location: policies.clyx:66:8
+
+error[E0613]: operator `+` does not apply to these types
+- observed : `Text` + `Int`
+Location: policies.clyx:70:13
+
+error[E0722]: not a parameter of the tool
+- expected : a parameter of `get_order` before `from`
+- observed : `who`
+Location: policies.clyx:71:13
+
+error[E0603]: unknown field
+- expected : a field of `Order`
+- observed : `missing`
+Location: policies.clyx:72:31
+
+error[E0722]: the value cannot come from there
+- expected : a place of type `Text`, as `id` is
+- observed : `Float`
+Location: policies.clyx:73:31

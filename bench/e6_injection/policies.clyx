@@ -1,0 +1,17 @@
+
+# As mesmas regras como `policy`: checadas pelo runtime antes de cada
+# chamada, seja quem for que a escolheu.
+policy refund:
+    require amount > 0
+    require order from get_ticket.order else "só o pedido do ticket"
+    deny in agent if amount > 100 else "acima de 100 reais, só com uma pessoa"
+
+policy send_email:
+    require to from get_order.email else "só para o cliente do pedido"
+    require not ("://" in body) else "e-mails sem links"
+
+policy get_customer:
+    require email from get_order.email else "só o cadastro do cliente do pedido"
+
+policy update_address:
+    deny in agent
