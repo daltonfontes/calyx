@@ -133,9 +133,8 @@ def latency() -> dict:
     slow = os.path.join(FLEX, "slow_tool.py")
     with open(os.path.join(work, "calyx.toml"), "w") as f:
         for t in ("email", "track", "cache_put"):
-            # One server per tool: Calyx sends one call at a time to a
-            # server (its stdio pipe), which would put them in series.
-            f.write(f'[tools.{t}]\ncommand = ["{sys.executable}", "{slow}", "{t}"]\n')
+            # One server for all three, as a real service would have.
+            f.write(f'[tools.{t}]\ncommand = ["{sys.executable}", "{slow}"]\n')
     runs = {
         "p10 two independent writes (warned)": ("p10_independent_writes_any_order.clyx",
                                                 ["--request", "R1", "--to", "a@b"]),

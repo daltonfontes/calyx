@@ -198,3 +198,60 @@ fn a_unit_tool_takes_any_answer() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stdout).trim(), "anotado");
 }
+
+#[test]
+fn calls_to_one_server_are_in_flight_together() {
+    // Two independent writes to tools of the same MCP server, which answers
+    // each call in 0.5 s, in its own thread: together, not one after the
+    // other.
+    let dir = std::env::temp_dir().join(format!("calyx-mcp-together-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let slow = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../bench/e5_flex/slow_tool.py")
+        .canonicalize()
+        .unwrap();
+    let toml: String = ["email", "track"]
+        .iter()
+        .map(|t| {
+            format!(
+                "[tools.{t}]\ncommand = [\"python3\", \"{}\"]\n",
+                slow.display()
+            )
+        })
+        .collect();
+    std::fs::write(dir.join("calyx.toml"), toml).unwrap();
+    std::fs::write(
+        dir.join("p.clyx"),
+        r#"
+tool email(request: Text, body: Text) -> Unit:
+    effect write
+    idempotency_key request
+
+tool track(request: Text, event: Text) -> Unit:
+    effect write
+    idempotency_key request
+
+graph g(request: Text) -> Text:
+    sent = email(request, "a")
+    logged = track(request, "b")
+    unordered sent, logged
+    return "ok"
+"#,
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let out = Command::new(env!("CARGO_BIN_EXE_calyx"))
+        .args(["run", "p.clyx", "--no-journal", "--request", "R1"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let took = started.elapsed();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        took < std::time::Duration::from_millis(900),
+        "{took:?}: {}",
+        text(&out.stderr)
+    );
+}

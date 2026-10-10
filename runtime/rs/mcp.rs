@@ -3,13 +3,17 @@
 //! and `tools/call`.
 //!
 //! One process per distinct command, started on first use and kept for the
-//! whole run. A reader thread turns the server's output into a channel, so
-//! every call can have a timeout.
+//! whole run. Several calls to one server are in flight at once, as the
+//! protocol allows: each request has its own id, and a reader thread hands
+//! each answer to the call that waits for it (with a timeout). Only writing
+//! a request's line to the server's stdin takes turns.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -22,11 +26,15 @@ const START_TIMEOUT: Duration = Duration::from_secs(20);
 /// Error kinds a tool may report by starting its error text with `Kind:`.
 const TEMPORARY: [&str; 4] = ["Timeout", "Unavailable", "RateLimit", "Network"];
 
+/// The calls waiting for an answer, by request id. `None` once the server
+/// has exited: no answer will come.
+type Waiting = Arc<Mutex<Option<HashMap<u64, Sender<Value>>>>>;
+
 pub struct Server {
-    child: Child,
-    stdin: ChildStdin,
-    lines: Receiver<String>,
-    next_id: u64,
+    child: Mutex<Child>,
+    stdin: Mutex<ChildStdin>,
+    waiting: Waiting,
+    next_id: AtomicU64,
     /// Tool names the server offers.
     pub tools: Vec<String>,
     /// What the server says about each tool (`annotations`), if anything.
@@ -58,20 +66,32 @@ impl Server {
             })?;
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
-        let (tx, lines) = channel();
+        let waiting: Waiting = Arc::new(Mutex::new(Some(HashMap::new())));
+        let readers = Arc::clone(&waiting);
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
                 let Ok(line) = line else { break };
-                if tx.send(line).is_err() {
-                    break;
+                // Not JSON-RPC: servers sometimes log to stdout. Ignore it.
+                let Ok(msg) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
+                // Notifications and requests from the server are not answers.
+                let Some(id) = msg["id"].as_u64() else {
+                    continue;
+                };
+                let mut w = readers.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(tx) = w.as_mut().and_then(|w| w.remove(&id)) {
+                    let _ = tx.send(msg);
                 }
             }
+            // The server exited: every call still waiting fails now.
+            *readers.lock().unwrap_or_else(|e| e.into_inner()) = None;
         });
         let mut server = Server {
-            child,
-            stdin,
-            lines,
-            next_id: 1,
+            child: Mutex::new(child),
+            stdin: Mutex::new(stdin),
+            waiting,
+            next_id: AtomicU64::new(1),
             tools: Vec::new(),
             annotations: HashMap::new(),
         };
@@ -113,7 +133,7 @@ impl Server {
     /// Calls a tool. `meta` goes in the request's `_meta` (the idempotency
     /// key and the preconditions, decisions D2 and D29), when not empty.
     pub fn call(
-        &mut self,
+        &self,
         tool: &str,
         args: Value,
         meta: serde_json::Map<String, Value>,
@@ -166,65 +186,73 @@ impl Server {
         })
     }
 
-    fn send(&mut self, msg: &Value) -> Result<(), IoError> {
+    fn send(&self, msg: &Value) -> Result<(), IoError> {
         let mut line = msg.to_string();
         line.push('\n');
-        self.stdin
+        let mut stdin = self.stdin.lock().unwrap_or_else(|e| e.into_inner());
+        stdin
             .write_all(line.as_bytes())
-            .and_then(|()| self.stdin.flush())
+            .and_then(|()| stdin.flush())
             .map_err(|e| IoError::new("Unavailable", format!("MCP server closed: {e}")))
     }
 
-    fn notify(&mut self, method: &str) -> Result<(), IoError> {
+    fn notify(&self, method: &str) -> Result<(), IoError> {
         self.send(&json!({"jsonrpc": "2.0", "method": method}))
     }
 
-    fn request(
-        &mut self,
-        method: &str,
-        params: Value,
-        timeout: Duration,
-    ) -> Result<Value, IoError> {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
-        let deadline = Instant::now() + timeout;
-        loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            let line = match self.lines.recv_timeout(left) {
-                Ok(l) => l,
-                Err(RecvTimeoutError::Timeout) => {
-                    return Err(IoError::new(
-                        "Timeout",
-                        format!("MCP `{method}` took more than {} ms", timeout.as_millis()),
-                    ));
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Err(IoError::new("Unavailable", "MCP server exited"));
-                }
+    fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, IoError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = channel();
+        {
+            let mut w = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+            match w.as_mut() {
+                Some(w) => w.insert(id, tx),
+                None => return Err(IoError::new("Unavailable", "MCP server exited")),
             };
-            let Ok(msg) = serde_json::from_str::<Value>(&line) else {
-                // Not JSON-RPC: servers sometimes log to stdout. Ignore it.
-                continue;
-            };
-            // Notifications and requests from the server are not answers.
-            if msg["id"] != json!(id) {
-                continue;
+        }
+        let forget = || {
+            if let Some(w) = self
+                .waiting
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_mut()
+            {
+                w.remove(&id);
             }
-            if let Some(err) = msg.get("error") {
+        };
+        if let Err(e) =
+            self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))
+        {
+            forget();
+            return Err(e);
+        }
+        let msg = match rx.recv_timeout(timeout) {
+            Ok(m) => m,
+            Err(RecvTimeoutError::Timeout) => {
+                forget();
                 return Err(IoError::new(
-                    "ToolError",
-                    err["message"].as_str().unwrap_or("MCP error").to_owned(),
+                    "Timeout",
+                    format!("MCP `{method}` took more than {} ms", timeout.as_millis()),
                 ));
             }
-            return Ok(msg["result"].clone());
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(IoError::new("Unavailable", "MCP server exited"));
+            }
+        };
+        if let Some(err) = msg.get("error") {
+            return Err(IoError::new(
+                "ToolError",
+                err["message"].as_str().unwrap_or("MCP error").to_owned(),
+            ));
         }
+        Ok(msg["result"].clone())
     }
 
     /// The server is in an unknown state (e.g. after a timeout): stop it.
-    pub fn kill(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+    pub fn kill(&self) {
+        let mut child = self.child.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 
