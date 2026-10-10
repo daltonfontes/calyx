@@ -156,7 +156,8 @@ fn connect() -> Result<Client, String> {
     client
         .batch_execute(&format!(
             "SET tcp_keepalives_idle = {idle}; SET tcp_keepalives_interval = {every}; \
-             SET tcp_keepalives_count = {count}; SET tcp_user_timeout = {timeout_ms}"
+             SET tcp_keepalives_count = {count}; SET tcp_user_timeout = {timeout_ms}; \
+             SET standard_conforming_strings = on"
         ))
         .map_err(|e| format!("cannot set the session's keepalive: {e}"))?;
     // Several machines may start at once: one creates the tables.
@@ -204,6 +205,44 @@ pub fn lines(id: &str) -> Result<Option<Vec<String>>, String> {
             &[&id],
         )?;
         Ok((!rows.is_empty()).then(|| rows.iter().map(|r| r.get(0)).collect()))
+    })
+}
+
+/// A run as `calyx runs` lists it, counted by the server: the journals
+/// stay there.
+pub struct RunSummary {
+    pub id: String,
+    /// `running` (until the run ends, or its process dies), `finished`,
+    /// `failed`, `waiting`.
+    pub status: String,
+    /// The journal's first line (the run's header).
+    pub header: String,
+    pub calls: i64,
+    pub resumes: i64,
+}
+
+/// Every run, oldest first.
+pub fn summaries() -> Result<Vec<RunSummary>, String> {
+    with(|c| {
+        Ok(c.query(
+            "SELECT r.id, r.status, \
+                    coalesce((SELECT line FROM calyx_journal h WHERE h.run = r.id \
+                              ORDER BY seq LIMIT 1), ''), \
+                    count(j.line) FILTER (WHERE j.line LIKE '{\"type\":\"call\"%'), \
+                    count(j.line) FILTER (WHERE j.line LIKE '{\"type\":\"resume\"%') \
+             FROM calyx_runs r LEFT JOIN calyx_journal j ON j.run = r.id \
+             GROUP BY r.id ORDER BY r.id",
+            &[],
+        )?
+        .iter()
+        .map(|r| RunSummary {
+            id: r.get(0),
+            status: r.get(1),
+            header: r.get(2),
+            calls: r.get(3),
+            resumes: r.get(4),
+        })
+        .collect())
     })
 }
 
@@ -585,36 +624,53 @@ pub unsafe extern "C" fn calyx_pg_entity(
     let (Some(entity), Some(khash), Some(key)) = (text(entity), text(khash), text(key)) else {
         return 0;
     };
-    status_ok(on(&ENTITY_CLIENT, |c| {
-        let mut tx = c.transaction()?;
-        tx.execute(
-            "INSERT INTO calyx_entities (entity, khash, key) VALUES ($1, $2, $3) \
-             ON CONFLICT DO NOTHING",
-            &[&entity, &khash, &key],
-        )?;
-        let lock = if exclusive != 0 { "UPDATE" } else { "SHARE" };
-        let doc: String = tx
-            .query_one(
-                &format!(
-                    "SELECT doc FROM calyx_entities WHERE entity = $1 AND khash = $2 FOR {lock}"
-                ),
-                &[&entity, &khash],
-            )?
-            .get(0);
-        let old = (!doc.is_empty()).then(|| CString::new(doc).unwrap_or_default());
-        // SAFETY: the caller's contract; `old` lives until the call returns.
-        let new = unsafe { step(ud, old.as_ref().map_or(std::ptr::null(), |d| d.as_ptr())) };
-        if !new.is_null() {
+    let (e, h) = (literal(&entity), literal(&khash));
+    let lock = if exclusive != 0 { "UPDATE" } else { "SHARE" };
+    // Two round trips, the row locked during one: the entity's lock is what
+    // other machines wait for.
+    let r = on(&ENTITY_CLIENT, |c| {
+        let r = (|| {
+            let first = c.simple_query(&format!(
+                "BEGIN; \
+                 INSERT INTO calyx_entities (entity, khash, key) VALUES ({e}, {h}, {}) \
+                 ON CONFLICT DO NOTHING; \
+                 SELECT doc FROM calyx_entities WHERE entity = {e} AND khash = {h} FOR {lock}",
+                literal(&key)
+            ))?;
+            let doc = first
+                .iter()
+                .find_map(|m| match m {
+                    postgres::SimpleQueryMessage::Row(r) => Some(r.get(0).unwrap_or("").to_owned()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let old = (!doc.is_empty()).then(|| CString::new(doc).unwrap_or_default());
+            // SAFETY: the caller's contract; `old` lives until the call returns.
+            let new = unsafe { step(ud, old.as_ref().map_or(std::ptr::null(), |d| d.as_ptr())) };
+            if new.is_null() {
+                return c.batch_execute("COMMIT");
+            }
             // SAFETY: `step` returns a NUL-terminated string from `malloc`.
             let doc = unsafe { CStr::from_ptr(new) }
                 .to_string_lossy()
                 .into_owned();
             unsafe { free(new.cast()) };
-            tx.execute(
-                "UPDATE calyx_entities SET doc = $3 WHERE entity = $1 AND khash = $2",
-                &[&entity, &khash, &doc],
-            )?;
+            c.batch_execute(&format!(
+                "UPDATE calyx_entities SET doc = {} WHERE entity = {e} AND khash = {h}; COMMIT",
+                literal(&doc)
+            ))
+        })();
+        if r.is_err() {
+            // Nothing was applied; the connection is ready for the next one.
+            let _ = c.batch_execute("ROLLBACK");
         }
-        tx.commit()
-    }))
+        r
+    });
+    status_ok(r)
+}
+
+/// A string literal for SQL (`standard_conforming_strings`, set on every
+/// connection: a quote is doubled, nothing else is special).
+fn literal(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
 }

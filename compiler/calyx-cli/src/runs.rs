@@ -124,22 +124,17 @@ pub struct Summary {
 
 /// All runs, oldest first. Fails only when the journal database does.
 pub fn list() -> Result<Vec<Summary>, String> {
-    let mut ids: Vec<String> = if calyx_runtime::pg::enabled() {
-        calyx_runtime::pg::runs()
-            .map_err(|e| format!("journal database: {e}"))?
-            .into_iter()
-            .map(|(id, _)| id)
-            .collect()
-    } else {
-        let Ok(entries) = std::fs::read_dir(RUNS_DIR) else {
-            return Ok(Vec::new());
-        };
-        entries
-            .filter_map(Result::ok)
-            .filter(|e| e.path().join(JOURNAL).is_file())
-            .filter_map(|e| e.file_name().into_string().ok())
-            .collect()
+    if calyx_runtime::pg::enabled() {
+        return list_pg();
+    }
+    let Ok(entries) = std::fs::read_dir(RUNS_DIR) else {
+        return Ok(Vec::new());
     };
+    let mut ids: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.path().join(JOURNAL).is_file())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
     ids.sort();
     Ok(ids
         .into_iter()
@@ -155,13 +150,6 @@ pub fn list() -> Result<Vec<Summary>, String> {
                     "waiting".to_owned()
                 }
                 Some(l) if l["type"] == "end" => "failed".to_owned(),
-                // With the journal in PostgreSQL, a run with no end may be
-                // running right now, on any machine.
-                _ if calyx_runtime::pg::enabled()
-                    && calyx_runtime::pg::run_is_held(&id).unwrap_or(false) =>
-                {
-                    "running".to_owned()
-                }
                 _ => "interrupted".to_owned(),
             };
             Summary {
@@ -174,6 +162,33 @@ pub fn list() -> Result<Vec<Summary>, String> {
                 status,
                 calls: count("call"),
                 resumes: count("resume"),
+            }
+        })
+        .collect())
+}
+
+/// With the journal in PostgreSQL: the server counts, and the journals stay
+/// there (a database shared by many machines holds many runs). A run whose
+/// row says `running` is running if some process holds it, on any machine,
+/// and interrupted if none does.
+fn list_pg() -> Result<Vec<Summary>, String> {
+    let all = calyx_runtime::pg::summaries().map_err(|e| format!("journal database: {e}"))?;
+    Ok(all
+        .into_iter()
+        .map(|r| {
+            let status = match r.status.as_str() {
+                "running" if !calyx_runtime::pg::run_is_held(&r.id).unwrap_or(false) => {
+                    "interrupted".to_owned()
+                }
+                s => s.to_owned(),
+            };
+            let header: Value = serde_json::from_str(&r.header).unwrap_or_default();
+            Summary {
+                graph: header["graph"].as_str().unwrap_or("?").to_owned(),
+                id: r.id,
+                status,
+                calls: usize::try_from(r.calls).unwrap_or(0),
+                resumes: usize::try_from(r.resumes).unwrap_or(0),
             }
         })
         .collect())

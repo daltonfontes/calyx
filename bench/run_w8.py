@@ -19,6 +19,8 @@ takes a run over. Three parts:
   Measured: from the death to the run finished on B. The silent case needs
   root and the server listening on 127.0.0.2 (A's address); without them
   it is skipped.
+- listing: `calyx runs` with every run this database holds (the earlier
+  parts leave hundreds), which `calyx worker` also does on every pass.
 - entities: P processes, half on each machine, each sends 50 messages to
   the same entity. Messages per second, and the final count (none lost).
   In files (one machine, flock) and in PostgreSQL (two machines).
@@ -295,6 +297,20 @@ def entities(ports) -> dict:
     return out
 
 
+def listing() -> dict:
+    binaries = {"new": CALYX}
+    if OLD:
+        binaries["v0.3.5"] = OLD
+    env = dict(os.environ, CALYX_DATABASE_URL=url())
+    out = {"runs": int(psql("SELECT count(*) FROM calyx_runs")),
+           "journal_lines": int(psql("SELECT count(*) FROM calyx_journal"))}
+    for name, binary in binaries.items():
+        out[name] = round(statistics.median(timed([binary, "runs"], WORK, env)
+                                            for _ in range(REPS)), 3)
+    print("listing", out, flush=True)
+    return out
+
+
 def main():
     subprocess.run(["cargo", "build", "--release", "-q"], cwd=ROOT, check=True)
     procs, ports = proxies()
@@ -307,6 +323,7 @@ def main():
             "journal": journal_cost(ports),
             "takeover": takeovers(),
             "entities": entities(ports),
+            "listing": listing(),
         }
     finally:
         for p in procs:
