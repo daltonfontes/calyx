@@ -1048,6 +1048,17 @@ impl Parser<'_> {
             return Err(self.unsupported("a, b = ... (destructuring)", "a later milestone"));
         }
         if self.kind() == TokenKind::Ident
+            && self.text_of(self.tokens[self.pos]) == "unordered"
+            && self.nth_kind(1) == TokenKind::Ident
+        {
+            self.advance(); // unordered
+            let mut steps = vec![self.ident("a step")?];
+            while self.eat(TokenKind::Comma) {
+                steps.push(self.ident("a step")?);
+            }
+            return Ok(Stmt::Unordered(steps));
+        }
+        if self.kind() == TokenKind::Ident
             && self.nth_kind(1) == TokenKind::Ident
             && self.text_of(self.tokens[self.pos + 1]) == "after"
         {
@@ -2195,7 +2206,7 @@ graph research(topic: Text) -> List[Text]:
         match &g.body[0] {
             Stmt::Node { value, .. } => value.clone(),
             Stmt::Return(e) => e.clone(),
-            Stmt::Limits(_) | Stmt::After { .. } => panic!(),
+            Stmt::Limits(_) | Stmt::After { .. } | Stmt::Unordered(_) => panic!(),
         }
     }
 

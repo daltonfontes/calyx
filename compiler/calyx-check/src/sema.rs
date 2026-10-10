@@ -1653,6 +1653,7 @@ impl<'p> Cx<'_, 'p> {
         let mut returns = Vec::new();
         let mut limits = Vec::new();
         let mut afters: Vec<(&Ident, &Vec<Ident>)> = Vec::new();
+        let mut unordered: Vec<&Vec<Ident>> = Vec::new();
         for s in &g.body {
             match s {
                 Stmt::Node {
@@ -1667,6 +1668,7 @@ impl<'p> Cx<'_, 'p> {
                 Stmt::Return(e) => returns.push(e),
                 Stmt::Limits(entries) => limits.push(entries),
                 Stmt::After { node, after } => afters.push((node, after)),
+                Stmt::Unordered(steps) => unordered.push(steps),
             }
         }
         let mut index: HashMap<&str, usize> = HashMap::new();
@@ -1923,7 +1925,8 @@ impl<'p> Cx<'_, 'p> {
             }
         }
 
-        self.unordered_writes(&locals, &deps, &ids, &nodes);
+        let commute = self.commuting(&unordered, &index, &deps);
+        self.unordered_writes(&locals, &deps, &ids, &nodes, &commute);
         self.lost_updates(&locals, &data_deps);
 
         // Results nobody uses: wasted money for `llm` and `read` nodes.
@@ -2168,14 +2171,84 @@ impl<'p> Cx<'_, 'p> {
         all
     }
 
+    /// `unordered a, b`: pairs of steps whose writes commute. Each name must
+    /// be a step (`E0639`), and steps that already wait for one another
+    /// cannot be unordered (`E0507`).
+    fn commuting(
+        &mut self,
+        unordered: &[&Vec<Ident>],
+        index: &HashMap<&str, usize>,
+        deps: &[Vec<usize>],
+    ) -> HashSet<(usize, usize)> {
+        let reaches = |from: usize, to: usize| {
+            let mut seen = HashSet::new();
+            let mut stack = deps[from].clone();
+            while let Some(d) = stack.pop() {
+                if d == to {
+                    return true;
+                }
+                if seen.insert(d) {
+                    stack.extend(deps[d].iter().copied());
+                }
+            }
+            false
+        };
+        let mut pairs = HashSet::new();
+        for steps in unordered {
+            let mut found: Vec<(usize, &Ident)> = Vec::new();
+            for s in steps.iter() {
+                match index.get(s.name.as_str()) {
+                    Some(&i) => found.push((i, s)),
+                    None => self.push(
+                        err(
+                            "E0639",
+                            "`unordered` names something that is not a step",
+                            s.span,
+                        )
+                        .expected("a step of this graph (`name = ...`)")
+                        .observed(format!("`{}`", s.name)),
+                    ),
+                }
+            }
+            if steps.len() < 2 {
+                self.push(
+                    err(
+                        "E0507",
+                        "`unordered` needs two steps or more",
+                        steps[0].span,
+                    )
+                    .expected("`unordered a, b`: the steps whose writes commute"),
+                );
+            }
+            for (k, &(b, bn)) in found.iter().enumerate() {
+                for &(a, an) in &found[..k] {
+                    if reaches(a, b) || reaches(b, a) {
+                        self.push(
+                            err("E0507", "steps declared `unordered` are ordered", bn.span)
+                                .expected(format!(
+                                    "`{}` and `{}` independent: neither reads the other, and no `after` between them",
+                                    an.name, bn.name
+                                ))
+                                .observed("one of them waits for the other".to_owned()),
+                        );
+                    }
+                    pairs.insert((a.min(b), a.max(b)));
+                }
+            }
+        }
+        pairs
+    }
+
     /// Two steps that write outside the run with no order between them may
-    /// run at the same time, in either order (decision D2).
+    /// run at the same time, in either order (decision D2), unless the
+    /// program says their writes commute (`unordered`).
     fn unordered_writes(
         &mut self,
         locals: &[Local],
         deps: &[Vec<usize>],
         ids: &HashMap<usize, NodeId>,
         nodes: &[ir::Node],
+        commute: &HashSet<(usize, usize)>,
     ) {
         let writes: Vec<usize> = (0..locals.len())
             .filter(|i| {
@@ -2200,14 +2273,15 @@ impl<'p> Cx<'_, 'p> {
         let befores: HashMap<usize, HashSet<usize>> =
             writes.iter().map(|&w| (w, before(w))).collect();
         for (k, &b) in writes.iter().enumerate() {
-            if let Some(&a) = writes[..k]
-                .iter()
-                .find(|&&a| !befores[&b].contains(&a) && !befores[&a].contains(&b))
-            {
+            if let Some(&a) = writes[..k].iter().find(|&&a| {
+                !befores[&b].contains(&a)
+                    && !befores[&a].contains(&b)
+                    && !commute.contains(&(a.min(b), a.max(b)))
+            }) {
                 let (an, bn) = (&locals[a].name.name, &locals[b].name.name);
                 self.push(
                     warn("W0602", "external writes without a defined order", locals[b].name.span)
-                        .expected(format!("`{bn} after {an}` (or `{an} after {bn}`), or a value one passes to the other"))
+                        .expected(format!("`{bn} after {an}` (or `{an} after {bn}`), a value one passes to the other, or `unordered {an}, {bn}` if the writes commute"))
                         .observed(format!("`{an}` and `{bn}` both write outside the run and may run at the same time")),
                 );
             }
@@ -3816,7 +3890,7 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
             walk(value, f);
         }
         Stmt::Return(e) => walk(e, f),
-        Stmt::After { .. } => {}
+        Stmt::After { .. } | Stmt::Unordered(_) => {}
     }
 }
 

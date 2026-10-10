@@ -420,6 +420,12 @@ notificar after salvar, cobrar
 
 Aresta de ordem, sem dados: `notificar` só começa depois que os passos listados terminaram. O compilador avisa (`W0602`) quando dois passos com efeito de escrita externa (`write`, `write once`) não têm ordem definida, nem por dados nem por `after`. Nomes que não são passos e um passo depois de si mesmo são erros (`E0639`); ordens circulares, `E0506`. Recursos com dono (seção 7) já geram ordem sozinhos (M6b).
 
+```
+unordered avisar, registrar
+```
+
+O contrário: as escritas desses passos **comutam** (avisar o cliente e registrar na análise, em qualquer ordem). Eles rodam ao mesmo tempo, e o `W0602` não é dado entre eles. Sem isso, a única forma de calar o aviso seria `after`, que põe as escritas em série (o dobro da latência na E5). Cada nome precisa ser um passo (`E0639`); dois passos que já esperam um pelo outro, por dados ou por `after`, não podem ser `unordered`, e menos de dois passos não dizem nada (`E0507`).
+
 ### 5.11 Precondições e invariantes (D29, D25)
 
 ```

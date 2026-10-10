@@ -287,7 +287,7 @@ impl Lower<'_> {
                 Stmt::Return(e) => ret = Some(e),
                 Stmt::Limits(entries) => g.limits = limits(entries),
                 // Ordering only: already in the nodes' inputs.
-                Stmt::After { .. } => {}
+                Stmt::After { .. } | Stmt::Unordered(_) => {}
             }
         }
         for n in &mut g.nodes {

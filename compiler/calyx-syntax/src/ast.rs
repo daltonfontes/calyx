@@ -233,6 +233,9 @@ pub enum Stmt {
     /// `notice after paid, saved`: `notice` starts only after those steps
     /// finished, though it reads nothing from them (decision D2).
     After { node: Ident, after: Vec<Ident> },
+    /// `unordered sent, logged`: these steps' writes commute, so they run in
+    /// any order, at the same time, and the compiler does not ask for one.
+    Unordered(Vec<Ident>),
 }
 
 /// A string literal. `text` is the raw content between the quotes, with

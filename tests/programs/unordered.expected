@@ -1,0 +1,18 @@
+warning[W0602]: external writes without a defined order
+- expected : `logged after sent` (or `sent after logged`), a value one passes to the other, or `unordered sent, logged` if the writes commute
+- observed : `sent` and `logged` both write outside the run and may run at the same time
+Location: unordered.clyx:18:5
+
+error[E0639]: `unordered` names something that is not a step
+- expected : a step of this graph (`name = ...`)
+- observed : `lgged`
+Location: unordered.clyx:19:21
+
+error[E0507]: steps declared `unordered` are ordered
+- expected : `sent` and `logged` independent: neither reads the other, and no `after` between them
+- observed : one of them waits for the other
+Location: unordered.clyx:26:21
+
+error[E0507]: `unordered` needs two steps or more
+- expected : `unordered a, b`: the steps whose writes commute
+Location: unordered.clyx:31:15

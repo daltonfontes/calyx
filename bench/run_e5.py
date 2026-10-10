@@ -139,8 +139,9 @@ def latency() -> dict:
     runs = {
         "p10 two independent writes (warned)": ("p10_independent_writes_any_order.clyx",
                                                 ["--request", "R1", "--to", "a@b"]),
-        "p10 rewritten with `after`": ("p10_independent_writes_any_order.ok.clyx",
-                                       ["--request", "R1", "--to", "a@b"]),
+        "p10 rewritten with `after`": ("alt_p10_after.clyx", ["--request", "R1", "--to", "a@b"]),
+        "p10 rewritten with `unordered`": ("p10_independent_writes_any_order.ok.clyx",
+                                           ["--request", "R1", "--to", "a@b"]),
         "p08 cache write inside the race (warned)": ("p08_race_with_harmless_write.clyx",
                                                      ["--q", "x"]),
         "p08 rewritten: cache write after the race": ("p08_race_with_harmless_write.ok.clyx",
