@@ -62,9 +62,11 @@ commands:
       share the runs: any of them lists, resumes or replays any run, and a
       run is run by one process at a time. The worker takes over every run
       whose process died (no end in its journal, no process holding it)
-      and finishes it, checking again every few seconds (5 by default).
-      Programs with entities, `receive` or sandboxes keep state on one
-      machine and are refused with the journal in PostgreSQL, for now.
+      and finishes it, and resumes every waiting run whose message arrived
+      or whose deadline passed (as `tick` does), checking again every few
+      seconds (5 by default). Entities and the waits and messages of
+      `receive` are in the database too; programs with sandboxes (a
+      directory on one machine) are refused with the journal in PostgreSQL.
   resume <run> [--fake-models] [--quiet] [--config FILE] [--budget USD]
                [--uncertain done|done=ANSWER|retry|failed]
       Continue an interrupted or failed run. Calls already in its journal
@@ -810,7 +812,14 @@ fn tick(args: &[String]) -> ExitCode {
     let mut resumed = 0;
     let mut waiting = 0;
     let mut worst = ExitCode::SUCCESS;
-    for r in runs::list() {
+    let all = match runs::list() {
+        Ok(all) => all,
+        Err(e) => {
+            eprintln!("{}: {e}", command());
+            return ExitCode::from(2);
+        }
+    };
+    for r in all {
         if r.status != "waiting" {
             continue;
         }
@@ -838,7 +847,8 @@ fn tick(args: &[String]) -> ExitCode {
 /// `calyx worker`: with the journal in PostgreSQL, takes over the runs
 /// whose process died, on any machine, and finishes them (D6). A run is
 /// taken when it has no end in its journal and no process holds it (its
-/// lock went with the session of the process that died).
+/// lock went with the session of the process that died). It also resumes
+/// the waiting runs that can go on, as `tick` does.
 fn worker(args: &[String]) -> ExitCode {
     let mut pass = Vec::new();
     let mut once = false;
@@ -869,15 +879,38 @@ fn worker(args: &[String]) -> ExitCode {
     }
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("calyx"));
     loop {
-        let orphans: Vec<String> = runs::list()
+        let now = runs::now();
+        // Runs whose process died, and waiting runs that can go on.
+        let all = match runs::list() {
+            Ok(all) => all,
+            // The database is down: try again later.
+            Err(e) if !once => {
+                eprintln!("{}: {e}", command());
+                Vec::new()
+            }
+            Err(e) => {
+                eprintln!("{}: {e}", command());
+                return ExitCode::from(2);
+            }
+        };
+        let todo: Vec<(String, &str)> = all
             .into_iter()
-            .filter(|r| r.status == "interrupted")
-            .map(|r| r.id)
+            .filter_map(|r| match r.status.as_str() {
+                "interrupted" => Some((r.id, "taking over")),
+                "waiting"
+                    if runs::waits(&r.id)
+                        .iter()
+                        .any(|w| w.delivered || w.until <= now) =>
+                {
+                    Some((r.id, "resuming"))
+                }
+                _ => None,
+            })
             .collect();
-        let children: Vec<_> = orphans
+        let children: Vec<_> = todo
             .iter()
-            .filter_map(|id| {
-                eprintln!("{}: taking over run {id}", command());
+            .filter_map(|(id, what)| {
+                eprintln!("{}: {what} run {id}", command());
                 std::process::Command::new(&exe)
                     .arg("resume")
                     .arg(id)
@@ -890,6 +923,8 @@ fn worker(args: &[String]) -> ExitCode {
         for (id, mut c) in children {
             match c.wait().map(|s| s.code()) {
                 Ok(Some(0)) => eprintln!("{}: run {id} finished", command()),
+                // It waits again (for another message).
+                Ok(Some(4)) => eprintln!("{}: run {id} is waiting", command()),
                 // Another worker took it first.
                 Ok(Some(5)) => {}
                 other => eprintln!("{}: run {id} stopped ({other:?})", command()),
@@ -903,7 +938,17 @@ fn worker(args: &[String]) -> ExitCode {
 }
 
 fn list_runs() -> ExitCode {
-    let all = runs::list();
+    let all = match runs::list() {
+        Ok(all) => all,
+        Err(e) => {
+            eprintln!("{}: {e}", command());
+            return ExitCode::from(2);
+        }
+    };
+    if all.is_empty() && calyx_runtime::pg::enabled() {
+        println!("no runs in the journal database");
+        return ExitCode::SUCCESS;
+    }
     if all.is_empty() {
         println!("no runs in {}", runs::RUNS_DIR);
         return ExitCode::SUCCESS;
@@ -976,13 +1021,10 @@ fn load_config(
 }
 
 /// What a program uses that lives on one machine's disk, and so cannot
-/// move with its run to another machine yet.
+/// move with its run to another machine. Entities and `receive` keep their
+/// state in the database too; a sandbox is a directory.
 fn not_shared(program: &calyx_ir::Program) -> Option<&'static str> {
-    if !program.entities.is_empty() {
-        Some("entities keep their state in files")
-    } else if !program.messages.is_empty() {
-        Some("`receive` keeps its waits and messages in files")
-    } else if program
+    if program
         .tools
         .iter()
         .any(|t| t.borrows.iter().any(Option::is_some))

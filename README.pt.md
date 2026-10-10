@@ -99,7 +99,9 @@ na Calyx, essas linhas são obrigatórias. Detalhes em
 **Em outra máquina.** Com o diário no PostgreSQL (`CALYX_DATABASE_URL`), as
 máquinas compartilham as execuções: se uma morre no meio, um `calyx worker`
 em outra assume a execução e a termina a partir do diário, e uma execução
-nunca roda em duas máquinas ao mesmo tempo.
+nunca roda em duas máquinas ao mesmo tempo. Entidades e as esperas de
+`receive` também ficam no banco, e a conexão pode usar TLS
+(`sslmode=verify-full`).
 
 **Contra a API real do Stripe** (modo de teste,
 [`bench/stripe/`](bench/stripe)): um reembolso e um crédito, com o processo
@@ -313,8 +315,7 @@ modelos, em [`examples/`](examples).
   do runtime em C.
 - Agentes não podem chamar tools `write once`.
 - Várias máquinas compartilham execuções só pelo diário no PostgreSQL;
-  programas com entidades, `receive` ou sandboxes ainda rodam numa máquina.
-  A conexão com o banco ainda não tem TLS.
+  programas com sandboxes (um diretório) ainda rodam numa máquina.
 - Tools só como servidores MCP via stdio; modelos só por APIs compatíveis com
   a da OpenAI.
 - A camada pura não tem recursão, de propósito (todo programa termina).

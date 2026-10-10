@@ -369,7 +369,10 @@ declaração e avisa numa contradição (§6.8).
 tabela, cada uma confirmada antes da próxima chamada; uma execução roda sob
 um *advisory lock* de sessão com o id dela, que o PostgreSQL solta com a
 sessão de um processo que morre, então um worker em outra máquina assume a
-execução e a termina a partir do diário.
+execução e a termina a partir do diário. Uma entidade é uma linha: uma
+mensagem a trava, roda o handler e grava o novo estado com os ids das
+mensagens aplicadas numa transação, então o exatamente-uma-vez vale entre
+máquinas; as esperas e mensagens de `receive` também são linhas.
 
 *Programas como servidores.* `calyx serve` transforma um programa num
 servidor MCP: cada grafo é uma tool, anotada a partir do programa

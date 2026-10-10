@@ -197,7 +197,8 @@ struct exec {
      * run's directory name, the same when it is resumed. */
     const char *run_id;
     /* The run's directory (with the journal): where `receive` keeps its
-     * deadlines (`waits.jsonl`) and finds delivered messages (`inbox.jsonl`). */
+     * deadlines (`waits.jsonl`) and finds delivered messages (`inbox.jsonl`);
+     * with the journal in PostgreSQL, they are rows of `calyx_files`. */
     const char *run_dir;
     /* `receive`s waiting for a message: the run stops, to be resumed. */
     int waiting;
@@ -2156,43 +2157,36 @@ static int write_durable(const char *path, const char *data, size_t len) {
     return ok && rename(tmp, path) == 0 ? 0 : -1;
 }
 
+/* With the journal in PostgreSQL (pg.rs), entities live there too. */
+int calyx_pg_enabled(void);
+int calyx_pg_entity(const char *entity, const char *khash, const char *key, int exclusive,
+                    char *(*step)(void *ud, const char *doc), void *ud);
+int calyx_pg_file_append(const char *run, const char *name, const char *line, size_t len);
+char *calyx_pg_file_read(const char *run, const char *name);
+void calyx_string_free(char *s);
+
+/* One message to one entity, wherever its document is kept. */
+typedef struct {
+    exec *x;
+    cx_arena *a;
+    job *j;
+    char *why;
+    size_t why_len;
+    cx_value *entity, *handler, *key, *args;
+    const char *ename, *hname, *kjson;
+    cx_value *result; /* set when the message was answered or applied */
+} emsg;
+
 /*
- * One message to an entity, in an I/O thread. The entity lives in
- * `.calyx/entities/<Entity>/<first 16 hex digits of SHA-256(key)>/`:
- * `entity.json` holds the state and the ids of the messages applied to it,
- * replaced atomically together, so a message is applied exactly once even
- * if a run that sent it is resumed and sends it again. `flock` on `lock`
- * gives one owner per key across processes: shared for `ask`, exclusive
- * for `send`.
+ * Runs a message's handler on the entity's document (`{state, applied}`,
+ * NULL for a new entity). Returns the new document, from malloc, when a
+ * `send` changed it; NULL otherwise. Sets `m->result`, or `m->why`.
  */
-static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len) {
-    cx_value *entity = j->spec, *handler = j->prompt;
-    const char *ename = cx_get_str(entity, "name", "?");
-    const char *hname = cx_get_str(handler, "name", "?");
-    cx_value *req = cx_parse(a, j->req, strlen(j->req), NULL);
-    cx_value *key = cx_get(req, "key");
-    cx_value *args = cx_get(req, "args");
-    cx_buf kb = {0};
-    cx_write(&kb, key);
-    char khash[65];
-    cx_sha256_hex(kb.data, kb.len, khash);
-    khash[16] = '\0';
-    char dir[2048], path[2200];
-    snprintf(dir, sizeof dir, ".calyx/entities/%s/%s", ename, khash);
-    cx_value *result = NULL;
-    int lockfd = -1;
-    if (cx_mkdirs(dir) != 0) {
-        snprintf(why, why_len, "entity `%s`: cannot create %.300s", ename, dir);
-        goto out;
-    }
-    snprintf(path, sizeof path, "%s/key.json", dir);
-    if (access(path, F_OK) != 0) write_durable(path, kb.data, kb.len);
-    snprintf(path, sizeof path, "%s/lock", dir);
-    lockfd = open(path, O_RDWR | O_CREAT, 0644);
-    if (lockfd < 0 || flock(lockfd, j->send ? LOCK_EX : LOCK_SH) != 0) {
-        snprintf(why, why_len, "entity `%s`: cannot lock %.300s", ename, path);
-        goto out;
-    }
+static char *entity_step(emsg *m, const char *text, size_t len) {
+    exec *x = m->x;
+    job *j = m->j;
+    const char *ename = m->ename, *hname = m->hname;
+    char *out = NULL;
     /* The handler runs with its own context: the key and the message's
      * arguments in local slots, the state for `state` expressions. */
     worker w;
@@ -2205,18 +2199,15 @@ static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_
     hc.w = &w;
     hc.g = &none;
     hc.node = j->node;
-    size_t nl = (size_t)cx_get_num(handler, "nlocals", 1);
+    size_t nl = (size_t)cx_get_num(m->handler, "nlocals", 1);
     hc.locals = cx_alloc(&w.arena, (nl ? nl : 1) * sizeof *hc.locals);
-    hc.locals[0] = key;
-    for (size_t i = 0; i < len_of(args) && i + 1 < nl; i++) hc.locals[i + 1] = at(args, i);
+    hc.locals[0] = m->key;
+    for (size_t i = 0; i < len_of(m->args) && i + 1 < nl; i++) hc.locals[i + 1] = at(m->args, i);
 
-    size_t len = 0;
-    snprintf(path, sizeof path, "%s/entity.json", dir);
-    char *text = slurp(&w.arena, path, &len);
     cx_value *doc = text ? cx_parse(&w.arena, text, len, NULL) : NULL;
     cx_value *state = cx_get(doc, "state");
     cx_value *applied = cx_get(doc, "applied");
-    cx_value *fields = cx_get(entity, "state");
+    cx_value *fields = cx_get(m->entity, "state");
     if (!state) { /* a new entity: the initial values */
         size_t nf = len_of(fields);
         const char **keys = cx_alloc(&w.arena, (nf ? nf : 1) * sizeof *keys);
@@ -2230,17 +2221,17 @@ static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_
     }
     hc.estate = state;
     if (!j->send) {
-        cx_value *v = eval(&hc, cx_get(handler, "answer"));
+        cx_value *v = eval(&hc, cx_get(m->handler, "answer"));
         if (!v) {
-            snprintf(why, why_len, "entity `%s`, message `%s`: %s", ename, hname,
+            snprintf(m->why, m->why_len, "entity `%s`, message `%s`: %s", ename, hname,
                      hc.failure ? hc.failure : "failed");
         } else {
             cx_buf vb = {0};
             cx_write(&vb, v);
-            result = cx_parse(a, vb.data, vb.len, NULL);
+            m->result = cx_parse(m->a, vb.data, vb.len, NULL);
             cx_buf_free(&vb);
         }
-        trace(x, j->label, "ask   %s(%s).%s", ename, kb.data, hname);
+        trace(x, j->label, "ask   %s(%s).%s", ename, m->kjson, hname);
     } else {
         /* The message's id: this run and the call's place in it. */
         char id[1024];
@@ -2249,8 +2240,8 @@ static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_
         for (size_t i = 0; i < len_of(applied) && !seen; i++)
             seen = at(applied, i)->kind == CX_STR && strcmp(at(applied, i)->u.str.s, id) == 0;
         if (seen) {
-            trace(x, j->label, "send  %s(%s).%s  already applied", ename, kb.data, hname);
-            result = cx_null(a);
+            trace(x, j->label, "send  %s(%s).%s  already applied", ename, m->kjson, hname);
+            m->result = cx_null(m->a);
         } else {
             /* Every update sees the state before the message. */
             size_t nf = state->kind == CX_REC ? state->u.rec.len : 0;
@@ -2260,7 +2251,7 @@ static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_
                 keys[i] = state->u.rec.keys[i];
                 vals[i] = state->u.rec.vals[i];
             }
-            cx_value *updates = cx_get(handler, "updates");
+            cx_value *updates = cx_get(m->handler, "updates");
             int failed = 0;
             for (size_t u = 0; u < len_of(updates) && !failed; u++) {
                 const char *f = cx_get_str(at(updates, u), "field", "");
@@ -2273,7 +2264,7 @@ static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_
                     if (strcmp(keys[i], f) == 0) vals[i] = v;
             }
             if (failed) {
-                snprintf(why, why_len, "entity `%s`, message `%s`: %s", ename, hname,
+                snprintf(m->why, m->why_len, "entity `%s`, message `%s`: %s", ename, hname,
                          hc.failure ? hc.failure : "failed");
             } else {
                 cx_buf db = {0};
@@ -2286,28 +2277,101 @@ static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_
                 }
                 cx_buf_json_str(&db, id, strlen(id));
                 cx_buf_puts(&db, "]}");
-                if (write_durable(path, db.data, db.len) != 0)
-                    snprintf(why, why_len, "entity `%s`: cannot write %.300s", ename, path);
-                else
-                    result = cx_null(a);
-                /* For tests: `kill -9` after the entity applied the message
-                 * and before the journal records it (the window exactly-once
-                 * by message id is for). */
-                if (result && getenv("CALYX_CRASH_IN_SEND")) {
-                    fprintf(stderr, "calyx: CALYX_CRASH_IN_SEND, exiting abruptly\n");
-                    _exit(137);
+                out = malloc(db.len + 1);
+                if (out) {
+                    memcpy(out, db.data, db.len);
+                    out[db.len] = '\0';
+                    m->result = cx_null(m->a);
+                } else {
+                    snprintf(m->why, m->why_len, "entity `%s`: out of memory", ename);
                 }
                 cx_buf_free(&db);
             }
-            trace(x, j->label, "send  %s(%s).%s", ename, kb.data, hname);
+            trace(x, j->label, "send  %s(%s).%s", ename, m->kjson, hname);
         }
     }
     cx_arena_free(&w.arena);
+    return out;
+}
+
+static char *pg_entity_step(void *ud, const char *doc) {
+    return entity_step(ud, doc, doc ? strlen(doc) : 0);
+}
+
+/*
+ * One message to an entity, in an I/O thread. The entity's document holds
+ * its state and the ids of the messages applied to it, replaced together,
+ * so a message is applied exactly once even if a run that sent it is
+ * resumed and sends it again. One owner per key: shared for `ask`,
+ * exclusive for `send`.
+ *
+ * On one machine the entity lives in
+ * `.calyx/entities/<Entity>/<first 16 hex digits of SHA-256(key)>/`
+ * (`entity.json`, replaced atomically; `flock` on `lock`). With the journal
+ * in PostgreSQL it is a row of `calyx_entities`, locked by the message's
+ * transaction (`FOR UPDATE` / `FOR SHARE`), for every machine.
+ */
+static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len) {
+    cx_value *req = cx_parse(a, j->req, strlen(j->req), NULL);
+    emsg m = {.x = x, .a = a, .j = j, .why = why, .why_len = why_len};
+    m.entity = j->spec;
+    m.handler = j->prompt;
+    m.ename = cx_get_str(m.entity, "name", "?");
+    m.hname = cx_get_str(m.handler, "name", "?");
+    m.key = cx_get(req, "key");
+    m.args = cx_get(req, "args");
+    const char *ename = m.ename;
+    cx_buf kb = {0};
+    cx_write(&kb, m.key);
+    m.kjson = kb.data;
+    char khash[65];
+    cx_sha256_hex(kb.data, kb.len, khash);
+    khash[16] = '\0';
+    int lockfd = -1;
+    if (calyx_pg_enabled()) {
+        if (!calyx_pg_entity(ename, khash, kb.data, j->send, pg_entity_step, &m)) {
+            /* Rolled back: nothing was applied. */
+            m.result = NULL;
+            if (!*why) snprintf(why, why_len, "entity `%s`: the database failed", ename);
+        }
+    } else {
+        char dir[2048], path[2200];
+        snprintf(dir, sizeof dir, ".calyx/entities/%s/%s", ename, khash);
+        if (cx_mkdirs(dir) != 0) {
+            snprintf(why, why_len, "entity `%s`: cannot create %.300s", ename, dir);
+            goto out;
+        }
+        snprintf(path, sizeof path, "%s/key.json", dir);
+        if (access(path, F_OK) != 0) write_durable(path, kb.data, kb.len);
+        snprintf(path, sizeof path, "%s/lock", dir);
+        lockfd = open(path, O_RDWR | O_CREAT, 0644);
+        if (lockfd < 0 || flock(lockfd, j->send ? LOCK_EX : LOCK_SH) != 0) {
+            snprintf(why, why_len, "entity `%s`: cannot lock %.300s", ename, path);
+            goto out;
+        }
+        size_t len = 0;
+        snprintf(path, sizeof path, "%s/entity.json", dir);
+        char *text = slurp(a, path, &len);
+        char *doc = entity_step(&m, text, len);
+        if (doc && write_durable(path, doc, strlen(doc)) != 0) {
+            snprintf(why, why_len, "entity `%s`: cannot write %.300s", ename, path);
+            m.result = NULL;
+        }
+        free(doc);
+    }
+    /* For tests: `kill -9` after the entity applied the message and before
+     * the journal records it (the window exactly-once by message id is
+     * for). */
+    if (m.result && j->send && getenv("CALYX_CRASH_IN_SEND")) {
+        fprintf(stderr, "calyx: CALYX_CRASH_IN_SEND, exiting abruptly\n");
+        _exit(137);
+    }
 out:
     if (lockfd >= 0) {
         flock(lockfd, LOCK_UN);
         close(lockfd);
     }
+    cx_value *result = m.result;
     cx_buf_free(&kb);
     if (result) {
         const char *keys[1] = {"value"};
@@ -2322,13 +2386,28 @@ out:
 
 /* ----- receive (D21) -------------------------------------------------------- */
 
-/* The `value` of the line of `file` (in the run's directory) whose `key`
- * is `key`, or NULL. */
-static cx_value *keyed_line(ctx *c, const char *file, const char *key, const char *field) {
+/* One of the run's files (`waits.jsonl`, `inbox.jsonl`): in its directory,
+ * or with the journal in PostgreSQL, in `calyx_files`, for every machine. */
+static char *run_file(ctx *c, const char *file, size_t *len) {
+    if (calyx_pg_enabled()) {
+        char *t = calyx_pg_file_read(c->x->run_id, file);
+        if (!t) return NULL;
+        *len = strlen(t);
+        char *s = cx_alloc(&c->w->arena, *len + 1);
+        memcpy(s, t, *len + 1);
+        calyx_string_free(t);
+        return s;
+    }
     char path[2200];
     snprintf(path, sizeof path, "%s/%s", c->x->run_dir, file);
+    return slurp(&c->w->arena, path, len);
+}
+
+/* The `value` of the line of `file` (one of the run's) whose `key` is
+ * `key`, or NULL. */
+static cx_value *keyed_line(ctx *c, const char *file, const char *key, const char *field) {
     size_t len = 0;
-    char *text = slurp(&c->w->arena, path, &len);
+    char *text = run_file(c, file, &len);
     cx_value *found = NULL;
     for (char *line = text; line && *line;) {
         char *end = strchr(line, '\n');
@@ -2340,9 +2419,13 @@ static cx_value *keyed_line(ctx *c, const char *file, const char *key, const cha
     return found;
 }
 
-/* One write per line: receives running in parallel append to the same file,
- * and two writes (line, then newline) could interleave with theirs. */
-static int append_line(const char *path, const char *data, size_t len) {
+/* Appends a line to one of the run's files. One write per line: receives
+ * running in parallel append to the same file, and two writes (line, then
+ * newline) could interleave with theirs. */
+static int append_line(exec *x, const char *file, const char *data, size_t len) {
+    if (calyx_pg_enabled()) return calyx_pg_file_append(x->run_id, file, data, len) ? 0 : -1;
+    char path[2200];
+    snprintf(path, sizeof path, "%s/%s", x->run_dir, file);
     char *line = malloc(len + 1);
     if (!line) return -1;
     memcpy(line, data, len);
@@ -2446,11 +2529,9 @@ static cx_value *call_receive(ctx *c, cx_value *e) {
             cx_write(&line, about);
         }
         cx_buf_putc(&line, '}');
-        char path[2200];
-        snprintf(path, sizeof path, "%s/waits.jsonl", x->run_dir);
-        int bad = append_line(path, line.data, line.len) != 0;
+        int bad = append_line(x, "waits.jsonl", line.data, line.len) != 0;
         cx_buf_free(&line);
-        if (bad) return fatalf(c, "cannot write %.300s", path);
+        if (bad) return fatalf(c, "cannot write the deadline of `receive %s`", msg);
     }
     if (t >= until) {
         cx_value *v = eval(c, cx_get(e, "on_timeout"));

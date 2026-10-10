@@ -1,21 +1,32 @@
 //! The journal in PostgreSQL, shared by several machines (D6). Two
 //! directories stand for two machines: they share only the database and the
-//! fake store (an outside service). Skipped unless CALYX_TEST_DATABASE_URL
-//! points to a database (CI starts one).
+//! fake store (an outside service), so what one machine's run needs from the
+//! other (its journal, its entities, the messages delivered to it) must come
+//! from the database. Skipped unless CALYX_TEST_DATABASE_URL points to a
+//! database (CI starts one).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use serde_json::Value;
 
-fn url() -> Option<String> {
+/// The tests share one database, and a worker takes over any run in it:
+/// one test at a time, so a test's worker does not take another's run.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn url() -> Option<std::sync::MutexGuard<'static, ()>> {
     let u = std::env::var("CALYX_TEST_DATABASE_URL")
         .ok()
         .filter(|u| !u.is_empty());
     if u.is_none() {
         eprintln!("skipped: CALYX_TEST_DATABASE_URL is not set");
+        return None;
     }
-    u
+    Some(SERIAL.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+fn database() -> String {
+    std::env::var("CALYX_TEST_DATABASE_URL").unwrap()
 }
 
 /// A program, its calyx.toml, and two "machines" (directories).
@@ -26,13 +37,22 @@ struct Cluster {
 
 impl Cluster {
     fn new(name: &str, url: String, program: &str) -> Cluster {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        Cluster::source(
+            name,
+            url,
+            &std::fs::read_to_string(repo.join(program)).unwrap(),
+        )
+    }
+
+    fn source(name: &str, url: String, program: &str) -> Cluster {
         let root = std::env::temp_dir().join(format!("calyx-pg-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for d in ["prog", "a", "b"] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        std::fs::copy(repo.join(program), root.join("prog/p.clyx")).unwrap();
+        std::fs::write(root.join("prog/p.clyx"), program).unwrap();
         let store = repo
             .join("examples/tools/fake_store.py")
             .canonicalize()
@@ -114,7 +134,8 @@ const REFUND: [&str; 7] = [
 
 #[test]
 fn another_machine_takes_over_a_run_whose_machine_died() {
-    let Some(url) = url() else { return };
+    let Some(_one) = url() else { return };
+    let url = database();
     let c = Cluster::new("takeover", url, "examples/refund.clyx");
     let p = c.program();
     let mut args = vec!["run", p.as_str()];
@@ -136,7 +157,8 @@ fn another_machine_takes_over_a_run_whose_machine_died() {
 
 #[test]
 fn a_run_is_run_by_one_process_at_a_time() {
-    let Some(url) = url() else { return };
+    let Some(_one) = url() else { return };
+    let url = database();
     // Its model answers in 1 s: the run is still going when B tries.
     let c = Cluster::new("lock", url, "bench/w2_recovery/refund.clyx");
     let p = c.program();
@@ -167,19 +189,205 @@ fn a_run_is_run_by_one_process_at_a_time() {
     assert_eq!((c.store("payments"), c.store("outbox")), (1, 1));
 }
 
+/// A key no earlier test run used: the database outlives the tests.
+fn fresh(name: &str) -> String {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    format!("{name}-{}-{t}", std::process::id())
+}
+
+const COUNTER: &str = r#"
+model m = "fake-model"
+
+entity Counter(key name: Text):
+    state count: Nat = 0
+
+    on Get() -> Nat:
+        return count
+
+    on Add():
+        next count = count + 1
+
+prompt say(n: Nat) -> Text:
+    """{n}"""
+
+graph bump(name: Text) -> Text:
+    before = ask Counter(name).Get()
+    send Counter(name).Add()
+    return m(say(before))
+
+graph read(name: Text) -> Nat:
+    return ask Counter(name).Get()
+"#;
+
+impl Cluster {
+    fn count(&self, machine: &str, key: &str) -> String {
+        let p = self.program();
+        let out = self.calyx(
+            machine,
+            &["run", &p, "--graph", "read", "--quiet", "--name", key],
+            &[],
+        );
+        assert!(out.status.success(), "{}", text(&out.stderr));
+        text(&out.stdout).trim().to_owned()
+    }
+}
+
 #[test]
-fn state_kept_on_one_machine_is_refused() {
-    let Some(url) = url() else { return };
-    let c = Cluster::new("local", url, "examples/memory.clyx");
+fn machines_share_entities_and_lose_no_update() {
+    let Some(_one) = url() else { return };
+    let url = database();
+    let c = Cluster::source("entities", url, COUNTER);
+    let p = c.program();
+    let key = fresh("ana");
+    // Eight runs at once, half on each machine, all to the same entity.
+    let children: Vec<_> = (0..8)
+        .map(|i| {
+            let machine = if i % 2 == 0 { "a" } else { "b" };
+            c.cmd(
+                machine,
+                &[
+                    "run",
+                    &p,
+                    "--graph",
+                    "bump",
+                    "--fake-models",
+                    "--quiet",
+                    "--name",
+                    &key,
+                ],
+                &[],
+            )
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+        })
+        .collect();
+    for ch in children {
+        let out = ch.wait_with_output().unwrap();
+        assert!(out.status.success(), "{}", text(&out.stderr));
+    }
+    assert_eq!(c.count("a", &key), "8");
+    assert_eq!(c.count("b", &key), "8");
+    assert!(
+        !c.root.join("a/.calyx/entities").exists(),
+        "the entity is in the database, not in a machine's files"
+    );
+}
+
+#[test]
+fn a_message_applied_before_the_machine_died_is_not_applied_again() {
+    let Some(_one) = url() else { return };
+    let url = database();
+    let c = Cluster::source("send", url, COUNTER);
+    let p = c.program();
+    let key = fresh("bia");
+    // Machine A dies after the entity applied the message and before the
+    // journal recorded it.
+    let a = c.calyx(
+        "a",
+        &[
+            "run",
+            &p,
+            "--graph",
+            "bump",
+            "--fake-models",
+            "--name",
+            &key,
+        ],
+        &[("CALYX_CRASH_IN_SEND", "1")],
+    );
+    assert!(!a.status.success());
+    let id = run_id(&text(&a.stderr));
+    assert_eq!(c.count("b", &key), "1");
+
+    let b = c.calyx("b", &["worker", "--once", "--fake-models"], &[]);
+    let err = text(&b.stderr);
+    assert!(err.contains(&format!("taking over run {id}")), "{err}");
+    assert_eq!(c.status("b", &id), "finished");
+    assert_eq!(c.count("b", &key), "1", "{err}");
+}
+
+const APPROVAL: &str = r#"
+model m = "fake-model"
+
+message Approval = Approved | Denied(reason: Text)
+
+prompt propose(request: Text) -> Text:
+    """{request}"""
+
+graph approve(request: Text) -> Text:
+    proposal = m(propose(request))
+    approval = receive Approval about proposal, timeout 3 days:
+        on timeout: Denied(reason="sem resposta")
+    return match approval:
+        case Approved: "aprovado"
+        case Denied(reason): "recusado ({reason})"
+"#;
+
+#[test]
+fn a_message_delivered_on_one_machine_reaches_a_run_waiting_on_another() {
+    let Some(_one) = url() else { return };
+    let url = database();
+    let c = Cluster::source("receive", url, APPROVAL);
+    let p = c.program();
+    let a = c.calyx(
+        "a",
+        &["run", &p, "--fake-models", "--request", "reembolso de 300"],
+        &[],
+    );
+    assert_eq!(a.status.code(), Some(4), "{}", text(&a.stderr));
+    let id = run_id(&text(&a.stderr));
+    assert_eq!(c.status("b", &id), "waiting");
+
+    // Nothing to do yet: the worker leaves it waiting.
+    let w = c.calyx("b", &["worker", "--once", "--fake-models"], &[]);
+    assert!(!text(&w.stderr).contains(&id), "{}", text(&w.stderr));
+
+    // Machine B delivers; a second delivery (from A) finds it taken.
+    let d = c.calyx("b", &["deliver", &id, "Approval", "Approved"], &[]);
+    assert!(d.status.success(), "{}", text(&d.stderr));
+    let again = c.calyx("a", &["deliver", &id, "Approval", "Approved"], &[]);
+    assert!(!again.status.success());
+
+    // The worker on B resumes it, with none of A's files.
+    let w = c.calyx("b", &["worker", "--once", "--fake-models"], &[]);
+    let err = text(&w.stderr);
+    assert!(err.contains(&format!("resuming run {id}")), "{err}");
+    assert_eq!(c.status("a", &id), "finished");
+    let out = c.calyx("a", &["replay", &id, "--quiet"], &[]);
+    assert_eq!(
+        text(&out.stdout).trim(),
+        "aprovado",
+        "{}",
+        text(&out.stderr)
+    );
+    assert!(
+        !c.root
+            .join("a/.calyx/runs")
+            .join(&id)
+            .join("waits.jsonl")
+            .exists()
+    );
+}
+
+#[test]
+fn a_sandbox_kept_on_one_machine_is_refused() {
+    let Some(_one) = url() else { return };
+    let url = database();
+    let c = Cluster::new("local", url, "examples/fix.clyx");
     let p = c.program();
     let out = c.calyx(
         "a",
-        &["run", &p, "--fake-models", "--user", "ana", "--text", "oi"],
+        &["run", &p, "--fake-models", "--issue", "x", "--repo", "."],
         &[],
     );
     assert_eq!(out.status.code(), Some(2));
     assert!(
-        text(&out.stderr).contains("entities keep their state in files"),
+        text(&out.stderr).contains("sandboxes are directories on one machine"),
         "{}",
         text(&out.stderr)
     );

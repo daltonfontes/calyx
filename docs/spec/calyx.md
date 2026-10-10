@@ -232,8 +232,8 @@ No máximo **uma** entidade aberta por chave. Se um handler altera `state`, ele 
 
 - **Handlers são puros:** calculam com o estado, a chave e a mensagem; não chamam modelos, tools, grafos nem outras entidades (`E0654`). As chamadas com efeito ficam no grafo, que manda o resultado. Por isso nenhum handler espera nada, e ciclos de `ask` (D33) não podem existir.
 - Um handler **responde** (`-> T` e um `return`) ou **muda o estado** (linhas `next campo = valor`, todas calculadas sobre o estado anterior à mensagem); nunca os dois (`E0652`). `next` só em campos do estado, uma vez cada, com o tipo do campo (`E0653`). O valor inicial de cada campo é um valor escrito no programa (`E0651`).
-- **Onde vive:** `.calyx/entities/<Entidade>/<hash da chave>/entity.json` (no diretório em que o programa roda), com o estado e as mensagens já aplicadas, trocados juntos de forma atômica.
-- **Um dono por chave, entre processos:** `flock`; perguntas compartilham a trava, mudanças a têm sozinhas. 50 execuções simultâneas mandando ao mesmo contador terminam com 50.
+- **Onde vive:** `.calyx/entities/<Entidade>/<hash da chave>/entity.json` (no diretório em que o programa roda), com o estado e as mensagens já aplicadas, trocados juntos de forma atômica. Com o diário no PostgreSQL, numa linha da tabela `calyx_entities`, para todas as máquinas (seção 9.3).
+- **Um dono por chave, entre processos:** `flock`; perguntas compartilham a trava, mudanças a têm sozinhas. 50 execuções simultâneas mandando ao mesmo contador terminam com 50. No PostgreSQL, a transação da mensagem trava a linha da entidade (`FOR SHARE` para `ask`, `FOR UPDATE` para `send`), entre máquinas.
 - **Cada mensagem é aplicada uma vez:** o id de uma mensagem é a execução e o lugar da chamada; uma execução retomada que manda de novo encontra o id e não aplica outra vez.
 
 ---
@@ -632,14 +632,17 @@ graph solve(issue: Text, repo: Sandbox) -> Text:
 - **Esperas (`receive`):** o diretório da execução guarda `waits.jsonl` (o prazo de cada espera) e `inbox.jsonl` (as mensagens entregues). Uma execução que espera termina com o estado `waiting`.
 - **Sandboxes:** a resposta de uma chamada que edita uma sandbox leva o hash do snapshot depois dela; a retomada põe cada sandbox de volta ao último snapshot do diário (seção 7.3).
 
-**Várias máquinas: o diário no PostgreSQL.** Com `CALYX_DATABASE_URL` (`postgres://usuario@host:porta/banco`), as linhas do diário e os blobs vão para o PostgreSQL, nas mesmas linhas e na mesma ordem do arquivo: o interpretador lê e escreve do mesmo jeito (`runtime/rs/pg.rs`, chamado por `journal.c`). As tabelas (`calyx_runs`, `calyx_journal`, `calyx_blobs`) são criadas na primeira conexão.
+**Várias máquinas: o diário no PostgreSQL.** Com `CALYX_DATABASE_URL` (`postgres://usuario@host:porta/banco`), as linhas do diário e os blobs vão para o PostgreSQL, nas mesmas linhas e na mesma ordem do arquivo: o interpretador lê e escreve do mesmo jeito (`runtime/rs/pg.rs`, chamado por `journal.c`). As esperas e mensagens de `receive` e as entidades vão junto. As tabelas (`calyx_runs`, `calyx_journal`, `calyx_blobs`, `calyx_files`, `calyx_entities`) são criadas na primeira conexão.
 
 - **Durabilidade:** cada linha é uma transação confirmada antes de a chamada seguinte começar; com o `synchronous_commit` padrão do servidor, confirmada é gravada no disco dele, o que o arquivo tem do `fsync`.
 - **Uma máquina por execução:** a execução roda sob um *advisory lock* de sessão com o id dela. Outro processo, nesta máquina ou em outra, que tenta `calyx resume` recebe o código 5. Se o processo ou a máquina morre, o PostgreSQL derruba a sessão e o lock vai junto.
 - **Qualquer máquina retoma:** `calyx runs`, `calyx resume` e `calyx replay` leem do banco. O caminho do programa gravado no diário precisa existir na outra máquina (o mesmo código, no mesmo lugar).
-- **`calyx worker`:** em cada máquina, assume as execuções sem fim no diário e sem processo dono (as de uma máquina que morreu) e as termina, conferindo de novo a cada poucos segundos (`--every`, 5 por padrão; `--once` para uma passada).
-- **Ainda não:** entidades (estado em arquivos), `receive` (esperas e mensagens em arquivos) e sandboxes (diretórios de uma máquina) são recusados com o diário no PostgreSQL. A conexão não tem TLS: use um banco numa rede privada ou por um túnel.
-- **Testes:** `compiler/calyx-cli/tests/postgres.rs` (com `CALYX_TEST_DATABASE_URL`; a CI sobe um PostgreSQL): uma máquina morre depois do pagamento e a outra termina a execução, com um pagamento e um e-mail; uma execução em andamento não é tomada; programas com estado local são recusados.
+- **`calyx worker`:** em cada máquina, assume as execuções sem fim no diário e sem processo dono (as de uma máquina que morreu) e as termina, e retoma as execuções em espera cuja mensagem chegou ou cujo prazo passou (como `calyx tick`), conferindo de novo a cada poucos segundos (`--every`, 5 por padrão; `--once` para uma passada).
+- **Esperas (`receive`):** `waits.jsonl` e `inbox.jsonl` viram linhas de `calyx_files`. `calyx deliver` em qualquer máquina entrega a mensagem; duas entregas ao mesmo `receive` ao mesmo tempo, de máquinas diferentes, deixam só uma (uma transação com trava por execução).
+- **Entidades:** uma linha por entidade (tipo e hash da chave) com o mesmo documento do `entity.json`. Uma mensagem é uma transação: trava a linha, lê o documento, roda o handler e grava o novo documento. Os ids das mensagens aplicadas estão na mesma linha, então uma mensagem é aplicada uma vez só, qualquer que seja a máquina que retome a execução.
+- **Sandboxes** são diretórios de uma máquina: programas com sandboxes são recusados com o diário no PostgreSQL.
+- **TLS:** `sslmode` na URL, como na libpq, com uma diferença: a Calyx sempre confere o certificado quando usa TLS. Sem `sslmode` (ou `disable`), sem TLS; `prefer`, TLS se o servidor oferecer; `require` e `verify-full`, TLS obrigatório, com a cadeia até uma raiz confiável e o nome do host; `verify-ca`, sem conferir o nome. As raízes são as do sistema, mais a CA de `sslrootcert=ARQUIVO` (PEM). A biblioteca é a rustls, a mesma das chamadas a modelos e tools.
+- **Testes:** `compiler/calyx-cli/tests/postgres.rs` (com `CALYX_TEST_DATABASE_URL`; a CI sobe um PostgreSQL, e roda os mesmos testes de novo num PostgreSQL com TLS e CA própria, com `verify-full`): uma máquina morre depois do pagamento e a outra termina a execução, com um pagamento e um e-mail; uma execução em andamento não é tomada; 8 execuções ao mesmo tempo, metade em cada máquina, mandam à mesma entidade e ela termina com 8; uma máquina morre depois de a entidade aplicar a mensagem e a outra retoma sem aplicar de novo; uma mensagem entregue numa máquina chega a uma execução que espera na outra, e a segunda entrega é recusada; programas com sandboxes são recusados.
 
 ### 9.4 Atores do runtime (D10)
 
@@ -759,7 +762,7 @@ Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*`
 ## 13. Fora da v1
 
 - Políticas de roteamento além de `cheapest_that_passes` (D30).
-- Várias máquinas, segunda parte: entidades, `receive` e sandboxes no PostgreSQL, e TLS na conexão (D6).
+- Sandboxes em várias máquinas (hoje são diretórios de uma máquina; D6).
 - Provas opcionais sobre grafos.
 - Execução especulativa e *hedging* entre provedores.
 - Edição arbitrária do grafo durante a execução (D4, nível 4).
