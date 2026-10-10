@@ -287,7 +287,7 @@ impl Lower<'_> {
                 Stmt::Return(e) => ret = Some(e),
                 Stmt::Limits(entries) => g.limits = limits(entries),
                 // Ordering only: already in the nodes' inputs.
-                Stmt::After { .. } => {}
+                Stmt::After { .. } | Stmt::Unordered(_) => {}
             }
         }
         for n in &mut g.nodes {
@@ -327,6 +327,9 @@ impl Lower<'_> {
                 ir::Expr::Field(Box::new(self.expr(base, scope)), name.name.clone())
             }
             ExprKind::Call { callee, args } => self.call(callee, args, scope),
+            ExprKind::Borrow { mode, target } if mode.name == "fork" => {
+                ir::Expr::Fork(Box::new(self.name(&target.name, scope)))
+            }
             ExprKind::Borrow { target, .. } => self.name(&target.name, scope),
             ExprKind::Bool(b) => ir::Expr::Bool(*b),
             ExprKind::Receive {
@@ -521,6 +524,7 @@ impl Lower<'_> {
                 let cond = r.cond.as_ref().map(|c| Box::new(self.expr(c, scope)));
                 scope.unbind(1);
                 ir::Expr::Race {
+                    count: r.count.map(|(n, _)| n),
                     branches,
                     slot,
                     cond,

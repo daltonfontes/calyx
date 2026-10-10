@@ -1,4 +1,4 @@
-# Contorno: dizer que as duas escritas comutam (`unordered`); continuam em paralelo.
+# Contorno antigo: dar uma ordem às duas escritas (`after`), o que as põe em série.
 tool email(request: Text, to: Text, body: Text) -> Unit:
     effect write
     idempotency_key request
@@ -10,5 +10,5 @@ tool track(request: Text, event: Text) -> Unit:
 graph g(request: Text, to: Text) -> Text:
     sent = email(request, to, "recebemos seu pedido")
     logged = track(request, "pedido_recebido")
-    unordered sent, logged
+    logged after sent
     return "ok"

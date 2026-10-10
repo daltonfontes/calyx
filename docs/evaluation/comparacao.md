@@ -506,7 +506,10 @@ concorrência, e quanto custam em flexibilidade e desempenho, está em
 de concorrência do corpus impedidos (14 antes de rodar), 16 de 21 padrões
 corretos aceitos como escritos, e os custos concentrados em três lugares
 (`after` que põe escritas em série, o quórum que não existe, as chamadas a um
-mesmo servidor MCP em série).
+mesmo servidor MCP em série). Depois das seis mudanças que o estudo propôs
+(`unordered`, chamadas MCP em paralelo, `race first N`, `fork`, recursão com
+`decreases`, `resource`): 24 de 25 impedidos (16 antes de rodar), 18 de 21
+padrões aceitos como escritos, todos expressáveis, e nenhum dos três custos.
 
 ## O que a comparação mostra e o que não mostra
 

@@ -27,6 +27,17 @@ O equilíbrio se sustenta porque as regras mais caras em flexibilidade são
 **avisos**, e não erros: o programa roda, e o programador decide. Os custos que
 sobram vêm de construtos que faltam, não de regras erradas.
 
+**Depois das seis mudanças que o estudo propôs (seção 5), todas implementadas:**
+
+| | Antes | Depois |
+|---|---|---|
+| Bugs de concorrência impedidos | 22 de 25 (14 antes de rodar) | **24 de 25** (16 antes de rodar) |
+| Padrões corretos aceitos como escritos | 16 de 21 | **18 de 21** |
+| Padrões que dá para escrever | 20 de 21 | **21 de 21** |
+| Duas escritas independentes, sem aviso | 1,05 s (`after`) | **0,53 s** (`unordered`) |
+| Quórum: resposta pronta | 2,0 s | **0,30 s** (`race first 2`) |
+| Escritas em tools do mesmo servidor MCP | em série | **em paralelo** |
+
 Dados: `bench/run_e5.py` → `bench/results/e5.json`; padrões em `bench/e5_flex/`.
 
 ## Método
@@ -53,6 +64,9 @@ Cada um foi escrito **do jeito natural**, antes de rodar o compilador. Quando o 
 - **Análise:** tempo de `calyx check`.
 - **Runtime:** E2 e W8, já publicados.
 - **Reescritas:** latência de cada versão, com tools que levam 0,5 s (um servidor MCP falso, um processo por tool) e modelos falsos de latência fixa. Mediana de 5.
+
+As seções 1 a 4 são a primeira medição, que motivou as mudanças; a seção 5 é
+a medição depois delas.
 
 ## 1. Quantos erros as regras pegam
 
@@ -164,7 +178,7 @@ As que podem errar ficaram como **aviso**. É essa divisão que mantém a
 flexibilidade: 76% passam como escritos, e o resto passa com 0 a 4 linhas, ou
 com um aviso que o programador pode ignorar.
 
-O que falta, em ordem de retorno:
+O que falta, em ordem de retorno (todos implementados depois; seção 5):
 
 1. **Declarar independência sem impor ordem:** algo como `unordered sent, logged`. Silencia o `W0602` sem pôr as escritas em série, e acaba com o único custo de 2× do estudo.
 2. **Várias chamadas em andamento por servidor MCP.** É desempenho puro, sem mudar a linguagem.
@@ -172,6 +186,30 @@ O que falta, em ordem de retorno:
 4. **`fork`**, para estratégias em cópias separadas, sem passar o custo para quem chama.
 5. **Recursão de grafos com `decreases`.** A spec descreve, mas não está implementada.
 6. **Recurso nas tools** (`resource order`): pegaria os bugs 20 e 22, que hoje passam.
+
+## 5. Depois das seis mudanças
+
+As seis propostas da seção 4 foram implementadas e a E5 rodou de novo.
+
+| Mudança | O que é | Efeito na E5 |
+|---|---|---|
+| `unordered a, b` | diz que as escritas de dois passos comutam: rodam juntas, sem `W0602` (`E0507` se já estiverem ordenados) | p10 reescrito com 1 linha, **0,53 s** (com `after`, 1,03 s) |
+| Várias chamadas por servidor MCP | cada pedido tem seu id, e uma thread entrega cada resposta a quem a pediu | duas escritas em tools do mesmo servidor: **0,53 s**, não 1,03 s |
+| `race first N` | o quórum: os N primeiros ramos que passam, como lista; os outros cancelados e compensados; os vencedores no diário (`E0686`) | p20 passa como escrito; a resposta fica pronta em **0,30 s** (a execução termina em 2,0 s, quando volta a chamada já enviada do perdedor) |
+| `fork repo` | uma cópia da sandbox para cada ramo ou item, feita uma vez e recuperada na retomada | p14 reescrito com **0 linhas a mais**, sem passar o custo para quem chama |
+| Recursão com `decreases` | um grafo chama a si mesmo se um `Nat` diminui em cada chamada (`E0510` a `E0512`); abaixo de 0, a chamada falha | p19 passa como escrito, sem profundidade fixa |
+| `resource Tipo(param)` | o recurso externo que a tool toca: `W0606` (escrita decidida por uma leitura do mesmo recurso sem `requires`) e `W0607` (itens de um `for each` escrevendo o mesmo recurso) | os bugs 20 e 22 do corpus, que passavam, são pegos |
+
+**Erros:** 24 dos 25 bugs de concorrência impedidos, 16 antes de rodar. Só passa o 41, o mesmo depósito mandado por duas execuções (um clique duplo): é idempotência de negócio, e a chave tem que vir do pedido do usuário.
+
+**Flexibilidade:**
+- **18 de 21** padrões passam como escritos (eram 16), e os 21 podem ser escritos (eram 20).
+- Os dois avisos sem bug continuam: `W0602` e `W0604` não podem saber se as escritas comutam ou se o lixo do perdedor importa. Mas as reescritas agora não custam tempo: `unordered` mantém o paralelismo, e gravar depois da corrida é mais rápido.
+- A recusa do p14 (`E0645`) continua, porque dois ramos editando a mesma sandbox **é** o bug 47. A mensagem agora sugere `fork`.
+
+**Ressalva sobre `resource`:** os bugs 20 e 22 só são pegos se as tools declararem o recurso. É uma cláusula opcional, como `checks`; sem ela, nada muda. A conta "24 de 25" supõe que o programador declarou.
+
+**Desempenho:** a análise continua em 2,1 a 2,4 ms por programa.
 
 ## Ameaças à validade
 

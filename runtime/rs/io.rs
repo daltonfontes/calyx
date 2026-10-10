@@ -65,9 +65,9 @@ struct State {
     /// Every model answers with fake, schema-shaped values.
     fake_models: bool,
     agent: ureq::Agent,
-    /// Running MCP servers, by command. Each has its own lock: a call
-    /// holds its server, not the state, so other calls run meanwhile.
-    servers: HashMap<Vec<String>, Arc<Mutex<mcp::Server>>>,
+    /// Running MCP servers, by command. A call holds its server, not the
+    /// state, and several calls to one server are in flight at once.
+    servers: HashMap<Vec<String>, Arc<mcp::Server>>,
     /// The program's tools, to compare with what their servers say.
     declared: HashMap<String, annotations::Declared>,
 }
@@ -218,7 +218,7 @@ fn tool_call_unlocked(req: &Value) -> Result<Value, IoError> {
         let key = server_cfg.command.clone();
         if !st.servers.contains_key(&key) {
             let server = mcp::Server::start(&server_cfg)?;
-            st.servers.insert(key.clone(), Arc::new(Mutex::new(server)));
+            st.servers.insert(key.clone(), Arc::new(server));
         }
         let server = Arc::clone(&st.servers[&key]);
         let remote = server_cfg
@@ -229,15 +229,12 @@ fn tool_call_unlocked(req: &Value) -> Result<Value, IoError> {
         let declared = st.declared.remove(&tool);
         Ok::<_, IoError>((key, server, remote, declared))
     })?;
-    // Calls to one server take turns (one stdio pipe); others go on.
-    let mut guard = server.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) =
-        declared.and_then(|d| annotations::mismatch(&d, guard.annotations.get(&remote)))
+        declared.and_then(|d| annotations::mismatch(&d, server.annotations.get(&remote)))
     {
         eprintln!("{}", f.line());
     }
-    let result = guard.call(&remote, args, meta, timeout);
-    drop(guard);
+    let result = server.call(&remote, args, meta, timeout);
     if let Err(e) = &result
         && matches!(e.kind, "Timeout" | "Unavailable")
     {

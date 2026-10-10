@@ -233,6 +233,9 @@ pub enum Stmt {
     /// `notice after paid, saved`: `notice` starts only after those steps
     /// finished, though it reads nothing from them (decision D2).
     After { node: Ident, after: Vec<Ident> },
+    /// `unordered sent, logged`: these steps' writes commute, so they run in
+    /// any order, at the same time, and the compiler does not ask for one.
+    Unordered(Vec<Ident>),
 }
 
 /// A string literal. `text` is the raw content between the quotes, with
@@ -374,6 +377,9 @@ pub enum ExprKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RaceExpr {
+    /// `race first N`: the first N branches that pass win, as a list (a
+    /// quorum). None: `race first`, one winner, its value.
+    pub count: Option<(u64, Span)>,
     /// `where cond`, with `it` for a branch's value; none: the first
     /// branch that does not fail wins.
     pub cond: Option<Expr>,

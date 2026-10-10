@@ -31,6 +31,7 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
         graph_effects: HashMap::new(),
         raw_write: false,
         raw_write_graphs: HashSet::new(),
+        recursing: None,
     };
     cx.collect(program);
     cx.resolve_signatures(program);
@@ -70,6 +71,9 @@ struct ToolSig {
     /// `compensate f(a, b)`: the tool that undoes a call, called with
     /// these parameters of this tool (D12, saga).
     compensate: Option<(Ident, Vec<Ident>)>,
+    /// `resource Order(id)`: the external thing the tool touches, by kind,
+    /// and the parameter that says which one (W0606, W0607).
+    resource: Option<(String, usize)>,
 }
 
 /// What a `write once` tool does when a call may or may not have happened.
@@ -160,6 +164,9 @@ struct Cx<'a, 'p> {
     raw_write: bool,
     /// The graphs that make such writes.
     raw_write_graphs: HashSet<String>,
+    /// While checking a graph that calls itself: its name and the parameter
+    /// it `decreases` (decision D17).
+    recursing: Option<(String, String)>,
 }
 
 fn err(code: &'static str, msg: impl Into<String>, span: Span) -> Diagnostic {
@@ -453,6 +460,7 @@ impl<'p> Cx<'_, 'p> {
         let mut on_uncertain = false;
         let mut policy = None;
         let mut checks = None;
+        let mut resource = None;
         let mut keyed = false;
         let mut batch = None;
         let mut compensate = None;
@@ -587,6 +595,25 @@ impl<'p> Cx<'_, 'p> {
                     }
                     _ => self.bad_prop(p, "a call `tool(param, ...)`: the tool that undoes this one"),
                 },
+                "resource" => match p.value.as_slice() {
+                    [Expr { kind: ExprKind::Call { callee, args }, .. }]
+                        if matches!(&callee.kind, ExprKind::Ident(_)) && args.len() == 1 =>
+                    {
+                        let ExprKind::Ident(kind) = &callee.kind else { continue };
+                        match &args[0].value.kind {
+                            ExprKind::Ident(n) => match params.iter().position(|(pn, _)| pn == n) {
+                                Some(i) => resource = Some((kind.clone(), i)),
+                                None => self.push(
+                                    err("E0307", "`resource` names something that is not a parameter", args[0].value.span)
+                                        .expected("`resource Kind(param)`: the parameter that says which one the tool touches")
+                                        .observed(format!("`{n}`")),
+                                ),
+                            },
+                            _ => self.bad_prop(p, "`Kind(param)`: a kind of resource and the parameter that names one"),
+                        }
+                    }
+                    _ => self.bad_prop(p, "`Kind(param)`: a kind of resource and the parameter that names one"),
+                },
                 "repeatable" => {
                     if !p.value.is_empty() {
                         self.bad_prop(p, "no value");
@@ -594,7 +621,7 @@ impl<'p> Cx<'_, 'p> {
                 }
                 _ => self.push(
                     err("E0301", "unknown tool property", p.key.span)
-                        .expected("`effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `batch`, `compensate`, `checks`, `repeatable` or `description`")
+                        .expected("`effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `batch`, `compensate`, `checks`, `resource`, `repeatable` or `description`")
                         .observed(format!("`{key}`")),
                 ),
             }
@@ -653,6 +680,7 @@ impl<'p> Cx<'_, 'p> {
             keyed,
             batch,
             compensate,
+            resource,
         }
     }
 
@@ -1618,13 +1646,24 @@ impl<'p> Cx<'_, 'p> {
         }
         state[i] = 1;
         for &(j, span) in &calls[i] {
-            if state[j] == 1 {
+            // A graph that calls itself (D17): with `decreases`, checked in
+            // its body; its effect is a fixed point, so the order is fine.
+            if j == i {
+                if graphs[i].decreases.is_none() {
+                    self.push(
+                        err("E0510", "a graph that calls itself needs `decreases`", span)
+                            .expected("`decreases p` under the graph's line: a `Nat` parameter that each call to itself makes smaller (`p - 1`), so the recursion ends")
+                            .observed(format!("`{}` calls itself", graphs[i].name.name)),
+                    );
+                }
+            } else if state[j] == 1 {
                 self.push(
                     err(
                         "E0101",
-                        "recursive graphs are not supported yet (planned for a later milestone)",
+                        "graphs that call each other in a circle are not supported",
                         span,
                     )
+                    .expected("a graph that calls itself, with `decreases`; or the cycle broken into one graph")
                     .observed(format!(
                         "`{}` calls `{}`",
                         graphs[i].name.name, graphs[j].name.name
@@ -1642,6 +1681,32 @@ impl<'p> Cx<'_, 'p> {
         self.raw_write = false;
         let sig_params = self.graphs[g.name.name.as_str()].1.params.clone();
         let ret = self.graphs[g.name.name.as_str()].1.ret.clone();
+        // `decreases p`: a `Nat` parameter (D17).
+        let mut decreases = None;
+        if let Some(p) = &g.decreases {
+            match sig_params.iter().position(|(n, _)| *n == p.name) {
+                Some(i) if sig_params[i].1 == Ty::Nat => decreases = Some(i),
+                Some(i) => self.push(
+                    err(
+                        "E0511",
+                        "`decreases` names a parameter that is not a `Nat`",
+                        p.span,
+                    )
+                    .expected("a `Nat` parameter: a count that goes down to 0")
+                    .observed(format!("`{}` is `{}`", p.name, sig_params[i].1)),
+                ),
+                None => self.push(
+                    err(
+                        "E0511",
+                        "`decreases` names something that is not a parameter",
+                        p.span,
+                    )
+                    .expected("a `Nat` parameter of the graph")
+                    .observed(format!("`{}`", p.name)),
+                ),
+            }
+        }
+        self.recursing = decreases.map(|i| (g.name.name.clone(), sig_params[i].0.clone()));
 
         let mut gc = GraphCx::default();
         for (n, t) in &sig_params {
@@ -1653,6 +1718,7 @@ impl<'p> Cx<'_, 'p> {
         let mut returns = Vec::new();
         let mut limits = Vec::new();
         let mut afters: Vec<(&Ident, &Vec<Ident>)> = Vec::new();
+        let mut unordered: Vec<&Vec<Ident>> = Vec::new();
         for s in &g.body {
             match s {
                 Stmt::Node {
@@ -1667,6 +1733,7 @@ impl<'p> Cx<'_, 'p> {
                 Stmt::Return(e) => returns.push(e),
                 Stmt::Limits(entries) => limits.push(entries),
                 Stmt::After { node, after } => afters.push((node, after)),
+                Stmt::Unordered(steps) => unordered.push(steps),
             }
         }
         let mut index: HashMap<&str, usize> = HashMap::new();
@@ -1923,7 +1990,9 @@ impl<'p> Cx<'_, 'p> {
             }
         }
 
-        self.unordered_writes(&locals, &deps, &ids, &nodes);
+        let commute = self.commuting(&unordered, &index, &deps);
+        self.unordered_writes(&locals, &deps, &ids, &nodes, &commute);
+        self.resource_races(&locals, &deps);
         self.lost_updates(&locals, &data_deps);
 
         // Results nobody uses: wasted money for `llm` and `read` nodes.
@@ -1983,7 +2052,9 @@ impl<'p> Cx<'_, 'p> {
             self.raw_write_graphs.insert(g.name.name.clone());
         }
 
+        self.recursing = None;
         ir::Graph {
+            decreases,
             name: g.name.name.clone(),
             params: sig_params
                 .iter()
@@ -2151,7 +2222,7 @@ impl<'p> Cx<'_, 'p> {
                             span,
                         )
                         .expected(format!(
-                            "the edit of `{s}` in a step of its own, so the order is defined"
+                            "the edit of `{s}` in a step of its own, so the order is defined, or `fork {s}`: a copy for each"
                         ))
                         .observed(format!(
                             "`{s}` borrowed twice in one expression, at least once with `edits`"
@@ -2168,14 +2239,84 @@ impl<'p> Cx<'_, 'p> {
         all
     }
 
+    /// `unordered a, b`: pairs of steps whose writes commute. Each name must
+    /// be a step (`E0639`), and steps that already wait for one another
+    /// cannot be unordered (`E0507`).
+    fn commuting(
+        &mut self,
+        unordered: &[&Vec<Ident>],
+        index: &HashMap<&str, usize>,
+        deps: &[Vec<usize>],
+    ) -> HashSet<(usize, usize)> {
+        let reaches = |from: usize, to: usize| {
+            let mut seen = HashSet::new();
+            let mut stack = deps[from].clone();
+            while let Some(d) = stack.pop() {
+                if d == to {
+                    return true;
+                }
+                if seen.insert(d) {
+                    stack.extend(deps[d].iter().copied());
+                }
+            }
+            false
+        };
+        let mut pairs = HashSet::new();
+        for steps in unordered {
+            let mut found: Vec<(usize, &Ident)> = Vec::new();
+            for s in steps.iter() {
+                match index.get(s.name.as_str()) {
+                    Some(&i) => found.push((i, s)),
+                    None => self.push(
+                        err(
+                            "E0639",
+                            "`unordered` names something that is not a step",
+                            s.span,
+                        )
+                        .expected("a step of this graph (`name = ...`)")
+                        .observed(format!("`{}`", s.name)),
+                    ),
+                }
+            }
+            if steps.len() < 2 {
+                self.push(
+                    err(
+                        "E0507",
+                        "`unordered` needs two steps or more",
+                        steps[0].span,
+                    )
+                    .expected("`unordered a, b`: the steps whose writes commute"),
+                );
+            }
+            for (k, &(b, bn)) in found.iter().enumerate() {
+                for &(a, an) in &found[..k] {
+                    if reaches(a, b) || reaches(b, a) {
+                        self.push(
+                            err("E0507", "steps declared `unordered` are ordered", bn.span)
+                                .expected(format!(
+                                    "`{}` and `{}` independent: neither reads the other, and no `after` between them",
+                                    an.name, bn.name
+                                ))
+                                .observed("one of them waits for the other".to_owned()),
+                        );
+                    }
+                    pairs.insert((a.min(b), a.max(b)));
+                }
+            }
+        }
+        pairs
+    }
+
     /// Two steps that write outside the run with no order between them may
-    /// run at the same time, in either order (decision D2).
+    /// run at the same time, in either order (decision D2), unless the
+    /// program says their writes commute (`unordered`).
     fn unordered_writes(
         &mut self,
         locals: &[Local],
         deps: &[Vec<usize>],
         ids: &HashMap<usize, NodeId>,
         nodes: &[ir::Node],
+        commute: &HashSet<(usize, usize)>,
     ) {
         let writes: Vec<usize> = (0..locals.len())
             .filter(|i| {
@@ -2200,16 +2341,127 @@ impl<'p> Cx<'_, 'p> {
         let befores: HashMap<usize, HashSet<usize>> =
             writes.iter().map(|&w| (w, before(w))).collect();
         for (k, &b) in writes.iter().enumerate() {
-            if let Some(&a) = writes[..k]
-                .iter()
-                .find(|&&a| !befores[&b].contains(&a) && !befores[&a].contains(&b))
-            {
+            if let Some(&a) = writes[..k].iter().find(|&&a| {
+                !befores[&b].contains(&a)
+                    && !befores[&a].contains(&b)
+                    && !commute.contains(&(a.min(b), a.max(b)))
+            }) {
                 let (an, bn) = (&locals[a].name.name, &locals[b].name.name);
                 self.push(
                     warn("W0602", "external writes without a defined order", locals[b].name.span)
-                        .expected(format!("`{bn} after {an}` (or `{an} after {bn}`), or a value one passes to the other"))
+                        .expected(format!("`{bn} after {an}` (or `{an} after {bn}`), a value one passes to the other, or `unordered {an}, {bn}` if the writes commute"))
                         .observed(format!("`{an}` and `{bn}` both write outside the run and may run at the same time")),
                 );
+            }
+        }
+    }
+
+    /// Calls of tools that declare `resource Kind(param)`, in `e`: the kind,
+    /// the key (as text, when it is a name, a field or a literal), the
+    /// effect, whether `requires` guards it, and where.
+    fn resource_calls(&self, e: &Expr) -> Vec<ResourceCall> {
+        let mut guarded = HashSet::new();
+        walk_expr(e, &mut |x| {
+            if let ExprKind::Guarded { call, .. } = &x.kind {
+                guarded.insert((call.span.start, call.span.end));
+            }
+        });
+        let mut out = Vec::new();
+        walk_expr(e, &mut |x| {
+            let ExprKind::Call { callee, args } = &x.kind else {
+                return;
+            };
+            let ExprKind::Ident(n) = &callee.kind else {
+                return;
+            };
+            let Some(sig) = self.tools.get(n.as_str()) else {
+                return;
+            };
+            let Some((kind, i)) = &sig.resource else {
+                return;
+            };
+            let pname = &sig.params[*i].0;
+            let arg = args
+                .iter()
+                .find(|a| a.name.as_ref().is_some_and(|m| m.name == *pname))
+                .or_else(|| args.iter().filter(|a| a.name.is_none()).nth(*i));
+            let Some(arg) = arg else { return };
+            out.push(ResourceCall {
+                kind: kind.clone(),
+                key: key_text(&arg.value),
+                key_expr: arg.value.clone(),
+                writes: sig.effect >= Effect::Write,
+                guarded: guarded.contains(&(x.span.start, x.span.end)),
+                span: x.span,
+            });
+        });
+        out
+    }
+
+    /// With `resource` declared on tools (decision D29):
+    /// - W0606: a write that depends on a read of the same resource (same
+    ///   kind, same key) without `requires`: the resource may change in
+    ///   between (check, then act);
+    /// - W0607: a write in the items of a `for each` whose key does not
+    ///   depend on the item: every item writes the same resource at once.
+    fn resource_races(&mut self, locals: &[Local], deps: &[Vec<usize>]) {
+        let calls: Vec<Vec<ResourceCall>> = locals
+            .iter()
+            .map(|l| {
+                let mut v = self.resource_calls(l.value);
+                if let Some((_, over)) = l.fan_out {
+                    v.extend(self.resource_calls(over));
+                }
+                v
+            })
+            .collect();
+        let before = |start: usize| {
+            let mut seen = HashSet::new();
+            let mut stack = deps[start].clone();
+            while let Some(d) = stack.pop() {
+                if seen.insert(d) {
+                    stack.extend(deps[d].iter().copied());
+                }
+            }
+            seen
+        };
+        for (i, l) in locals.iter().enumerate() {
+            let earlier = before(i);
+            for w in calls[i].iter().filter(|c| c.writes && !c.guarded) {
+                let Some(key) = &w.key else { continue };
+                let read = earlier.iter().find(|&&r| {
+                    calls[r]
+                        .iter()
+                        .any(|c| !c.writes && c.kind == w.kind && c.key.as_ref() == Some(key))
+                });
+                if let Some(&r) = read {
+                    self.push(
+                        warn("W0606", "a write decided on a read of the same resource, without `requires`", w.span)
+                            .expected(format!("`requires` on the write, checked by the service when it writes (its tool declares `checks`); else `{}` may have changed since `{}` read it", w.kind, locals[r].name.name))
+                            .observed(format!("`{}` reads {} `{}`, and `{}` writes it", locals[r].name.name, w.kind, key.split_once(':').map_or(key.as_str(), |(_, k)| k), l.name.name)),
+                    );
+                }
+            }
+            // The items of a `for each` step, and `for each` expressions.
+            let mut items: Vec<(String, Expr)> = Vec::new();
+            if let Some((var, _)) = l.fan_out {
+                items.push((var.name.clone(), l.value.clone()));
+            }
+            walk_expr(l.value, &mut |x| {
+                if let ExprKind::Each { var, body, .. } = &x.kind {
+                    items.push((var.name.clone(), (**body).clone()));
+                }
+            });
+            for (var, body) in &items {
+                for w in self.resource_calls(body).iter().filter(|c| c.writes) {
+                    if !mentions(&w.key_expr, var) {
+                        self.push(
+                            warn("W0607", "the items of a `for each` write the same resource at once", w.span)
+                                .expected(format!("a key that depends on `{var}` (one {} per item), or the write after the `for each`", w.kind))
+                                .observed(format!("every item writes the same {}", w.kind)),
+                        );
+                    }
+                }
             }
         }
     }
@@ -2475,6 +2727,9 @@ impl<'p> Cx<'_, 'p> {
                 }
             }
             ExprKind::Borrow { mode, target } => match gc.scope.get(&target.name) {
+                // `fork repo`: a copy of its own, for a subgraph to edit;
+                // the original is only read, when the copy is made (D13).
+                Some(Ty::Sandbox) if mode.name == "fork" => Typed::pure(Ty::Sandbox),
                 Some(Ty::Sandbox) => Typed::pure(Ty::Lent(mode.name == "edits")),
                 Some(Ty::Error) => Typed::pure(Ty::Error),
                 Some(other) => {
@@ -3016,9 +3271,29 @@ impl<'p> Cx<'_, 'p> {
             Some(t) => t,
             None => Ty::Error,
         };
+        // `race first N`: a quorum. N winners, as a list; `on none` (fewer
+        // than N passed) gives a list too.
+        let branch_ty = ty.clone();
+        let ty = match r.count {
+            Some((n, s)) => {
+                if n == 0 || n as usize > r.branches.len() {
+                    self.push(
+                        err(
+                            "E0686",
+                            "`race first N` needs 1 to as many winners as branches",
+                            s,
+                        )
+                        .expected(format!("a number from 1 to {}", r.branches.len()))
+                        .observed(format!("{n}")),
+                    );
+                }
+                Ty::List(Box::new(branch_ty.clone()), None)
+            }
+            None => ty,
+        };
         if let Some(c) = &r.cond {
             let mut inner = gc.clone();
-            inner.scope.insert("it".into(), ty.clone());
+            inner.scope.insert("it".into(), branch_ty.clone());
             let t = self.expr(c, &inner);
             self.expect_bool(&t.ty, c.span);
             if let Some(s) = self.impure(c) {
@@ -3042,7 +3317,11 @@ impl<'p> Cx<'_, 'p> {
                 if !assignable(&t.ty, &ty) {
                     self.push(
                         err("E0684", "`on none` gives a value of another type", v.span)
-                            .expected(format!("`{ty}`, like the branches"))
+                            .expected(if r.count.is_some() {
+                                format!("`{ty}`, the list of winners the race gives")
+                            } else {
+                                format!("`{ty}`, like the branches")
+                            })
                             .observed(format!("`{}`", t.ty)),
                     );
                 }
@@ -3677,6 +3956,31 @@ impl<'p> Cx<'_, 'p> {
             }
             filled[slot] = true;
             let (pname, pty) = &params[slot];
+            if let Some((g, p)) = &self.recursing
+                && g == callee
+                && p == pname
+            {
+                // A call to itself: the count must go down (D17).
+                let goes_down = matches!(&a.value.kind, ExprKind::Binary { op, left, right }
+                    if op == "-"
+                        && matches!(&left.kind, ExprKind::Ident(n) if n == p)
+                        && matches!(&right.kind, ExprKind::Int { value, unit: None } if *value > 0));
+                if !goes_down {
+                    let p = p.clone();
+                    self.push(
+                        err(
+                            "E0512",
+                            "a call to itself must make the `decreases` parameter smaller",
+                            a.value.span,
+                        )
+                        .expected(format!(
+                            "`{p} - 1` (or minus another whole number) for `{p}`"
+                        ))
+                        .observed("something that may not be smaller".to_owned()),
+                    );
+                }
+                continue;
+            }
             if let Some(d) = lent_mismatch(&t.ty, pty, pname, a.value.span) {
                 self.push(d);
                 continue;
@@ -3737,6 +4041,57 @@ impl Typed {
             effect: Effect::Pure,
         }
     }
+}
+
+/// A call of a tool that declares `resource` (see `resource_calls`).
+struct ResourceCall {
+    kind: String,
+    key: Option<String>,
+    key_expr: Expr,
+    writes: bool,
+    guarded: bool,
+    span: Span,
+}
+
+/// A key as text, when two keys can be compared by what is written: a
+/// name, a field of one, or a literal.
+fn key_text(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Ident(n) => Some(format!("name:{n}")),
+        ExprKind::Str(s) => Some(format!("text:{}", s.text)),
+        ExprKind::Field { base, name } => key_text(base).map(|b| format!("{b}.{}", name.name)),
+        _ => None,
+    }
+}
+
+/// Does `e` use the name `var` (also inside `{...}` of a text)?
+fn mentions(e: &Expr, var: &str) -> bool {
+    let mut found = false;
+    walk_expr(e, &mut |x| match &x.kind {
+        ExprKind::Ident(n) if n == var => found = true,
+        ExprKind::Str(s) => {
+            let t = &s.text;
+            let mut rest = t.as_str();
+            while let Some(i) = rest.find('{') {
+                rest = &rest[i + 1..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if name == var {
+                    found = true;
+                }
+            }
+        }
+        _ => {}
+    });
+    found
+}
+
+/// Visits `e` and every expression inside it.
+fn walk_expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    let mut g = |x: &Expr| f(x);
+    for_each_expr(&Stmt::Return(e.clone()), &mut g);
 }
 
 /// Visits every expression in a statement (including nested ones).
@@ -3816,7 +4171,7 @@ fn for_each_expr(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
             walk(value, f);
         }
         Stmt::Return(e) => walk(e, f),
-        Stmt::After { .. } => {}
+        Stmt::After { .. } | Stmt::Unordered(_) => {}
     }
 }
 

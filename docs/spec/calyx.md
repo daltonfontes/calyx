@@ -122,9 +122,17 @@ tool NOME(parametros) -> Tipo:
     on_uncertain verify(f(...)) | pause | accept_loss   # obrigatório para `write once`
     checks TipoDeEstado                  # estado validável no momento do efeito (D29)
     compensate g(param, ...)             # a escrita que desfaz esta, se o ramo da corrida perder (D12)
+    resource Tipo(param)                 # o recurso externo que a tool toca, e o parâmetro que diz qual (W0606, W0607)
     repeatable                           # repetir com os mesmos argumentos é legítimo (D5)
     description "texto"                  # o que a tool faz, para modelos que a chamam (agentes)
 ```
+
+**Recursos (`resource Pedido(id)`):** opcional. Diz que a tool toca um recurso externo do tipo `Pedido`, e qual: o do parâmetro `id`. Tools diferentes falam do mesmo recurso pelo mesmo tipo (`get_order(id)` com `resource Order(id)`, `refund(request, order, ...)` com `resource Order(order)`). Com isso o compilador avisa:
+
+- `W0606` (conferir, depois agir): uma escrita que depende de uma leitura do mesmo recurso, com a mesma chave (o mesmo nome, campo ou texto), sem `requires`. Entre a leitura e a escrita o recurso pode mudar; `requires` faz o serviço conferir no momento da escrita (seção 5.11).
+- `W0607`: uma escrita nos itens de um `for each` cuja chave não depende do item: todos os itens escrevem o mesmo recurso ao mesmo tempo.
+
+Sem `resource`, nada disso é julgado: o compilador não sabe o que uma tool toca. Uma chave que não é um nome, um campo ou um texto não é comparada (sem falso alarme). Na E5, os bugs 20 e 22 do corpus, que passavam, são pegos assim.
 
 **Contratos de escrita (implementados no M6a):**
 
@@ -211,7 +219,20 @@ graph NOME(parametros) -> Tipo:
 ```
 
 - `effect` restringe o efeito máximo do grafo; o compilador verifica.
-- `decreases` indica o parâmetro que diminui a cada chamada recursiva (D17). **Ainda não implementado:** um grafo que chama a si mesmo, direta ou indiretamente, é recusado (`E0101`); a profundidade se escreve à mão, um grafo por nível (a E5 mede o custo: `docs/evaluation/contratos-e-concorrencia.md`).
+- `decreases p` (D17): um grafo pode chamar a si mesmo se declara qual parâmetro diminui. `p` precisa ser `Nat` (`E0511`), e em toda chamada a si mesmo o argumento dele é `p - k`, com `k` um número inteiro positivo (`E0512`); sem `decreases`, `E0510`. Assim toda recursão termina: se faltar o caso base, a chamada com `p` abaixo de 0 falha (`... called with p = -1: below 0`). Cada chamada tem as suas chaves (`work/subs#0[1]/work/...`), então a retomada aproveita o diário em qualquer profundidade. Grafos que se chamam em círculo (`a` chama `b`, que chama `a`) continuam recusados (`E0101`): o ciclo vira um grafo só.
+
+```
+graph work(task: Text, depth: Nat) -> Text:
+    decreases depth
+    answer = if depth == 0:
+        m(solve(task))
+    else:
+        parts = m(split(task))
+        subs = for each p in parts:
+            work(p, depth - 1)
+        m(merge(subs))
+    return answer
+```
 
 ### 4.9 Entidade (D15)
 
@@ -394,8 +415,9 @@ best = race first where it.confident:
 - **`on none` é obrigatório** (`E0683`): `fail "motivo"` ou um valor do tipo dos ramos (`E0684`). Vale quando todos os ramos terminaram e nenhum passou; um ramo que falha perde.
 - **O vencedor vai para o diário** com o seu valor. A retomada e o `replay` não disputam a corrida de novo, mesmo que outro ramo terminasse primeiro desta vez.
 - **Cancelamento entre passos:** os subgrafos dos ramos perdedores param (as tarefas deles não rodam mais) e as chamadas que ainda esperavam a vez não são feitas. Uma chamada já em andamento termina, e a resposta não é usada (o rastro diz "lost the race"); a execução espera por ela antes de terminar.
+- **Quórum (`race first N`):** `dois = race first 2:` com três ramos termina quando **dois** passam na condição (ou não falham, sem `where`), e dá uma `List[T]` com os valores deles, na ordem dos ramos. Os outros são cancelados (e as escritas deles compensadas, como abaixo). Se menos de N passam, vale `on none`, que dá uma `List[T]` ou falha. O diário guarda os vencedores (`"winners"`), então a corrida é decidida uma vez só, também na retomada. `N` vai de 1 ao número de ramos (`E0686`). O grafo segue com os vencedores assim que eles chegam; uma chamada de um perdedor que já estava a caminho termina sem ser usada, e a execução só acaba depois dela (o provedor a cobra de qualquer jeito). Na E5, a resposta fica pronta em 0,32 s, contra 2,0 s esperando os três.
 - **Escritas nos ramos e compensação (*saga*):** um ramo que perde pode já ter escrito, e uma escrita em andamento termina quando a corrida é decidida. Se a tool declara `compensate g(...)`, a escrita é **desfeita**: antes de mandá-la, o runtime grava no diário como desfazê-la (`owe:<chave>`); quando o ramo perde, a corrida só termina depois de chamar `g` para cada escrita dele que foi mandada, com a chave `undo:<chave>`. Uma escrita ainda a caminho é esperada antes de ser desfeita; uma cancelada antes de começar não é desfeita. Depois de uma queda, a retomada acha a corrida decidida e as dívidas no diário, e desfaz o que falta, uma vez só. A compensação pode ser chamada para uma escrita que não chegou a acontecer (a queda veio entre gravar a dívida e mandar), então ela precisa aceitar não ter o que desfazer. Uma escrita sem `compensate` num ramo (inclusive mensagens a entidades e escritas de agentes) recebe o aviso `W0604`; o caminho seguro, então, é escrever depois da corrida, com o vencedor. Exemplo: `examples/saga.clyx`.
-- **Sandboxes:** dois ramos não podem editar a mesma sandbox (`E0645`). `fork` (uma cópia por ramo) fica para depois.
+- **Sandboxes:** dois ramos não podem editar a mesma sandbox (`E0645`). Cada um pode editar a sua cópia: `a: tentar(fork repo, ...)` (seção 7).
 
 ### 5.9 Falha como valor (D11)
 
@@ -419,6 +441,12 @@ notificar after salvar, cobrar
 ```
 
 Aresta de ordem, sem dados: `notificar` só começa depois que os passos listados terminaram. O compilador avisa (`W0602`) quando dois passos com efeito de escrita externa (`write`, `write once`) não têm ordem definida, nem por dados nem por `after`. Nomes que não são passos e um passo depois de si mesmo são erros (`E0639`); ordens circulares, `E0506`. Recursos com dono (seção 7) já geram ordem sozinhos (M6b).
+
+```
+unordered avisar, registrar
+```
+
+O contrário: as escritas desses passos **comutam** (avisar o cliente e registrar na análise, em qualquer ordem). Eles rodam ao mesmo tempo, e o `W0602` não é dado entre eles. Sem isso, a única forma de calar o aviso seria `after`, que põe as escritas em série (o dobro da latência na E5). Cada nome precisa ser um passo (`E0639`); dois passos que já esperam um pelo outro, por dados ou por `after`, não podem ser `unordered`, e menos de dois passos não dizem nada (`E0507`).
 
 ### 5.11 Precondições e invariantes (D29, D25)
 
@@ -543,8 +571,8 @@ O efeito de um nó é **inferido**: o maior efeito de tudo o que ele chama. Orde
 `Sandbox`, `Budget` e capacidades `write once` têm **um dono por vez**.
 
 - Emprestar: `reads recurso` (leitura; vários ao mesmo tempo) ou `edits recurso` (escrita; um por vez).
+- **`fork repo`** (D13): uma cópia isolada, para um subgrafo editar à vontade: `tentar(fork repo, ...)`. Para a análise, o `fork` só **lê** o original (no momento da cópia), então dois ramos de uma corrida, ou os itens de um `for each`, com `fork repo` não conflitam. A cópia fica ao lado do original (`<sandbox>.forks/<chave>`), feita uma vez por lugar do `fork` na execução (cada ramo e cada item tem a sua), sob a trava de leitura do original, com o primeiro snapshot. A retomada encontra a cópia e a põe de volta no último snapshot do diário. O que um ramo faz na cópia não volta ao original: o resultado do subgrafo é que diz o que aproveitar.
 - Dividir explicitamente entre ramos *(ainda não implementado)*:
-  - `repo.fork(n)`: cópias isoladas (D13);
   - `repo.share(n)`: o mesmo repositório, com validação pelo conjunto de leitura a cada escrita (D13);
   - `orcamento.split(6 USD, 4 USD)` *(sintaxe provisória)*.
 
@@ -565,7 +593,7 @@ graph solve(issue: Text, repo: Sandbox) -> Text:
 - **O compilador recusa** itens de um `for each` editando a mesma sandbox (`E0644`); duas partes de um passo que rodariam ao mesmo tempo, uma editando (`E0645`); e a sandbox como valor: guardada num passo, devolvida, mostrada a um prompt (`E0647`).
 - **No runtime:** edições de uma sandbox rodam uma por vez, leituras ao mesmo tempo (também as tools de uma volta de um agente). Antes de cada chamada que edita, um snapshot; se a chamada falha, a sandbox volta a ele, e chamadas `effect sandbox` são repetidas em erros temporários a partir do mesmo estado.
 - **Snapshots por conteúdo**, em `<sandbox>.snapshots/`: cada arquivo é guardado uma vez pelo SHA-256; um snapshot é um manifesto (caminho → hash). O hash do snapshot depois de cada edição vai para o diário com a resposta da tool. **Na retomada, a sandbox volta ao último snapshot do diário**: o que uma chamada interrompida fez é desfeito, e ela roda de novo.
-- **Limites:** a sandbox não é isolamento do sistema operacional; uma tool que escreve fora do caminho que recebe não é impedida. Links simbólicos não são copiados. `fork`/`share` ainda não existem.
+- **Limites:** a sandbox não é isolamento do sistema operacional; uma tool que escreve fora do caminho que recebe não é impedida. Links simbólicos não são copiados. `share` ainda não existe.
 
 ---
 
@@ -745,6 +773,7 @@ Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*`
   - `--probe` (só no `check --tools`): testa de verdade cada `write` com chave que tenha `[tools.<nome>.probe]` no `calyx.toml` (uma tool de preparação opcional, os argumentos, e uma tool de leitura que conta os efeitos). São duas chamadas com a mesma chave e uma contagem: `E0704` se contar mais de um efeito, seja o que for que o servidor diga; `E0705` se o teste não conseguir rodar ou contar. Faz escritas reais: só contra o ambiente de teste do serviço. Exemplo em `bench/stripe/calyx.toml`.
   - `E0701`–`E0703` (só no `check --tools`): tool sem servidor no `calyx.toml`, servidor que não sobe, servidor sem a tool.
   Só são julgadas as tools cujo servidor manda anotações: sem elas, os padrões do MCP (não é leitura, não é idempotente) marcariam toda leitura de um servidor que simplesmente não diz nada. As anotações atuais do MCP não dizem se o serviço respeita a chave de idempotência: uma `write` com chave num serviço que a ignora só recebe aviso se o servidor mandar a anotação proposta `idempotencyKeyHint`.
+- **Servidores MCP:** um processo por comando do `calyx.toml`, iniciado na primeira chamada e mantido até o fim da execução. Várias chamadas ao mesmo servidor ficam em andamento ao mesmo tempo, como o protocolo permite: cada pedido tem seu id, e uma thread entrega cada resposta a quem a pediu. Só a escrita de cada pedido no stdin do servidor é uma de cada vez. (Antes, as chamadas a um servidor iam em série: duas escritas independentes levavam o dobro, E5.)
 - **Saída de tools:** com `-> Text`, o texto do servidor, cortado em `max_output` (D16). Com outro tipo (um record, uma lista, um número...), o runtime lê a resposta inteira (o `structuredContent`, ou o texto como JSON), **guarda só os campos que o tipo declara**, em todos os níveis, confere o resultado contra o tipo (um campo declarado que falta é a falha `Decode`), e só então aplica `max_output` ao que sobrou (4 bytes de JSON por token): tira os últimos itens das listas mais longas e, se ainda for preciso, corta a segunda metade dos textos mais longos, sem nunca deixar um JSON pela metade. É esse valor que o diário guarda e que um agente vê como observação. No exemplo `examples/github/repo_agent.clyx`, as respostas do servidor do GitHub (16 mil caracteres só para uma versão, quase tudo metadado) caem para os campos que o agente usa, e a entrada do modelo, de 9.241 para 946 tokens. Uma tool que retorna `Unit` não é conferida.
 - **Programas como servidores MCP (`calyx serve`).** `calyx serve <arquivo.clyx>` serve o programa por MCP (stdio), no diretório do programa: cada `graph` é uma tool, com o esquema dos parâmetros. As anotações saem do programa: `readOnlyHint: true` se nenhum passo do grafo escreve (efeitos `pure`, `llm`, `read`); senão `idempotencyKeyHint: true` (a anotação proposta em [`docs/mcp/`](../mcp/idempotency-key-hint.md)). Uma chamada com chave (`idempotencyKey`, ou `calyx/idempotency_key` no `_meta`) fica presa a uma execução, gravada em `.calyx/serve/keys.json` antes de a execução passar do primeiro passo: a mesma chave com os mesmos argumentos devolve a resposta gravada (`_meta` `calyx/replayed`), ou retoma a execução se ela não terminou (queda, falha); com outros argumentos, erro `IdempotencyConflict`. Sem chave, cada chamada é uma execução nova. Uma execução que espera (`receive`) responde com o texto da espera, sem erro.
 - **Falha:** se um passo falha depois das tentativas, a execução para com o grafo, o passo e o motivo, a menos que um `try` a capture (D11).

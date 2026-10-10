@@ -217,12 +217,17 @@ pub enum Expr {
     /// (in local `slot`) passes `cond` wins. With no winner, `on_none`, or
     /// failing with `on_none_fail`.
     Race {
+        /// `race first N`: N winners, as a list. None: one, its value.
+        count: Option<u64>,
         branches: Vec<(String, Expr)>,
         slot: usize,
         cond: Option<Box<Expr>>,
         on_none: Option<Box<Expr>>,
         on_none_fail: Option<String>,
     },
+    /// `fork repo` (decision D13): a copy of the sandbox, made once (keyed
+    /// like a call) and owned by whoever receives it.
+    Fork(Box<Expr>),
     Done(Box<Expr>),
     Next(Box<Expr>),
     /// `Ok(value)` or `Failed(error)` (decision D11).
@@ -385,6 +390,9 @@ pub struct Limits {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Graph {
     pub name: String,
+    /// `decreases p` (decision D17): the index of the parameter that each
+    /// call to itself makes smaller; the runtime stops one that goes below 0.
+    pub decreases: Option<usize>,
     /// Parameters as `(name, type)`.
     pub params: Vec<(String, String)>,
     pub ret: String,
@@ -422,6 +430,7 @@ impl Graph {
                 Expr::Unary { value, .. }
                 | Expr::Done(value)
                 | Expr::Next(value)
+                | Expr::Fork(value)
                 | Expr::Try(value) => calls(value),
                 Expr::If { cond, then, els } => calls(cond) + calls(then).max(calls(els)),
                 Expr::Match { value, cases } => {
@@ -648,6 +657,7 @@ mod tests {
     #[test]
     fn displays_a_graph() {
         let g = Graph {
+            decreases: None,
             name: "g".into(),
             params: vec![("x".into(), "Text".into())],
             ret: "Text".into(),

@@ -1048,6 +1048,17 @@ impl Parser<'_> {
             return Err(self.unsupported("a, b = ... (destructuring)", "a later milestone"));
         }
         if self.kind() == TokenKind::Ident
+            && self.text_of(self.tokens[self.pos]) == "unordered"
+            && self.nth_kind(1) == TokenKind::Ident
+        {
+            self.advance(); // unordered
+            let mut steps = vec![self.ident("a step")?];
+            while self.eat(TokenKind::Comma) {
+                steps.push(self.ident("a step")?);
+            }
+            return Ok(Stmt::Unordered(steps));
+        }
+        if self.kind() == TokenKind::Ident
             && self.nth_kind(1) == TokenKind::Ident
             && self.text_of(self.tokens[self.pos + 1]) == "after"
         {
@@ -1186,10 +1197,11 @@ impl Parser<'_> {
                 "`name = for each item in list: ...`",
             ));
         }
-        if (self.is_word("reads") || self.is_word("edits")) && self.nth_kind(1) == TokenKind::Ident
+        if (self.is_word("reads") || self.is_word("edits") || self.is_word("fork"))
+            && self.nth_kind(1) == TokenKind::Ident
         {
             let start = self.tok().span;
-            let mode = self.ident("`reads` or `edits`")?;
+            let mode = self.ident("`reads`, `edits` or `fork`")?;
             let target = self.ident("the resource to lend")?;
             return Ok(Expr {
                 span: self.span_from(start),
@@ -1626,6 +1638,17 @@ impl Parser<'_> {
     fn race_expr(&mut self) -> PResult<Expr> {
         let start = self.advance().span; // race
         self.expect_word("first")?;
+        let count = if self.kind() == TokenKind::Int {
+            let t = self.tok();
+            self.advance();
+            let text = self.text_of(t).replace('_', "");
+            let n: u64 = text.parse().map_err(|_| {
+                self.error_here_at(t.span, "E0100", "syntax error", "a whole number", &text)
+            })?;
+            Some((n, t.span))
+        } else {
+            None
+        };
         let cond = if self.is_word("where") {
             self.advance();
             Some(self.expr()?)
@@ -1686,6 +1709,7 @@ impl Parser<'_> {
         Ok(Expr {
             span: self.span_from(start),
             kind: ExprKind::Race(Box::new(RaceExpr {
+                count,
                 cond,
                 branches,
                 on_none,
@@ -2195,7 +2219,7 @@ graph research(topic: Text) -> List[Text]:
         match &g.body[0] {
             Stmt::Node { value, .. } => value.clone(),
             Stmt::Return(e) => e.clone(),
-            Stmt::Limits(_) | Stmt::After { .. } => panic!(),
+            Stmt::Limits(_) | Stmt::After { .. } | Stmt::Unordered(_) => panic!(),
         }
     }
 

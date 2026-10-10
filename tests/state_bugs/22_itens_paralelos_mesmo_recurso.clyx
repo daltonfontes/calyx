@@ -1,5 +1,6 @@
 # Bug: Itens de um `for each` gravam o mesmo arquivo em paralelo; o resultado depende da ordem.
-# Pego por: none
+# Pego por: W0607
+# (com `resource` declarado na tool: sem ele, passa)
 model m = "m"
 
 type Status = Pending | Delivered | Cancelled
@@ -24,6 +25,7 @@ prompt decide(o: Order) -> Float:
 tool save(path: Text, text: Text) -> Unit:
     effect write
     idempotency_key path
+    resource File(path)
 
 graph g(ids: List[Text]) -> Text:
     saved = for each id in ids: save("relatorio.txt", id)

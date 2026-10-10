@@ -12,9 +12,11 @@ prompt merge(xs: List[Text]) -> Text:
 
 graph work(task: Text, depth: Nat) -> Text:
     decreases depth
-    if depth == 0:
-        return m(solve(task))
-    parts = m(split(task))
-    subs = for each p in parts:
-        work(p, depth - 1)
-    return m(merge(subs))
+    answer = if depth == 0:
+        m(solve(task))
+    else:
+        parts = m(split(task))
+        subs = for each p in parts:
+            work(p, depth - 1)
+        m(merge(subs))
+    return answer

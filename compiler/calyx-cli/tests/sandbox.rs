@@ -31,6 +31,19 @@ graph check_first(repo: Sandbox) -> Text:
     fixed = edit_file(edits repo, "calc.py", "(len(values) - 1)", "len(values)")
     return tests
 
+graph attempt(repo: Sandbox, new: Text) -> Text:
+    fixed = edit_file(edits repo, "calc.py", "(len(values) - 1)", new)
+    return read_file(reads repo, "calc.py")
+
+# `fork repo`: each attempt edits a copy of its own; the original is only read.
+graph variants(repo: Sandbox) -> List[Text]:
+    both = race first 2:
+        right: attempt(fork repo, "len(values)")
+        other: attempt(fork repo, "(len(values) + 1)")
+        on none: fail "nenhuma"
+    original = read_file(reads repo, "calc.py")
+    return both + [original]
+
 graph twice(repo: Sandbox) -> Text:
     first = edit_file(edits repo, "calc.py", "(len(values) - 1)", "len(values)")
     second = edit_file(edits repo, "calc.py", "if not values:", "if len(values) == 0:")
@@ -227,4 +240,44 @@ fn a_sandbox_argument_must_be_a_directory() {
     );
     assert_eq!(out.status.code(), Some(2));
     assert!(text(&out.stderr).contains("expected a directory for a `Sandbox`"));
+}
+
+#[test]
+fn each_fork_edits_a_copy_of_its_own() {
+    let d = Dir::new("fork");
+    let args = [
+        "run", "p.clyx", "--graph", "variants", "--repo", "repo", "--quiet",
+    ];
+    let out = d.calyx(&args, None);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let v: Vec<String> = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        v[0].contains("/ len(values)") && !v[0].contains("- 1)"),
+        "{}",
+        v[0]
+    );
+    assert!(v[1].contains("(len(values) + 1)"), "{}", v[1]);
+    assert!(
+        v[2].contains("(len(values) - 1)"),
+        "the original is untouched: {}",
+        v[2]
+    );
+
+    // Killed after the first edit reached the journal: the resumed run puts
+    // that fork back to its snapshot and finishes, with the same result.
+    let d2 = Dir::new("fork-crash");
+    let crashed = d2.calyx(&args, Some(1));
+    assert!(!crashed.status.success());
+    let id = text(&crashed.stderr)
+        .lines()
+        .find_map(|l| l.strip_prefix("calyx: run "))
+        .unwrap()
+        .trim()
+        .to_owned();
+    let resumed = d2.calyx(&["resume", &id, "--quiet"], None);
+    assert!(resumed.status.success(), "{}", text(&resumed.stderr));
+    assert_eq!(
+        serde_json::from_slice::<Vec<String>>(&resumed.stdout).unwrap(),
+        v
+    );
 }

@@ -1,0 +1,14 @@
+error[E0686]: `race first N` needs 1 to as many winners as branches
+- expected : a number from 1 to 2
+- observed : 4
+Location: race_quorum.clyx:16:23
+
+error[E0684]: `on none` gives a value of another type
+- expected : `List[Text]`, the list of winners the race gives
+- observed : `Text`
+Location: race_quorum.clyx:26:18
+
+error[E0610]: returned value has the wrong type
+- expected : `Text`
+- observed : `List[Text]`
+Location: race_quorum.clyx:34:12

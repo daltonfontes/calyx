@@ -23,6 +23,6 @@ error[E0305]: invalid value for `max_output`
 Location: m1_tools.clyx:11:5
 
 error[E0301]: unknown tool property
-- expected : `effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `batch`, `compensate`, `checks`, `repeatable` or `description`
+- expected : `effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `batch`, `compensate`, `checks`, `resource`, `repeatable` or `description`
 - observed : `color`
 Location: m1_tools.clyx:12:5

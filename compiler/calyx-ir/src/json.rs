@@ -249,6 +249,8 @@ fn graph(o: &mut String, g: &Graph) {
     list(o, &g.params, |o, (_, t)| string(o, t));
     o.push_str(",\"ret\":");
     string(o, &g.ret);
+    o.push_str(",\"decreases\":");
+    opt_u64(o, g.decreases.map(|i| i as u64));
     o.push_str(",\"nodes\":");
     list(o, &g.nodes, node);
     o.push_str(",\"output\":");
@@ -574,6 +576,7 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
         // A branch's calls are keyed by it: `scope#id.name#call`; the
         // winner goes to the journal as `scope#id`.
         Expr::Race {
+            count,
             branches,
             slot,
             cond,
@@ -581,6 +584,8 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
             on_none_fail,
         } => {
             let mut inner = String::new();
+            inner.push_str(",\"count\":");
+            opt_u64(&mut inner, *count);
             inner.push_str(",\"names\":");
             list(&mut inner, branches, |o, (n, _)| string(o, n));
             inner.push_str(",\"branches\":");
@@ -601,6 +606,13 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
             *ids += 1;
             o.push_str(&format!("{{\"k\":\"race\",\"id\":{id},\"slot\":{slot}"));
             o.push_str(&inner);
+            o.push('}');
+        }
+        Expr::Fork(v) => {
+            let id = *ids;
+            *ids += 1;
+            o.push_str(&format!("{{\"k\":\"fork\",\"id\":{id},\"v\":"));
+            expr(o, v, ids);
             o.push('}');
         }
         Expr::Done(v) | Expr::Next(v) | Expr::Try(v) => {

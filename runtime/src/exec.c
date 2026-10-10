@@ -1807,6 +1807,16 @@ static cx_value *call_graph(ctx *c, cx_value *e) {
                       len_of(cx_get(g, "params")));
     cx_value **args = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *args);
     EVAL_ALL(c, args_e, args);
+    /* `decreases p` (D17): the compiler makes each call to itself pass a
+     * smaller `p`; one that went below 0 missed its base case. */
+    cx_value *dec = cx_get(g, "decreases");
+    if (dec && dec->kind == CX_NUM && (size_t)dec->u.num < n) {
+        cx_value *v = args[(size_t)dec->u.num];
+        if (v && v->kind == CX_NUM && v->u.num < 0)
+            return failf(c, "`%s` called with `%s` = %g: below 0, the recursion missed its base case",
+                         cx_get_str(g, "name", "?"),
+                         at(cx_get(g, "params"), (size_t)dec->u.num)->u.str.s, v->u.num);
+    }
     const char *key = call_key(c, e);
     cx_value *result = PENDING;
     pthread_mutex_lock(&x->mu);
@@ -2788,12 +2798,20 @@ static void owed_from_journal(void *ud, const char *key, cx_value *ok) {
  * before it started owes nothing. Returns PENDING until every undo is done,
  * NULL if one failed.
  */
-static cx_value *compensate_losers(ctx *c, const char *key, cx_value *names, const char *winner) {
+/* `name` is the winner, or one of the winners (`race first N`). */
+static int won_by(const cx_value *winners, const char *name) {
+    if (winners && winners->kind == CX_STR) return strcmp(winners->u.str.s, name) == 0;
+    for (size_t i = 0; i < len_of(winners); i++)
+        if (at(winners, i)->kind == CX_STR && strcmp(at(winners, i)->u.str.s, name) == 0) return 1;
+    return 0;
+}
+
+static cx_value *compensate_losers(ctx *c, const char *key, cx_value *names, cx_value *winners) {
     exec *x = c->x;
     int waiting = 0;
     for (size_t i = 0; i < len_of(names); i++) {
         const char *name = at(names, i)->u.str.s;
-        if (strcmp(name, winner) == 0) continue;
+        if (won_by(winners, name)) continue;
         owed o = {.prefix = fmt(&c->w->arena, "%s.%s", key, name), .a = &c->w->arena};
         pthread_mutex_lock(&x->mu);
         for (size_t k = 0; k < x->nowes; k++) owed_add(&o, x->owes[k].key, x->owes[k].json);
@@ -2836,8 +2854,61 @@ static cx_value *compensate_losers(ctx *c, const char *key, cx_value *names, con
     return waiting ? PENDING : cx_null(&c->w->arena);
 }
 
+char *calyx_sandbox_fork(const char *src, const char *key, const char *journal_dir);
+
 /*
- * `race first where cond:` + `name: value` branches + `on none`. Every
+ * `fork repo` (D13): a copy of the sandbox for whoever receives it (a
+ * subgraph that edits it, a branch of a race). Made once per key (the
+ * place of the `fork` in the run, so each branch and each item has its
+ * own), next to the original; a resumed run finds it and puts it back to
+ * its last journaled snapshot.
+ */
+static cx_value *eval_fork(ctx *c, cx_value *e) {
+    exec *x = c->x;
+    const char *key = call_key(c, e);
+    pthread_mutex_lock(&x->mu);
+    pending *p = ptab_get(x, key);
+    pthread_mutex_unlock(&x->mu);
+    if (p && p->state == P_DONE) return p->value;
+    cx_value *src = eval(c, cx_get(e, "v"));
+    if (!src || src == PENDING) return src;
+    if (src->kind != CX_STR) return fatalf(c, "invalid IR: `fork` of something not a sandbox");
+    char hash[65];
+    cx_sha256_hex(key, strlen(key), hash);
+    hash[16] = '\0';
+    cx_value *path;
+    if (x->journal && cx_journal_get_mode(x->journal) == CX_JOURNAL_REPLAY) {
+        /* A replay calls no tool: the path is enough. */
+        path = cx_cstr(&c->w->arena, fmt(&c->w->arena, "%s.forks/%s", src->u.str.s, hash));
+    } else {
+        int resume = x->journal && cx_journal_get_mode(x->journal) == CX_JOURNAL_RESUME;
+        char *made = calyx_sandbox_fork(src->u.str.s, hash, resume ? x->run_dir : NULL);
+        if (!made) return fatalf(c, "cannot fork the sandbox %.300s", src->u.str.s);
+        path = cx_cstr(&c->w->arena, made);
+        calyx_string_free(made);
+        trace(x, c->label, "fork  %s", path->u.str.s);
+    }
+    pthread_mutex_lock(&x->mu);
+    new_pending(x, &c->w->arena, key, P_DONE, path);
+    pthread_mutex_unlock(&x->mu);
+    return path;
+}
+
+/* "`a`" or "`a`, `b`", for the trace. */
+static const char *race_names(ctx *c, cx_value *winners) {
+    if (winners && winners->kind == CX_STR) return fmt(&c->w->arena, "`%s`", winners->u.str.s);
+    cx_buf b = {0};
+    for (size_t i = 0; i < len_of(winners); i++)
+        cx_buf_printf(&b, "%s`%s`", i ? ", " : "", at(winners, i)->u.str.s);
+    const char *s = fmt(&c->w->arena, "%s", b.data ? b.data : "");
+    cx_buf_free(&b);
+    return s;
+}
+
+/*
+ * `race first where cond:` + `name: value` branches + `on none`. With
+ * `race first N`, the first N branches that pass win, and the race gives
+ * their values as a list, in the order of the branches (a quorum). Every
  * branch runs at once, its calls keyed by it (`scope#id.name`). The first
  * branch seen with a value that passes `cond` wins: the winner goes to the
  * journal (the race is decided once, also across resumes) and the other
@@ -2857,8 +2928,8 @@ static cx_value *eval_race(ctx *c, cx_value *e) {
     pthread_mutex_unlock(&x->mu);
     if (p && p->state == P_DONE) {
         /* Decided: done when the losers are undone (D12). */
-        if (pw && pw->value && pw->value->kind == CX_STR) {
-            cx_value *u = compensate_losers(c, key, names, pw->value->u.str.s);
+        if (pw && pw->value) {
+            cx_value *u = compensate_losers(c, key, names, pw->value);
             if (!u || u == PENDING) return u;
         }
         return p->value;
@@ -2872,14 +2943,15 @@ static cx_value *eval_race(ctx *c, cx_value *e) {
         pthread_mutex_unlock(&x->jmu);
         if (hit) {
             cx_value *v = cx_get(hit, "value");
-            const char *wname = cx_get_str(hit, "winner", "?");
+            cx_value *winners = cx_get(hit, "winners");
+            if (!winners) winners = cx_cstr(&c->w->arena, cx_get_str(hit, "winner", "?"));
             pthread_mutex_lock(&x->mu);
             x->from_journal++;
             new_pending(x, &c->w->arena, key, P_DONE, v);
-            new_pending(x, &c->w->arena, wkey, P_DONE, cx_cstr(&c->w->arena, wname));
+            new_pending(x, &c->w->arena, wkey, P_DONE, winners);
             pthread_mutex_unlock(&x->mu);
-            trace(x, c->label, "race  won by `%s`  from the journal", wname);
-            cx_value *u = compensate_losers(c, key, names, wname);
+            trace(x, c->label, "race  won by %s  from the journal", race_names(c, winners));
+            cx_value *u = compensate_losers(c, key, names, winners);
             if (!u || u == PENDING) return u;
             return v;
         }
@@ -2891,10 +2963,15 @@ static cx_value *eval_race(ctx *c, cx_value *e) {
     const char *outer_scope = c->scope;
     const char *outer_failure = c->failure;
     const char *outer_label = c->label;
+    /* `race first N`: N winners, their values as a list (a quorum). */
+    cx_value *count = cx_get(e, "count");
+    int many = count && count->kind == CX_NUM;
+    size_t want = many ? (size_t)count->u.num : 1;
     int open = 0;
-    size_t winner = n;
-    cx_value *won = NULL;
-    for (size_t i = 0; i < n && winner == n; i++) {
+    size_t nwon = 0;
+    size_t *wins = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *wins);
+    cx_value **won = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *won);
+    for (size_t i = 0; i < n && nwon < want; i++) {
         const char *name = at(names, i)->u.str.s;
         c->scope = fmt(&c->w->arena, "%s.%s", key, name);
         c->label = fmt(&c->w->arena, "%s.%s", outer_label, name);
@@ -2921,13 +2998,16 @@ static cx_value *eval_race(ctx *c, cx_value *e) {
             if (!ok) return NULL;
             if (ok == PENDING || ok->kind != CX_BOOL || !ok->u.b) continue;
         }
-        winner = i;
-        won = v;
+        wins[nwon] = i;
+        won[nwon++] = v;
     }
-    if (winner < n) {
-        const char *name = at(names, winner)->u.str.s;
-        const char *keys[2] = {"winner", "value"};
-        cx_value *vals[2] = {cx_cstr(&c->w->arena, name), won};
+    if (nwon == want && want > 0) {
+        cx_value **wnames = cx_alloc(&c->w->arena, want * sizeof *wnames);
+        for (size_t k = 0; k < want; k++) wnames[k] = at(names, wins[k]);
+        cx_value *winners = many ? cx_list(&c->w->arena, wnames, want) : wnames[0];
+        cx_value *value = many ? cx_list(&c->w->arena, won, want) : won[0];
+        const char *keys[2] = {many ? "winners" : "winner", "value"};
+        cx_value *vals[2] = {winners, value};
         job j;
         memset(&j, 0, sizeof j);
         j.key = key;
@@ -2935,19 +3015,22 @@ static cx_value *eval_race(ctx *c, cx_value *e) {
         if (!journal_record(x, &j, "read", cx_rec(&c->w->arena, keys, vals, 2)))
             return fatalf(c, "cannot write the journal");
         pthread_mutex_lock(&x->mu);
-        new_pending(x, &c->w->arena, key, P_DONE, won);
-        new_pending(x, &c->w->arena, wkey, P_DONE, cx_cstr(&c->w->arena, name));
+        new_pending(x, &c->w->arena, key, P_DONE, value);
+        new_pending(x, &c->w->arena, wkey, P_DONE, winners);
         for (size_t i = 0; i < n; i++)
-            if (i != winner)
+            if (!won_by(winners, at(names, i)->u.str.s))
                 cancel_branch(x, fmt(&c->w->arena, "%s.%s", key, at(names, i)->u.str.s));
         pthread_mutex_unlock(&x->mu);
-        trace(x, c->label, "race  won by `%s`", name);
-        cx_value *u = compensate_losers(c, key, names, name);
+        trace(x, c->label, "race  won by %s", race_names(c, winners));
+        cx_value *u = compensate_losers(c, key, names, winners);
         if (!u || u == PENDING) return u;
-        return won;
+        return value;
     }
     if (open) return PENDING;
-    trace(x, c->label, "race  no branch won");
+    if (many)
+        trace(x, c->label, "race  fewer than %zu branches won", want);
+    else
+        trace(x, c->label, "race  no branch won");
     cx_value *fail = cx_get(e, "on_none_fail");
     if (fail && fail->kind == CX_STR) return failf(c, "%s", fail->u.str.s);
     return eval(c, cx_get(e, "on_none"));
@@ -3361,6 +3444,7 @@ static cx_value *eval(ctx *c, cx_value *e) {
     if (strcmp(k, "receive") == 0) return call_receive(c, e);
     if (strcmp(k, "each") == 0) return eval_each(c, e);
     if (strcmp(k, "race") == 0) return eval_race(c, e);
+    if (strcmp(k, "fork") == 0) return eval_fork(c, e);
     if (strcmp(k, "let") == 0) {
         cx_value *v = eval(c, cx_get(e, "v"));
         if (!v || v == PENDING) return v;

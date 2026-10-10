@@ -1,0 +1,32 @@
+# `unordered`: escritas que comutam, sem ordem e sem aviso.
+tool email(request: Text, to: Text, body: Text) -> Unit:
+    effect write
+    idempotency_key request
+
+tool track(request: Text, event: Text) -> Unit:
+    effect write
+    idempotency_key request
+
+graph ok(request: Text, to: Text) -> Text:
+    sent = email(request, to, "recebemos seu pedido")
+    logged = track(request, "pedido_recebido")
+    unordered sent, logged
+    return "ok"
+
+graph not_a_step(request: Text, to: Text) -> Text:
+    sent = email(request, to, "a")
+    logged = track(request, "b")
+    unordered sent, lgged
+    return "ok"
+
+graph ordered(request: Text, to: Text) -> Text:
+    sent = email(request, to, "a")
+    logged = track(request, "b")
+    logged after sent
+    unordered sent, logged
+    return "ok"
+
+graph alone(request: Text, to: Text) -> Text:
+    sent = email(request, to, "a")
+    unordered sent
+    return "ok"

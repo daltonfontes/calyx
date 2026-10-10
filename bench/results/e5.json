@@ -48,16 +48,20 @@
       {
         "bug": "20_verificar_e_agir_separados",
         "kind": "atomicity (check, then act)",
-        "stage": "missed",
-        "codes": [],
-        "declared": "none"
+        "stage": "compiler (warning)",
+        "codes": [
+          "W0606"
+        ],
+        "declared": "W0606"
       },
       {
         "bug": "22_itens_paralelos_mesmo_recurso",
         "kind": "conflicting writes",
-        "stage": "missed",
-        "codes": [],
-        "declared": "none"
+        "stage": "compiler (warning)",
+        "codes": [
+          "W0607"
+        ],
+        "declared": "W0607"
       },
       {
         "bug": "23_itens_editam_em_paralelo",
@@ -208,10 +212,10 @@
     ],
     "by_stage": {
       "compiler (error)": 11,
-      "compiler (warning)": 3,
+      "compiler (warning)": 5,
       "runtime": 6,
-      "missed": 3,
-      "language": 2
+      "language": 2,
+      "missed": 1
     },
     "total": 25
   },
@@ -228,7 +232,7 @@
       "what": "escritas em paralelo em recursos diferentes (um reembolso por pedido), cada uma com chave.",
       "status": "accepted",
       "codes": [],
-      "lines": 7
+      "lines": 8
     },
     {
       "pattern": "p03_parallel_commutative_external",
@@ -366,26 +370,16 @@
     {
       "pattern": "p19_recursive_decomposition",
       "what": "decomposição recursiva (dividir a tarefa em subtarefas até ficarem simples).",
-      "status": "refused",
-      "codes": [
-        "E0101",
-        "E0104",
-        "E0608"
-      ],
-      "lines": 15,
-      "rewrite": {
-        "codes": [],
-        "lines": 19,
-        "extra_lines": 4
-      }
+      "status": "accepted",
+      "codes": [],
+      "lines": 17
     },
     {
       "pattern": "p20_quorum",
       "what": "quórum, perguntar a 3 modelos e seguir com as 2 primeiras respostas.",
-      "status": "not expressible",
+      "status": "accepted",
       "codes": [],
-      "lines": 10,
-      "why": "there is no 'first k of n': the closest program waits for all n"
+      "lines": 14
     },
     {
       "pattern": "p21_bounded_parallelism",
@@ -396,19 +390,41 @@
     }
   ],
   "check_time": {
-    "patterns_median_ms": 2.5,
-    "patterns_max_ms": 3.5,
+    "patterns_median_ms": 2.1,
+    "patterns_max_ms": 2.4,
     "largest_example": "atendimento.clyx",
     "largest_example_lines": 103,
-    "largest_example_ms": 2.6
+    "largest_example_ms": 2.4
   },
   "latency_s": {
-    "p10 two independent writes (warned)": 0.549,
-    "p10 rewritten with `after`": 1.053,
-    "p08 cache write inside the race (warned)": 1.034,
-    "p08 rewritten: cache write after the race": 0.532,
-    "p20 quorum, closest program: waits for all 3": 2.005,
-    "p20 quorum, ideal (2nd answer)": 0.3
+    "p10 two independent writes (warned)": {
+      "answer": 0.53,
+      "end": 0.53
+    },
+    "p10 rewritten with `after`": {
+      "answer": 1.031,
+      "end": 1.031
+    },
+    "p10 rewritten with `unordered`": {
+      "answer": 0.53,
+      "end": 0.53
+    },
+    "p08 cache write inside the race (warned)": {
+      "answer": 1.008,
+      "end": 1.008
+    },
+    "p08 rewritten: cache write after the race": {
+      "answer": 0.532,
+      "end": 0.532
+    },
+    "p20 quorum before `race first N`: waits for all 3": {
+      "answer": 2.0,
+      "end": 2.006
+    },
+    "p20 quorum with `race first 2`": {
+      "answer": 0.3,
+      "end": 2.005
+    }
   },
   "contracts": {
     "programs": 12,
