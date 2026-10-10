@@ -1,7 +1,8 @@
 # Assistente com memória entre execuções (marco M6).
 #
 # - `entity UserMemory(key user: Text)`: o estado de cada usuário vive fora
-#   das execuções, em .calyx/entities/. Há no máximo um dono por chave, e
+#   das execuções, em .calyx/entities/ (ou no PostgreSQL, com
+#   CALYX_DATABASE_URL, para várias máquinas). Há no máximo um dono por chave, e
 #   mensagens que mudam o estado são aplicadas uma por vez, também quando
 #   várias execuções do mesmo usuário rodam ao mesmo tempo (D15).
 # - `ask` espera a resposta; `send` muda o estado. Cada `send` é aplicado

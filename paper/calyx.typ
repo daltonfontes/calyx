@@ -361,7 +361,10 @@ declaration and warns on a contradiction (§6.8).
 table, each committed before the next call; a run is executed under a
 session advisory lock on its id, which PostgreSQL drops with the session of
 a process that dies, so a worker on another machine takes the run over and
-finishes it from the journal.
+finishes it from the journal. An entity is a row: a message locks it, runs
+the handler and writes the new state with the ids of the applied messages
+in one transaction, so exactly-once holds across machines; the waits and
+messages of `receive` are rows too.
 
 *Programs as servers.* `calyx serve` turns a program into an MCP server:
 each graph is a tool, annotated from the program (`readOnlyHint` when no

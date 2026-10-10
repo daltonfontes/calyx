@@ -38,6 +38,29 @@ jobs:
       - name: Test (Rust compiler + C runtime)
         run: make test
 
+      - name: The journal in PostgreSQL over TLS (a server with its own CA)
+        run: |
+          tls="$RUNNER_TEMP/tls"
+          mkdir -p "$tls" && cd "$tls"
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.pem -days 2 -subj "/CN=calyx test CA"
+          openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj "/CN=localhost"
+          printf 'subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth\n' > ext
+          openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out server.pem -days 2 -extfile ext
+          sudo chown 999:999 server.key server.pem && sudo chmod 600 server.key
+          docker run -d --name pgtls -p 5433:5432 -e POSTGRES_USER=calyx -e POSTGRES_HOST_AUTH_METHOD=trust \
+            -v "$tls:/tls:ro" postgres:16 \
+            -c ssl=on -c ssl_cert_file=/tls/server.pem -c ssl_key_file=/tls/server.key
+          for _ in $(seq 60); do docker exec pgtls pg_isready -U calyx -h localhost && break; sleep 1; done
+          cd "$GITHUB_WORKSPACE"
+          url="postgresql://calyx@localhost:5433/calyx?sslmode=verify-full&sslrootcert=$tls/ca.pem"
+          CALYX_TEST_DATABASE_URL="$url" cargo test -p calyx-cli --test postgres
+          # A server whose certificate no trusted root signed is refused.
+          cargo build
+          if CALYX_DATABASE_URL="postgresql://calyx@localhost:5433/calyx?sslmode=require" ./target/debug/calyx runs 2> tls.log; then
+            echo "an unknown certificate should be refused"; exit 1
+          fi
+          grep -q UnknownIssuer tls.log
+
       - name: Check and run the example with the CLI (fake models, fake MCP search)
         run: |
           cargo build --release

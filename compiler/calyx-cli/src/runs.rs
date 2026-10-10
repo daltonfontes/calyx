@@ -122,19 +122,17 @@ pub struct Summary {
     pub resumes: usize,
 }
 
-/// All runs, oldest first.
-pub fn list() -> Vec<Summary> {
+/// All runs, oldest first. Fails only when the journal database does.
+pub fn list() -> Result<Vec<Summary>, String> {
     let mut ids: Vec<String> = if calyx_runtime::pg::enabled() {
-        match calyx_runtime::pg::runs() {
-            Ok(runs) => runs.into_iter().map(|(id, _)| id).collect(),
-            Err(e) => {
-                eprintln!("calyx: journal database: {e}");
-                Vec::new()
-            }
-        }
+        calyx_runtime::pg::runs()
+            .map_err(|e| format!("journal database: {e}"))?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect()
     } else {
         let Ok(entries) = std::fs::read_dir(RUNS_DIR) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         entries
             .filter_map(Result::ok)
@@ -143,7 +141,8 @@ pub fn list() -> Vec<Summary> {
             .collect()
     };
     ids.sort();
-    ids.into_iter()
+    Ok(ids
+        .into_iter()
         .map(|id| {
             let lines = lines(&id).unwrap_or_default();
             let count = |t: &str| lines.iter().filter(|l| l["type"] == t).count();
@@ -177,7 +176,7 @@ pub fn list() -> Vec<Summary> {
                 resumes: count("resume"),
             }
         })
-        .collect()
+        .collect())
 }
 
 /// A `receive` the run reached and that has no value yet.
@@ -192,28 +191,38 @@ pub struct Wait {
     pub about: Option<Value>,
 }
 
-fn jsonl(path: &Path) -> Vec<Value> {
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
+/// One of a run's files (`waits.jsonl`, `inbox.jsonl`), parsed: in its
+/// directory, or with the journal in PostgreSQL, in the database.
+fn jsonl(id: &str, name: &str) -> Vec<Value> {
+    let text = if calyx_runtime::pg::enabled() {
+        match calyx_runtime::pg::file_lines(id, name) {
+            Ok(lines) => lines.join("\n"),
+            Err(e) => {
+                eprintln!("calyx: journal database: {e}");
+                String::new()
+            }
+        }
+    } else {
+        std::fs::read_to_string(dir(id).join(name)).unwrap_or_default()
+    };
+    text.lines()
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect()
 }
 
 /// The `receive`s of a run still waiting, oldest first.
 pub fn waits(id: &str) -> Vec<Wait> {
-    let d = dir(id);
     let done: std::collections::HashSet<String> = lines(id)
         .unwrap_or_default()
         .iter()
         .filter(|l| l["type"] == "call")
         .filter_map(|l| l["key"].as_str().map(str::to_owned))
         .collect();
-    let inbox: std::collections::HashSet<String> = jsonl(&d.join("inbox.jsonl"))
+    let inbox: std::collections::HashSet<String> = jsonl(id, "inbox.jsonl")
         .iter()
         .filter_map(|l| l["key"].as_str().map(str::to_owned))
         .collect();
-    jsonl(&d.join("waits.jsonl"))
+    jsonl(id, "waits.jsonl")
         .into_iter()
         .filter_map(|w| {
             let key = w["key"].as_str()?.to_owned();
@@ -253,9 +262,20 @@ pub fn deliver(id: &str, message: &str, value: &Value) -> Result<String, String>
             utc(w.until)
         ));
     }
-    let line = serde_json::json!({"key": w.key, "message": message, "value": value, "at": at})
-        .to_string()
-        + "\n";
+    let line =
+        serde_json::json!({"key": w.key, "message": message, "value": value, "at": at}).to_string();
+    if calyx_runtime::pg::enabled() {
+        // Two machines delivering to the same `receive` at once: one wins.
+        return match calyx_runtime::pg::deliver_once(id, &w.key, &line) {
+            Ok(true) => Ok(w.key),
+            Ok(false) => Err(format!(
+                "a `{message}` was just delivered to `{}` by another process",
+                w.key
+            )),
+            Err(e) => Err(format!("journal database: {e}")),
+        };
+    }
+    let line = line + "\n";
     use std::io::Write;
     let mut f = std::fs::OpenOptions::new()
         .create(true)

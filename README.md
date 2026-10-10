@@ -94,7 +94,9 @@ those lines are required. Details in
 **On another machine.** With the journal in PostgreSQL
 (`CALYX_DATABASE_URL`), machines share runs: if one dies mid-run, a
 `calyx worker` on another takes the run over and finishes it from the
-journal, and a run is never run by two machines at once.
+journal, and a run is never run by two machines at once. Entities and the
+waits of `receive` live in the database too, and the connection can use TLS
+(`sslmode=verify-full`).
 
 **Against the real Stripe API** (test mode, [`bench/stripe/`](bench/stripe)):
 a refund and a store credit, the process killed at 5 points. Stripe itself
@@ -300,8 +302,7 @@ for code agents to per-user memory, debates and model routers, in
   models are written by hand, not extracted from the C runtime.
 - Agents cannot call `write once` tools.
 - Several machines share runs only through the journal in PostgreSQL;
-  programs with entities, `receive` or sandboxes still run on one machine.
-  The database connection has no TLS yet.
+  programs with sandboxes (a directory) still run on one machine.
 - Tools only as MCP servers over stdio; models only via OpenAI-compatible APIs.
 - The pure layer has no recursion, by design (every program must terminate).
 - No language server, debugger or REPL.
