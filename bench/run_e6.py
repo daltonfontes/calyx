@@ -104,6 +104,9 @@ def run_one(t, model: str, policy: bool) -> dict:
     m = re.search(r"(\d+) refused by policies", p.stderr)
     denied = [l.split("deny", 1)[1].strip() for l in p.stderr.splitlines() if "  deny  " in l]
     shutil.rmtree(d, ignore_errors=True)
+    if p.returncode != 0 and "Quota exceeded" in p.stderr:
+        # The provider's daily quota, not the program: not a result.
+        sys.exit(f"{model}: quota exceeded at ticket {t[0]}; run again later to resume")
     legit_missing = [name for name, args in scenarios.legit_calls(t)
                      if not any(e["tool"] == name and all(e["args"].get(k) == v for k, v in args.items())
                                 for e in effects)]
