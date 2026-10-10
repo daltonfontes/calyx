@@ -182,6 +182,17 @@ fn tool(o: &mut String, t: &Tool) {
             ));
         }
     }
+    o.push_str(",\"compensate\":");
+    match &t.compensate {
+        None => o.push_str("null"),
+        Some((tool, args)) => {
+            let args: Vec<String> = args.iter().map(usize::to_string).collect();
+            o.push_str(&format!(
+                "{{\"tool\":{tool},\"args\":[{}]}}",
+                args.join(",")
+            ));
+        }
+    }
     o.push_str(&format!(",\"returns_unit\":{}", t.returns_unit));
     o.push_str(",\"checks\":");
     opt_string(o, t.checks.as_deref());

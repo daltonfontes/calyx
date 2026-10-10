@@ -206,6 +206,14 @@ struct exec {
      * tasks and their calls not started yet are dropped. */
     const char **cancelled;
     size_t ncancelled, cancelled_cap;
+    /* Saga (D12): for each write with `compensate` that was sent, how to
+     * undo it (the call's key, and `{"tool": i, "args": [...]}`); the
+     * same goes to the journal as `owe:<key>`, before the write. */
+    struct owe {
+        const char *key;
+        char *json;
+    } *owes;
+    size_t nowes, owes_cap;
     int trace;
     double t0;
     cx_buf err;
@@ -1044,6 +1052,53 @@ static cx_value *taken_as_done(exec *x, cx_arena *a, job *j, cx_value *found, co
  */
 static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len);
 
+/*
+ * Saga (D12): `compensate f(p, q)` on the tool of `j`. Records how to undo
+ * this call, `{"tool": f, "args": [the values of p and q in this call]}`,
+ * in memory and in the journal (`owe:<key>`, reaching the disk with the
+ * sync that comes before every write).
+ */
+static void owe(exec *x, cx_arena *a, job *j) {
+    cx_value *comp = cx_get(j->spec, "compensate");
+    if (!comp || comp->kind == CX_NULL) return;
+    cx_value *req = cx_parse(a, j->req, strlen(j->req), NULL);
+    cx_value *args = req ? cx_get(req, "args") : NULL;
+    cx_value *params = cx_get(j->spec, "params");
+    cx_value *which = cx_get(comp, "args");
+    cx_buf b = {0};
+    cx_buf_printf(&b, "{\"tool\":%.0f,\"args\":[", cx_get_num(comp, "tool", 0));
+    for (size_t i = 0; i < len_of(which); i++) {
+        size_t k = (size_t)at(which, i)->u.num;
+        cx_value *pn = at(params, k);
+        cx_value *v = pn && args ? cx_get(args, pn->u.str.s) : NULL;
+        if (i) cx_buf_putc(&b, ',');
+        if (v)
+            cx_write(&b, v);
+        else
+            cx_buf_puts(&b, "null");
+    }
+    cx_buf_puts(&b, "]}");
+    pthread_mutex_lock(&x->mu);
+    if (x->nowes == x->owes_cap) {
+        x->owes_cap = x->owes_cap ? 2 * x->owes_cap : 8;
+        x->owes = realloc(x->owes, x->owes_cap * sizeof *x->owes);
+        if (!x->owes) abort();
+    }
+    x->owes[x->nowes].key = cx_strndup(&x->arena, j->key, strlen(j->key));
+    x->owes[x->nowes].json = cx_strndup(&x->arena, b.data, b.len);
+    x->nowes++;
+    pthread_mutex_unlock(&x->mu);
+    if (x->journal && cx_journal_get_mode(x->journal) != CX_JOURNAL_REPLAY) {
+        char *key = fmt(a, "owe:%s", j->key);
+        char hash[65];
+        cx_sha256_hex(b.data, b.len, hash);
+        pthread_mutex_lock(&x->jmu);
+        cx_journal_record(x->journal, key, "read", hash, b.data, b.len);
+        pthread_mutex_unlock(&x->jmu);
+    }
+    cx_buf_free(&b);
+}
+
 static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len) {
     if (j->entity) return entity_job(x, a, j, why, why_len);
     const char *name = cx_get_str(j->spec, j->is_model ? "id" : "name", "?");
@@ -1072,6 +1127,9 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
             trace(x, j->label, "write once %s  %s", name, how);
         }
     }
+    /* A write that can be undone (D12): how, before it is sent, so that a
+     * branch that loses a race is undone even if the run dies meanwhile. */
+    if (!j->is_model && !j->uncertain) owe(x, a, j);
     /* Before an external write, the journal reaches the disk: a `write
      * once` with its "begin" (after a crash it is uncertain, never made
      * again blindly), any write with what its arguments came from (after a
@@ -1525,15 +1583,25 @@ static int guard_json(ctx *c, cx_value *e, cx_buf *b) {
     return 1;
 }
 
+static cx_value *tool_request(ctx *c, cx_value *tool, cx_value **args, size_t n,
+                              cx_value *requires, const char *key);
+
 static cx_value *call_tool(ctx *c, cx_value *e) {
     cx_value *tool = at(c->x->tools, index_of(e, "tool"));
     if (!tool) return fatalf(c, "invalid IR: unknown tool");
-    const char *name = cx_get_str(tool, "name", "?");
-    cx_value *params = cx_get(tool, "params");
     cx_value *args_e = cx_get(e, "args");
     size_t n = len_of(args_e);
     cx_value **args = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *args);
     EVAL_ALL(c, args_e, args);
+    return tool_request(c, tool, args, n, cx_get(e, "requires"), call_key(c, e));
+}
+
+/* A call of `tool` with these arguments, under `key` (`requires`: the
+ * expressions of the preconditions, or NULL). */
+static cx_value *tool_request(ctx *c, cx_value *tool, cx_value **args, size_t n,
+                              cx_value *requires, const char *key) {
+    const char *name = cx_get_str(tool, "name", "?");
+    cx_value *params = cx_get(tool, "params");
     cx_buf req = {0};
     cx_buf_puts(&req, "{\"tool\":");
     cx_buf_json_str(&req, name, strlen(name));
@@ -1562,7 +1630,6 @@ static cx_value *call_tool(ctx *c, cx_value *e) {
         }
     }
     put_borrows(&req, tool, args, n);
-    cx_value *requires = cx_get(e, "requires");
     if (len_of(requires)) {
         cx_buf_puts(&req, ",\"requires\":[");
         for (size_t i = 0; i < len_of(requires); i++) {
@@ -1575,7 +1642,7 @@ static cx_value *call_tool(ctx *c, cx_value *e) {
         cx_buf_putc(&req, ']');
     }
     cx_buf_putc(&req, '}');
-    return request(c, call_key(c, e), CALL_TOOL, tool, NULL, &req, NULL);
+    return request(c, key, CALL_TOOL, tool, NULL, &req, NULL);
 }
 
 /* A subgraph runs as tasks of its own; this task waits for its result. */
@@ -2444,6 +2511,101 @@ static void cancel_branch(exec *x, const char *prefix) {
     x->cancelled[x->ncancelled++] = cx_strndup(&x->arena, prefix, strlen(prefix));
 }
 
+/* The obligations (`owe`) of the calls under `prefix` (a losing branch),
+ * from this run and, when resuming, from the journal. */
+typedef struct {
+    const char **keys;
+    const char **jsons;
+    size_t n, cap;
+    const char *prefix;
+    cx_arena *a;
+} owed;
+
+static void owed_add(owed *o, const char *key, const char *json) {
+    size_t n = strlen(o->prefix);
+    if (strncmp(key, o->prefix, n) != 0 || key[n] != '#') return;
+    for (size_t i = 0; i < o->n; i++)
+        if (strcmp(o->keys[i], key) == 0) return;
+    if (o->n == o->cap) {
+        o->cap = o->cap ? 2 * o->cap : 8;
+        const char **k = cx_alloc(o->a, o->cap * sizeof *k);
+        const char **v = cx_alloc(o->a, o->cap * sizeof *v);
+        if (o->n) {
+            memcpy(k, o->keys, o->n * sizeof *k);
+            memcpy(v, o->jsons, o->n * sizeof *v);
+        }
+        o->keys = k;
+        o->jsons = v;
+    }
+    o->keys[o->n] = key;
+    o->jsons[o->n] = json;
+    o->n++;
+}
+
+static void owed_from_journal(void *ud, const char *key, cx_value *ok) {
+    owed *o = ud;
+    cx_buf b = {0};
+    cx_write(&b, ok);
+    owed_add(o, key + strlen("owe:"), cx_strndup(o->a, b.data, b.len));
+    cx_buf_free(&b);
+}
+
+/*
+ * Saga (D12): undoes what the losing branches of the race `key` wrote with
+ * tools that declare `compensate`. Each undo is a call keyed `undo:<the
+ * write's key>`: made once, also across resumes. A write still in progress
+ * is waited for first, so its undo does not overtake it. A write cancelled
+ * before it started owes nothing. Returns PENDING until every undo is done,
+ * NULL if one failed.
+ */
+static cx_value *compensate_losers(ctx *c, const char *key, cx_value *names, const char *winner) {
+    exec *x = c->x;
+    int waiting = 0;
+    for (size_t i = 0; i < len_of(names); i++) {
+        const char *name = at(names, i)->u.str.s;
+        if (strcmp(name, winner) == 0) continue;
+        owed o = {.prefix = fmt(&c->w->arena, "%s.%s", key, name), .a = &c->w->arena};
+        pthread_mutex_lock(&x->mu);
+        for (size_t k = 0; k < x->nowes; k++) owed_add(&o, x->owes[k].key, x->owes[k].json);
+        pthread_mutex_unlock(&x->mu);
+        if (x->journal) {
+            pthread_mutex_lock(&x->jmu);
+            cx_journal_each(x->journal, fmt(&c->w->arena, "owe:%s", o.prefix), owed_from_journal,
+                            &o);
+            pthread_mutex_unlock(&x->jmu);
+        }
+        for (size_t k = 0; k < o.n; k++) {
+            pthread_mutex_lock(&x->mu);
+            pending *w = ptab_get(x, o.keys[k]);
+            int inflight = w && w->state == P_INFLIGHT;
+            if (inflight) add_waiter(&c->w->arena, w, c->t);
+            pthread_mutex_unlock(&x->mu);
+            if (inflight) {
+                waiting = 1;
+                continue;
+            }
+            cx_value *ob = cx_parse(&c->w->arena, o.jsons[k], strlen(o.jsons[k]), NULL);
+            cx_value *tool = ob ? at(x->tools, (size_t)cx_get_num(ob, "tool", -1)) : NULL;
+            if (!tool) return fatalf(c, "invalid compensation for `%s`", o.keys[k]);
+            cx_value *list = cx_get(ob, "args");
+            size_t n = len_of(list);
+            cx_value **args = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *args);
+            for (size_t m = 0; m < n; m++) args[m] = at(list, m);
+            const char *ukey = fmt(&c->w->arena, "undo:%s", o.keys[k]);
+            pthread_mutex_lock(&x->mu);
+            int first = ptab_get(x, ukey) == NULL;
+            pthread_mutex_unlock(&x->mu);
+            if (first)
+                trace(x, c->label, "undo  %s  (branch `%s` lost)", cx_get_str(tool, "name", "?"),
+                      name);
+            cx_value *r = tool_request(c, tool, args, n, NULL, ukey);
+            if (!r) return NULL;
+            if (r == PENDING) waiting = 1;
+        }
+    }
+    return waiting ? PENDING : cx_null(&c->w->arena);
+}
+
 /*
  * `race first where cond:` + `name: value` branches + `on none`. Every
  * branch runs at once, its calls keyed by it (`scope#id.name`). The first
@@ -2457,10 +2619,20 @@ static void cancel_branch(exec *x, const char *prefix) {
 static cx_value *eval_race(ctx *c, cx_value *e) {
     exec *x = c->x;
     const char *key = call_key(c, e);
+    cx_value *names = cx_get(e, "names");
+    const char *wkey = fmt(&c->w->arena, "%s~winner", key);
     pthread_mutex_lock(&x->mu);
     pending *p = ptab_get(x, key);
+    pending *pw = ptab_get(x, wkey);
     pthread_mutex_unlock(&x->mu);
-    if (p && p->state == P_DONE) return p->value;
+    if (p && p->state == P_DONE) {
+        /* Decided: done when the losers are undone (D12). */
+        if (pw && pw->value && pw->value->kind == CX_STR) {
+            cx_value *u = compensate_losers(c, key, names, pw->value->u.str.s);
+            if (!u || u == PENDING) return u;
+        }
+        return p->value;
+    }
     if (x->journal) {
         int mismatch = 0;
         char hash[65];
@@ -2470,15 +2642,18 @@ static cx_value *eval_race(ctx *c, cx_value *e) {
         pthread_mutex_unlock(&x->jmu);
         if (hit) {
             cx_value *v = cx_get(hit, "value");
+            const char *wname = cx_get_str(hit, "winner", "?");
             pthread_mutex_lock(&x->mu);
             x->from_journal++;
             new_pending(x, &c->w->arena, key, P_DONE, v);
+            new_pending(x, &c->w->arena, wkey, P_DONE, cx_cstr(&c->w->arena, wname));
             pthread_mutex_unlock(&x->mu);
-            trace(x, c->label, "race  won by `%s`  from the journal", cx_get_str(hit, "winner", "?"));
+            trace(x, c->label, "race  won by `%s`  from the journal", wname);
+            cx_value *u = compensate_losers(c, key, names, wname);
+            if (!u || u == PENDING) return u;
             return v;
         }
     }
-    cx_value *names = cx_get(e, "names");
     cx_value *branches = cx_get(e, "branches");
     cx_value *cond = cx_get(e, "cond");
     size_t n = len_of(branches);
@@ -2531,11 +2706,14 @@ static cx_value *eval_race(ctx *c, cx_value *e) {
             return fatalf(c, "cannot write the journal");
         pthread_mutex_lock(&x->mu);
         new_pending(x, &c->w->arena, key, P_DONE, won);
+        new_pending(x, &c->w->arena, wkey, P_DONE, cx_cstr(&c->w->arena, name));
         for (size_t i = 0; i < n; i++)
             if (i != winner)
                 cancel_branch(x, fmt(&c->w->arena, "%s.%s", key, at(names, i)->u.str.s));
         pthread_mutex_unlock(&x->mu);
         trace(x, c->label, "race  won by `%s`", name);
+        cx_value *u = compensate_losers(c, key, names, name);
+        if (!u || u == PENDING) return u;
         return won;
     }
     if (open) return PENDING;

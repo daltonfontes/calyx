@@ -260,6 +260,39 @@ prompt summarize(items: List[Text]) -> Text:
     }
 
     #[test]
+    fn a_compensated_write_may_race_and_its_undo_is_a_keyed_write() {
+        let program = |charge_props: &str, undo_props: &str| {
+            format!(
+                "tool charge(request: Text, amount: Float) -> Unit:\n{charge_props}\n\n\
+                 tool refund(request: Text) -> Unit:\n{undo_props}\n\n\
+                 graph pay(request: Text) -> Text:\n    c = charge(request, 1.0)\n    return request\n\n\
+                 graph g(r: Text) -> Text:\n    won = race first:\n        \
+                 a: pay(\"{{r}}-a\")\n        b: pay(\"{{r}}-b\")\n        \
+                 on none: fail \"none\"\n    return won\n"
+            )
+        };
+        let keyed = "    effect write\n    idempotency_key request";
+        let ok = format!("{keyed}\n    compensate refund(request)");
+        // Undone when its branch loses: no W0604.
+        assert!(codes(&program(&ok, keyed)).is_empty());
+        // Without `compensate`, the race warns, as before.
+        assert_eq!(codes(&program(keyed, keyed)), vec!["W0604", "W0604"]);
+        // The undo is sent again after a crash: it needs a key.
+        assert_eq!(
+            codes(&program(
+                &ok,
+                "    effect write once\n    on_uncertain pause"
+            )),
+            vec!["E0695"]
+        );
+        // Its arguments are the tool's parameters, of the right types.
+        let bad = format!("{keyed}\n    compensate refund(amount)");
+        assert_eq!(codes(&program(&bad, keyed)), vec!["E0696"]);
+        let missing = format!("{keyed}\n    compensate refund(order)");
+        assert_eq!(codes(&program(&missing, keyed)), vec!["E0696"]);
+    }
+
+    #[test]
     fn sending_back_what_was_read_warns_only_when_it_overwrites() {
         let program = |update: &str| {
             format!(

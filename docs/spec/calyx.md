@@ -121,6 +121,7 @@ tool NOME(parametros) -> Tipo:
     batch parametro                      # `write once` em lote: refaz só os itens que faltam
     on_uncertain verify(f(...)) | pause | accept_loss   # obrigatório para `write once`
     checks TipoDeEstado                  # estado validável no momento do efeito (D29)
+    compensate g(param, ...)             # a escrita que desfaz esta, se o ramo da corrida perder (D12)
     repeatable                           # repetir com os mesmos argumentos é legítimo (D5)
     description "texto"                  # o que a tool faz, para modelos que a chamam (agentes)
 ```
@@ -135,6 +136,7 @@ tool NOME(parametros) -> Tipo:
   - `accept_loss` e o `verify` com `Bool` seguem sem a resposta da tool, então exigem uma tool que devolve `Unit` (`E0634`); o `verify` com `List[T]` não. Ao retomar uma pausa, `--uncertain done` também segue sem resposta; para uma tool que devolve algo, a pessoa dá a resposta que achou: `--uncertain done=<resposta>` (JSON, ou o texto como está).
 - `batch p`: a `write once` aplica os itens da lista `p` (`List[T]`) um a um, e pode ficar pela metade. Exige `on_uncertain verify(f(...))` com `f` devolvendo `List[T]`, os itens já aplicados, e uma tool que devolve `Unit` (`E0637`). Quando a chamada pode ter acontecido em parte, o runtime pergunta a `f` e manda de novo só os itens que ela não achou (cada item achado casa com um item pedido); se achou todos, segue.
 - `checks Tipo`: o registro com o estado que a tool valida nas precondições (`E0635`).
+- `compensate g(a, b)` (saga, D12): a tool `g` desfaz uma chamada desta. Só uma escrita pode ser compensada, e a compensação é uma `write` com `idempotency_key`, porque depois de uma queda ela é mandada de novo e não pode desfazer duas vezes (`E0695`); os argumentos são parâmetros desta tool, dos tipos certos (`E0696`). Usada nas corridas (seção 5.8).
 
 **Implementação (D34):** a tool roda num servidor **MCP** separado, escrito em qualquer linguagem. A declaração `tool` é o **contrato** que a Calyx verifica e que o runtime aplica (efeito, limites, timeout, retentativa, idempotência, precondições). O nome da tool e o servidor que a implementa são ligados no `calyx.toml` (seção 11.1).
 
@@ -392,7 +394,7 @@ best = race first where it.confident:
 - **`on none` é obrigatório** (`E0683`): `fail "motivo"` ou um valor do tipo dos ramos (`E0684`). Vale quando todos os ramos terminaram e nenhum passou; um ramo que falha perde.
 - **O vencedor vai para o diário** com o seu valor. A retomada e o `replay` não disputam a corrida de novo, mesmo que outro ramo terminasse primeiro desta vez.
 - **Cancelamento entre passos:** os subgrafos dos ramos perdedores param (as tarefas deles não rodam mais) e as chamadas que ainda esperavam a vez não são feitas. Uma chamada já em andamento termina, e a resposta não é usada (o rastro diz "lost the race"); a execução espera por ela antes de terminar.
-- **Escritas nos ramos:** aviso `W0604`. Um ramo que perde pode já ter escrito, e uma escrita em andamento termina quando a corrida é decidida. Compensação (*saga*) fica para depois; o caminho seguro é escrever depois da corrida, com o vencedor.
+- **Escritas nos ramos e compensação (*saga*):** um ramo que perde pode já ter escrito, e uma escrita em andamento termina quando a corrida é decidida. Se a tool declara `compensate g(...)`, a escrita é **desfeita**: antes de mandá-la, o runtime grava no diário como desfazê-la (`owe:<chave>`); quando o ramo perde, a corrida só termina depois de chamar `g` para cada escrita dele que foi mandada, com a chave `undo:<chave>`. Uma escrita ainda a caminho é esperada antes de ser desfeita; uma cancelada antes de começar não é desfeita. Depois de uma queda, a retomada acha a corrida decidida e as dívidas no diário, e desfaz o que falta, uma vez só. A compensação pode ser chamada para uma escrita que não chegou a acontecer (a queda veio entre gravar a dívida e mandar), então ela precisa aceitar não ter o que desfazer. Uma escrita sem `compensate` num ramo (inclusive mensagens a entidades e escritas de agentes) recebe o aviso `W0604`; o caminho seguro, então, é escrever depois da corrida, com o vencedor. Exemplo: `examples/saga.clyx`.
 - **Sandboxes:** dois ramos não podem editar a mesma sandbox (`E0645`). `fork` (uma cópia por ramo) fica para depois.
 
 ### 5.9 Falha como valor (D11)
@@ -747,7 +749,6 @@ Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*`
 
 ## 13. Fora da v1
 
-- Compensação (padrão *saga*) para ramos cancelados (D12).
 - Políticas de roteamento além de `cheapest_that_passes` (D30).
 - Várias máquinas (backend PostgreSQL do diário) (D6).
 - Provas opcionais sobre grafos.

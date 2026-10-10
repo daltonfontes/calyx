@@ -29,6 +29,8 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
         variant_owners: HashMap::new(),
         tools_with_max_output: HashSet::new(),
         graph_effects: HashMap::new(),
+        raw_write: false,
+        raw_write_graphs: HashSet::new(),
     };
     cx.collect(program);
     cx.resolve_signatures(program);
@@ -65,6 +67,9 @@ struct ToolSig {
     keyed: bool,
     /// `batch p`: the type of the items of the list parameter `p`.
     batch: Option<Ty>,
+    /// `compensate f(a, b)`: the tool that undoes a call, called with
+    /// these parameters of this tool (D12, saga).
+    compensate: Option<(Ident, Vec<Ident>)>,
 }
 
 /// What a `write once` tool does when a call may or may not have happened.
@@ -150,6 +155,11 @@ struct Cx<'a, 'p> {
     /// Tools that declare `max_output` (agents may only use those, D16).
     tools_with_max_output: HashSet<String>,
     graph_effects: HashMap<String, Effect>,
+    /// Set while checking a graph when it reaches a write with no
+    /// `compensate`: what W0604 warns about in a race branch.
+    raw_write: bool,
+    /// The graphs that make such writes.
+    raw_write_graphs: HashSet<String>,
 }
 
 fn err(code: &'static str, msg: impl Into<String>, span: Span) -> Diagnostic {
@@ -445,6 +455,7 @@ impl<'p> Cx<'_, 'p> {
         let mut checks = None;
         let mut keyed = false;
         let mut batch = None;
+        let mut compensate = None;
         let mut seen = HashSet::new();
         for p in &t.props {
             let key = p.key.name.as_str();
@@ -542,6 +553,40 @@ impl<'p> Cx<'_, 'p> {
                     }
                     _ => self.bad_prop(p, "a type name"),
                 },
+                "compensate" => match p.value.as_slice() {
+                    [Expr { kind: ExprKind::Call { callee, args }, .. }] => {
+                        let ExprKind::Ident(f) = &callee.kind else {
+                            self.bad_prop(p, "a call `tool(param, ...)`: the tool that undoes this one");
+                            continue;
+                        };
+                        let idents = args
+                            .iter()
+                            .map(|a| match (&a.name, &a.value.kind) {
+                                (None, ExprKind::Ident(n)) => Some(Ident {
+                                    name: n.clone(),
+                                    span: a.value.span,
+                                }),
+                                _ => None,
+                            })
+                            .collect::<Option<Vec<_>>>();
+                        match idents {
+                            Some(args) => {
+                                compensate = Some((
+                                    Ident {
+                                        name: f.clone(),
+                                        span: callee.span,
+                                    },
+                                    args,
+                                ))
+                            }
+                            None => self.bad_prop(
+                                p,
+                                "a call whose arguments are parameters of this tool",
+                            ),
+                        }
+                    }
+                    _ => self.bad_prop(p, "a call `tool(param, ...)`: the tool that undoes this one"),
+                },
                 "repeatable" => {
                     if !p.value.is_empty() {
                         self.bad_prop(p, "no value");
@@ -549,7 +594,7 @@ impl<'p> Cx<'_, 'p> {
                 }
                 _ => self.push(
                     err("E0301", "unknown tool property", p.key.span)
-                        .expected("`effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `batch`, `checks`, `repeatable` or `description`")
+                        .expected("`effect`, `max_output`, `timeout`, `retry_on`, `idempotency_key`, `on_uncertain`, `batch`, `compensate`, `checks`, `repeatable` or `description`")
                         .observed(format!("`{key}`")),
                 ),
             }
@@ -607,6 +652,7 @@ impl<'p> Cx<'_, 'p> {
             checks,
             keyed,
             batch,
+            compensate,
         }
     }
 
@@ -915,6 +961,9 @@ impl<'p> Cx<'_, 'p> {
             );
         }
         let callee = format!("{}.{}", m.entity.name, m.handler.name);
+        if m.send {
+            self.raw_write = true; // a message to an entity is not compensated
+        }
         let inner = self.args(&callee, &params, &m.args, m.handler.span, gc);
         let effect = key.effect.join(inner);
         match (m.send, ret) {
@@ -1237,6 +1286,9 @@ impl<'p> Cx<'_, 'p> {
                     out.extend(self.check_verify(sig, tool, args));
                 }
             }
+            if let Some((tool, args)) = &sig.compensate {
+                out.extend(self.check_compensate(sig, tool, args));
+            }
             if let Some(c) = &sig.checks
                 && !matches!(self.types.get(c.name.as_str()), Some(UserType::Record(_)))
             {
@@ -1250,6 +1302,71 @@ impl<'p> Cx<'_, 'p> {
                 self.push(d);
             }
         }
+    }
+
+    /// `compensate f(a, b)` (D12): `f` undoes a call of a write tool, and
+    /// may itself be made again after a crash, so it is a keyed `write`;
+    /// its arguments are parameters of the tool it undoes.
+    fn check_compensate(&self, sig: &ToolSig, tool: &Ident, args: &[Ident]) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        if sig.effect < Effect::Write {
+            out.push(
+                err("E0695", "only a write can be compensated", tool.span)
+                    .expected("`effect write` or `effect write once`")
+                    .observed(format!("`effect {}`", sig.effect)),
+            );
+        }
+        let Some(c) = self.tools.get(tool.name.as_str()) else {
+            out.push(
+                err("E0695", "`compensate` must call a tool", tool.span)
+                    .expected("a `write` tool with an `idempotency_key` that undoes the call")
+                    .observed(format!("`{}`", tool.name)),
+            );
+            return out;
+        };
+        if c.effect != Effect::Write || !c.keyed {
+            out.push(
+                err("E0695", "a compensation is a `write` with an `idempotency_key`", tool.span)
+                    .expected("`effect write` and `idempotency_key`: after a crash it is sent again, and must not undo twice")
+                    .observed(format!(
+                        "`{}` is `{}`{}",
+                        tool.name,
+                        c.effect,
+                        if c.keyed { "" } else { " without a key" }
+                    )),
+            );
+        }
+        if args.len() != c.params.len() {
+            out.push(
+                err(
+                    "E0696",
+                    "wrong number of arguments for the compensation",
+                    tool.span,
+                )
+                .expected(format!("{}", c.params.len()))
+                .observed(format!("{}", args.len())),
+            );
+        }
+        for (a, (pname, pty)) in args.iter().zip(&c.params) {
+            match sig.params.iter().find(|(n, _)| *n == a.name) {
+                None => out.push(
+                    err(
+                        "E0696",
+                        "compensation arguments must be parameters of the tool",
+                        a.span,
+                    )
+                    .expected("a parameter of the tool it undoes: the same call, undone")
+                    .observed(format!("`{}`", a.name)),
+                ),
+                Some((_, ty)) if !assignable(ty, pty) => out.push(
+                    err("E0696", "compensation argument has the wrong type", a.span)
+                        .expected(format!("`{pty}` for `{pname}`"))
+                        .observed(format!("`{ty}`")),
+                ),
+                Some(_) => {}
+            }
+        }
+        out
     }
 
     fn check_verify(&self, sig: &ToolSig, tool: &Ident, args: &[Ident]) -> Vec<Diagnostic> {
@@ -1522,6 +1639,7 @@ impl<'p> Cx<'_, 'p> {
     }
 
     fn check_graph(&mut self, g: &'p GraphDecl) -> ir::Graph {
+        self.raw_write = false;
         let sig_params = self.graphs[g.name.name.as_str()].1.params.clone();
         let ret = self.graphs[g.name.name.as_str()].1.ret.clone();
 
@@ -1861,6 +1979,9 @@ impl<'p> Cx<'_, 'p> {
             }
         }
         self.graph_effects.insert(g.name.name.clone(), effect);
+        if std::mem::take(&mut self.raw_write) {
+            self.raw_write_graphs.insert(g.name.name.clone());
+        }
 
         ir::Graph {
             name: g.name.name.clone(),
@@ -2873,12 +2994,15 @@ impl<'p> Cx<'_, 'p> {
                     .observed(format!("`{}`", name.name)),
                 );
             }
+            let outer_raw = std::mem::replace(&mut self.raw_write, false);
             let t = self.expr(v, gc);
+            let raw = self.raw_write;
+            self.raw_write = outer_raw || raw;
             effect = effect.join(t.effect);
-            if t.effect >= Effect::Write {
+            if t.effect >= Effect::Write && raw {
                 self.push(
                     warn("W0604", "a branch of a race writes outside the run", v.span)
-                        .expected("reads, models and sandboxes in the branches; the write after the race, with the winner")
+                        .expected("reads, models and sandboxes in the branches, or writes whose tools declare `compensate` (undone when the branch loses); else the write after the race, with the winner")
                         .observed(format!("`{}` can lose and still have written: a write in progress finishes when the race is decided", name.name)),
                 );
             }
@@ -3172,6 +3296,9 @@ impl<'p> Cx<'_, 'p> {
                 t.ty
             }
         };
+        if effect >= Effect::Write {
+            self.raw_write = true; // an agent's writes have no compensation
+        }
         Typed {
             ty,
             kind: NodeKind::Other(format!("agent {model}")),
@@ -3291,6 +3418,9 @@ impl<'p> Cx<'_, 'p> {
         }
         if let Some(sig) = self.tools.get(n) {
             let (params, ret, effect) = (sig.params.clone(), sig.ret.clone(), sig.effect);
+            if effect >= Effect::Write && sig.compensate.is_none() {
+                self.raw_write = true;
+            }
             let inner = self.args(n, &params, args, e.span, gc);
             return Typed {
                 ty: ret,
@@ -3300,6 +3430,9 @@ impl<'p> Cx<'_, 'p> {
         }
         if let Some((_, sig)) = self.graphs.get(n) {
             let (params, ret) = (sig.params.clone(), sig.ret.clone());
+            if self.raw_write_graphs.contains(n) {
+                self.raw_write = true;
+            }
             let inner = self.args(n, &params, args, e.span, gc);
             let effect = self.graph_effects.get(n).copied().unwrap_or(Effect::Pure);
             return Typed {

@@ -210,7 +210,9 @@ the same step as the effect.
 
 *Other constructs*, each with its own compiler rules: `loop` and `rounds`
 with a mandatory bound; `for each` (fan-out); `race` between strategies,
-cancelling the losers; `agent` (the ReAct loop @yao2023react), which only
+cancelling the losers and undoing what they wrote (a tool may declare
+`compensate g(...)`, a keyed write that undoes it: a saga, kept in the
+journal); `agent` (the ReAct loop @yao2023react), which only
 gets tools without irreversible effects; `entity`, state shared across runs
 with pure handlers; `receive`, a durable wait for an outside message with a
 mandatory deadline; and a model router that tries the cheapest model first.
@@ -229,7 +231,8 @@ step and the dependency graph. @tab-checks lists those about state.
     [`W0601`], [`write` without an idempotency key],
     [`W0602`], [Two external writes with no defined order],
     [`W0603`], [A `send` to an entity computed from an `ask` to it, when the handler stores a new value (lost update)],
-    [`W0604`], [A race branch that writes outside the run],
+    [`W0604`], [A race branch that writes with no `compensate`],
+    [`E0695/6`], [A compensation that is not a keyed write, or takes other values than the call's],
     [`W0605`], [A `write once` in a loop whose arguments do not change between turns],
     [`E0640`], [An agent given a `write once` tool],
     [`E0671`], [`receive` without a deadline],
@@ -659,7 +662,8 @@ and damage confinement; SagaLLM @chang2025sagallm, Atomix
 AgentRewind @zhuang2026agentrewind checkpoints and rewinds agents;
 AgentSpec @wang2026agentspec enforces user rules at runtime. These are
 runtime mechanisms; Calyx asks the program to declare what they need and
-checks it before running.
+checks it before running. Its compensations (`compensate`) are such a saga,
+limited to race losers and required to be keyed writes.
 
 *Static analysis and calculi for agents.* Recent work analyses agent
 programs written in existing frameworks for structural properties

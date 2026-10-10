@@ -213,7 +213,9 @@ passo do efeito.
 
 *Outras construções*, cada uma com suas regras no compilador: `loop` e
 `rounds` com limite obrigatório; `for each` (leque de chamadas); `race`
-entre estratégias, cancelando as perdedoras; `agent` (o ciclo ReAct
+entre estratégias, cancelando as perdedoras e desfazendo o que elas
+escreveram (uma tool pode declarar `compensate g(...)`, uma escrita com chave
+que a desfaz: uma saga, guardada no diário); `agent` (o ciclo ReAct
 @yao2023react), que só recebe tools sem efeitos irreversíveis; `entity`,
 estado compartilhado entre execuções com handlers puros; `receive`, uma
 espera durável por uma mensagem de fora com prazo obrigatório; e um roteador
@@ -233,7 +235,8 @@ passo e o grafo de dependências. A @tab-checks lista as que tratam de estado.
     [`W0601`], [`write` sem chave de idempotência],
     [`W0602`], [Duas escritas externas sem ordem definida],
     [`W0603`], [Um `send` a uma entidade calculado a partir de um `ask` a ela, quando o handler grava um valor novo (atualização perdida)],
-    [`W0604`], [Um ramo de `race` que escreve fora da execução],
+    [`W0604`], [Um ramo de `race` que escreve sem `compensate`],
+    [`E0695/6`], [Uma compensação que não é escrita com chave, ou usa outros valores que não os da chamada],
     [`W0605`], [Um `write once` num laço cujos argumentos não mudam entre as voltas],
     [`E0640`], [Um agente que recebe uma tool `write once`],
     [`E0671`], [`receive` sem prazo],
@@ -671,7 +674,9 @@ desfazer e confinar danos; SagaLLM @chang2025sagallm, Atomix
 AgentRewind @zhuang2026agentrewind faz checkpoint e rebobina agentes; o
 AgentSpec @wang2026agentspec impõe regras do usuário ao rodar. São mecanismos
 de runtime; a Calyx pede ao programa que declare o que eles precisam e
-confere isso antes de rodar.
+confere isso antes de rodar. Suas compensações (`compensate`) são uma saga
+desse tipo, limitada aos perdedores de uma corrida e obrigada a ser escrita
+com chave.
 
 *Análise estática e cálculos para agentes.* Trabalhos recentes analisam
 programas de agentes escritos em frameworks existentes quanto a propriedades

@@ -305,6 +305,9 @@ pub struct Tool {
     pub batch: Option<usize>,
     /// What to do when a `write once` call may or may not have happened.
     pub on_uncertain: Option<Uncertain>,
+    /// `compensate f(a, b)` (D12): the tool that undoes a call, and which
+    /// parameters of this tool it takes, by position.
+    pub compensate: Option<(usize, Vec<usize>)>,
     /// The tool returns `Unit`: nothing to make up when a call is taken as
     /// done without its answer.
     pub returns_unit: bool,

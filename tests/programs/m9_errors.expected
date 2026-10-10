@@ -31,7 +31,7 @@ error[E0615]: branches give different types
 Location: m9_errors.clyx:34:14
 
 warning[W0604]: a branch of a race writes outside the run
-- expected : reads, models and sandboxes in the branches; the write after the race, with the winner
+- expected : reads, models and sandboxes in the branches, or writes whose tools declare `compensate` (undone when the branch loses); else the write after the race, with the winner
 - observed : `one` can lose and still have written: a write in progress finishes when the race is decided
 Location: m9_errors.clyx:37:14
 

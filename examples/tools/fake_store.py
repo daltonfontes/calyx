@@ -18,7 +18,9 @@ It shows the other side of Calyx's contracts for external writes:
   of its e-mails and crashes, the first time. `payments_for` counts the
   payments of a request (what `calyx check --tools --probe` reads); with
   CALYX_FAKE_STORE_IGNORE_KEYS=1 the store ignores keys while still
-  claiming `idempotencyKeyHint: true`, as a broken server would. A refund whose request has `__slowpay__` pays and
+  claiming `idempotencyKeyHint: true`, as a broken server would.
+  `charge` and `uncharge` are a write and the write that undoes it (the
+  saga of a race, decision D12): `charges` and `uncharged` count them. A refund whose request has `__slowpay__` pays and
   answers 3 s later. The benchmarks (bench/) kill the caller in that window.
 - Every payment made is listed in `payments`, so duplicates can be counted.
 - `email_sent` tells whether an e-mail went out: what `on_uncertain
@@ -77,6 +79,14 @@ TOOLS = [
     {"name": "refund", "description": "Reembolsa parte de um pedido.",
      "inputSchema": schema(request="string", order="string", amount="number"),
      "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False,
+                     "idempotencyKeyHint": True}},
+    {"name": "charge", "description": "Cobra um valor; a mesma chave nunca cobra duas vezes.",
+     "inputSchema": schema(request="string", amount="number"),
+     "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False,
+                     "idempotencyKeyHint": True}},
+    {"name": "uncharge", "description": "Estorna a cobrança de uma solicitação (nada, se não houve).",
+     "inputSchema": schema(request="string"),
+     "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True,
                      "idempotencyKeyHint": True}},
     {"name": "payments_for", "description": "Quantos pagamentos uma solicitação fez.",
      "inputSchema": schema(request="string"), "annotations": READ},
@@ -202,6 +212,26 @@ def call(name, args, meta):
     if name == "mails_to":
         return text(json.dumps([f"msg-{i + 1}" for i, m in enumerate(db["outbox"])
                                 if m["to"] == args.get("to") and m["subject"] == args.get("subject")]))
+    if name == "charge":
+        key = meta.get("calyx/idempotency_key")
+        if key is not None and key in db.setdefault("charge_keys", []):
+            return text("null")
+        db.setdefault("charges", []).append(args)
+        if key is not None:
+            db["charge_keys"].append(key)
+        save(db)
+        if "__slowcharge__" in str(args.get("request", "")):
+            time.sleep(1.5)  # charged; the answer is still on its way
+        return text("null")
+    if name == "uncharge":
+        # Undoes the charge of a request; nothing if there was none, or it
+        # was already undone (the undo may be sent again after a crash).
+        charged = [c for c in db.get("charges", []) if c.get("request") == args.get("request")]
+        undone = db.setdefault("uncharged", [])
+        if charged and args.get("request") not in undone:
+            undone.append(args.get("request"))
+            save(db)
+        return text("null")
     if name == "payments_for":
         return text(str(sum(1 for p in db.get("payments", []) if p.get("request") == args.get("request"))))
     if name == "email_sent":

@@ -253,6 +253,26 @@ graph ask(question: Text) -> Text:
         on limit: last
 ```
 
+### Corridas desfazem o perdedor == `compensate` (uma saga)
+
+Duas estratégias correm; a perdedora pode já ter pago. Uma tool que declara
+como se desfaz é desfeita, uma vez, antes de a corrida terminar, também
+depois de uma queda ([`saga.clyx`](examples/saga.clyx)):
+
+```python
+tool charge(request: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    compensate uncharge(request)        # uma escrita com chave que a desfaz
+
+graph main(request: Text) -> Text:
+    how = race first:
+        card: by_card(request)          # cobra, depois uma conferência lenta
+        wallet: by_wallet(request)      # mais rápida: vence
+        on none: fail "no way to pay"
+    return "paid by {how}"              # a cobrança do cartão foi desfeita
+```
+
 Os programas completos por trás desses trechos estão em
 [`examples/readme/`](examples/readme), conferidos na CI. Há mais, de sandboxes
 para agentes de código a memória por usuário, debates e roteadores de
