@@ -780,7 +780,9 @@ static int journal_record(exec *x, job *j, const char *effect, cx_value *ok) {
     int written = cx_journal_record(x->journal, j->key, effect, j->req_hash, b.data, b.len);
     if (written && x->crash_after > 0 && ++x->recorded >= x->crash_after) {
         /* Simulates `kill -9` right after this entry reached the journal. The
-         * journal stays locked, so no other call is recorded after it. */
+         * journal stays locked, so no other call is recorded after it. In
+         * PostgreSQL, "reached" is "committed". */
+        cx_journal_sync(x->journal);
         fprintf(stderr, "calyx: CALYX_CRASH_AFTER=%ld reached, exiting abruptly\n", x->crash_after);
         _exit(137);
     }

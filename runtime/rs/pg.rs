@@ -17,14 +17,30 @@
 //!   with the document `entity.json` holds on one machine: its state and
 //!   the ids of the messages applied to it.
 //!
-//! Each line is its own committed transaction (`synchronous_commit` as the
-//! server is configured, `on` by default): an entry that was appended is on
-//! the server's disk, which is what the file journal gets from `fsync`.
+//! **Durability, as with the file journal.** The file journal hands each
+//! line to the OS at once and calls `fsync` at most once a second, and
+//! always before an external write. Here a writer thread with its own
+//! connection commits the lines appended so far, all of them in one
+//! transaction (group commit): one round trip to the server for every line
+//! the run's threads appended meanwhile, not one per line. Before an
+//! external write (`begin`, a `write` entry, `cx_journal_sync`) and at the
+//! end the runtime waits until every line appended before is committed
+//! (`calyx_pg_flush`). The committed lines are always a prefix of the
+//! appended ones; a machine that dies loses at most the last lines, which
+//! were reads: the resumed run makes them again, as after a machine crash
+//! with the file journal. With the server's `synchronous_commit` (`on` by
+//! default), committed means on the server's disk.
 //!
 //! **One machine per run.** A run is executed under a session-level
 //! advisory lock on its id, held by this process's connection. If the
 //! process or its machine dies, PostgreSQL drops the session and the lock
 //! with it, and another machine may take the run over (`calyx worker`).
+//! A process that dies has its socket closed by its OS, and the server
+//! sees it at once. A machine that dies (power, kernel, network) closes
+//! nothing: the server finds out only through TCP keepalive, which by
+//! default waits two hours. Each connection sets its own session's
+//! keepalive to 5 s idle and 3 probes 2 s apart, and `tcp_user_timeout`
+//! to the same 11 s: a dead machine's runs are free about 11 s later.
 //!
 //! **One owner per entity.** A message to an entity is applied in one
 //! transaction that locks the entity's row (`FOR UPDATE` for `send`, `FOR
@@ -41,7 +57,7 @@
 //! connection tries TLS and falls back to plain text (`prefer`).
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 
 use postgres::Client;
 
@@ -50,6 +66,8 @@ mod tls;
 pub const URL_ENV: &str = "CALYX_DATABASE_URL";
 
 static CLIENT: Mutex<Option<Client>> = Mutex::new(None);
+/// The writer thread's connection (group commit of journal lines).
+static WRITER_CLIENT: Mutex<Option<Client>> = Mutex::new(None);
 /// Entities have their own connection: a message holds its entity's row
 /// lock until its transaction ends, and the journal must not wait for it.
 static ENTITY_CLIENT: Mutex<Option<Client>> = Mutex::new(None);
@@ -124,9 +142,23 @@ fn on<T>(
     r
 }
 
+/// How long the server waits before it takes a silent machine for dead:
+/// idle seconds, then probes `KEEPALIVE.1` seconds apart, `KEEPALIVE.2` of
+/// them.
+const KEEPALIVE: (u32, u32, u32) = (5, 2, 3);
+
 fn connect() -> Result<Client, String> {
     let url = std::env::var(URL_ENV).map_err(|_| format!("{URL_ENV} is not set"))?;
     let mut client = tls::connect(&url).map_err(|e| format!("cannot connect to {URL_ENV}: {e}"))?;
+    // The server side of this session (ignored over a Unix socket).
+    let (idle, every, count) = KEEPALIVE;
+    let timeout_ms = (idle + every * count) * 1000;
+    client
+        .batch_execute(&format!(
+            "SET tcp_keepalives_idle = {idle}; SET tcp_keepalives_interval = {every}; \
+             SET tcp_keepalives_count = {count}; SET tcp_user_timeout = {timeout_ms}"
+        ))
+        .map_err(|e| format!("cannot set the session's keepalive: {e}"))?;
     // Several machines may start at once: one creates the tables.
     let mut tx = client.transaction().map_err(|e| e.to_string())?;
     tx.execute("SELECT pg_advisory_xact_lock(7461929)", &[])
@@ -280,6 +312,10 @@ pub unsafe extern "C" fn calyx_pg_status(run: *const c_char, status: *const c_ch
     let (Some(run), Some(status)) = (text(run), text(status)) else {
         return 0;
     };
+    // The status follows the lines it sums up.
+    if calyx_pg_flush() == 0 {
+        return 0;
+    }
     status_ok(with(|c| {
         c.execute(
             "UPDATE calyx_runs SET status = $2, host = $3, updated = now() WHERE id = $1",
@@ -288,7 +324,63 @@ pub unsafe extern "C" fn calyx_pg_status(run: *const c_char, status: *const c_ch
     }))
 }
 
-/// Appends one line to a run's journal, committed before it returns.
+/// Lines waiting for the writer, and how far it got.
+struct Queue {
+    /// (run, line), in the order they were appended.
+    pending: Vec<(String, String)>,
+    /// Lines appended, and lines committed, since the process started.
+    appended: u64,
+    committed: u64,
+    /// The writer is running.
+    started: bool,
+    /// The first error: every later append and flush fails with it.
+    error: Option<String>,
+}
+
+static QUEUE: Mutex<Queue> = Mutex::new(Queue {
+    pending: Vec::new(),
+    appended: 0,
+    committed: 0,
+    started: false,
+    error: None,
+});
+/// Signals the writer (lines to commit) and the waiters (lines committed).
+static MORE: Condvar = Condvar::new();
+static DONE: Condvar = Condvar::new();
+
+/// Commits whatever is pending, in one transaction, until the process ends.
+fn writer() {
+    loop {
+        let batch = {
+            let mut q = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
+            while q.pending.is_empty() {
+                q = MORE.wait(q).unwrap_or_else(|e| e.into_inner());
+            }
+            std::mem::take(&mut q.pending)
+        };
+        let n = batch.len() as u64;
+        let (runs, lines): (Vec<String>, Vec<String>) = batch.into_iter().unzip();
+        let r = on(&WRITER_CLIENT, |c| {
+            // `seq` follows the order of the arrays.
+            c.execute(
+                "INSERT INTO calyx_journal (run, line) \
+                 SELECT r, l FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS t(r, l, i) \
+                 ORDER BY i",
+                &[&runs, &lines],
+            )
+        });
+        let mut q = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
+        match r {
+            Ok(_) => q.committed += n,
+            Err(e) => {
+                q.error.get_or_insert(e);
+            }
+        }
+        DONE.notify_all();
+    }
+}
+
+/// Queues one line for the writer. 0 if an earlier commit failed.
 ///
 /// # Safety
 /// `run` is NUL-terminated; `line` points to `len` bytes of UTF-8.
@@ -303,12 +395,36 @@ pub unsafe extern "C" fn calyx_pg_append(run: *const c_char, line: *const u8, le
     let Ok(line) = std::str::from_utf8(bytes) else {
         return 0;
     };
-    status_ok(with(|c| {
-        c.execute(
-            "INSERT INTO calyx_journal (run, line) VALUES ($1, $2)",
-            &[&run, &line],
-        )
-    }))
+    let mut q = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(e) = &q.error {
+        eprintln!("calyx: journal database: {e}");
+        return 0;
+    }
+    if !q.started {
+        q.started = true;
+        std::thread::spawn(writer);
+    }
+    q.pending.push((run, line.to_owned()));
+    q.appended += 1;
+    MORE.notify_one();
+    1
+}
+
+/// Waits until every line appended so far is committed. 0 on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn calyx_pg_flush() -> c_int {
+    let mut q = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
+    let target = q.appended;
+    while q.committed < target && q.error.is_none() {
+        q = DONE.wait(q).unwrap_or_else(|e| e.into_inner());
+    }
+    match &q.error {
+        Some(e) => {
+            eprintln!("calyx: journal database: {e}");
+            0
+        }
+        None => 1,
+    }
 }
 
 /// A run's journal as text, one line per entry, each ending in `\n`; NULL
