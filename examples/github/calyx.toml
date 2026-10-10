@@ -1,0 +1,14 @@
+# O servidor MCP oficial do GitHub, só leitura, com os grupos de tools que o
+# exemplo usa. O token vem de GITHUB_PERSONAL_ACCESS_TOKEN.
+
+[tools.get_latest_release]
+command = ["github-mcp-server", "stdio", "--read-only", "--toolsets", "repos,pull_requests"]
+
+[tools.list_pull_requests]
+command = ["github-mcp-server", "stdio", "--read-only", "--toolsets", "repos,pull_requests"]
+
+[tools.list_commits]
+command = ["github-mcp-server", "stdio", "--read-only", "--toolsets", "repos,pull_requests"]
+
+[tools.get_file_contents]
+command = ["github-mcp-server", "stdio", "--read-only", "--toolsets", "repos,pull_requests"]

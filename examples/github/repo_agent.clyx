@@ -1,0 +1,64 @@
+# Um agente que lê um repositório pelo servidor MCP oficial do GitHub
+# (github/github-mcp-server) e responde perguntas sobre ele.
+#
+# Só leitura: as tools são declaradas `effect read`, e o servidor roda com
+# --read-only (calyx.toml). A Calyx confere as duas coisas na primeira
+# chamada: uma tool declarada `read` que o servidor anuncia como escrita é
+# um aviso (W0701).
+#
+#   go install github.com/github/github-mcp-server/cmd/github-mcp-server@latest
+#   export GITHUB_PERSONAL_ACCESS_TOKEN=...   # um token só de leitura basta
+#   export GEMINI_API_KEY=...
+#   calyx run repo_agent.clyx --owner daltonfontes --repo calyx \
+#       --question "O que mudou na última versão?"
+
+model gemini = "gemini-3.5-flash-lite":
+    max_output 2000 tokens
+
+tool get_latest_release(owner: Text, repo: Text) -> Text:
+    effect read
+    max_output 3000 tokens
+    retry_on [Timeout, RateLimit]
+    description "A última versão publicada do repositório: tag, data e notas."
+
+tool list_pull_requests(owner: Text, repo: Text, state: Text, perPage: Nat) -> Text:
+    effect read
+    max_output 6000 tokens
+    retry_on [Timeout, RateLimit]
+    description "Pull requests do repositório. state: open, closed ou all. perPage: quantos (até 100)."
+
+tool list_commits(owner: Text, repo: Text, perPage: Nat) -> Text:
+    effect read
+    max_output 4000 tokens
+    retry_on [Timeout, RateLimit]
+    description "Os commits mais recentes da branch padrão."
+
+tool get_file_contents(owner: Text, repo: Text, path: Text) -> Text:
+    effect read
+    max_output 6000 tokens
+    retry_on [Timeout, RateLimit]
+    description "O conteúdo de um arquivo, ou a lista de um diretório (path \"/\" para a raiz)."
+
+prompt investigate(owner: Text, repo: Text, question: Text) -> Text:
+    """
+    Você está analisando o repositório GitHub {owner}/{repo}.
+    Use as ferramentas para buscar o que precisar (versões, pull requests,
+    commits, arquivos) e responda à pergunta em português, em poucos
+    parágrafos curtos. Cite os números dos pull requests e as versões que
+    usar. Quando tiver informação suficiente, responda sem chamar mais
+    ferramentas.
+
+    Pergunta: {question}
+    """
+
+graph ask(owner: Text, repo: Text, question: Text) -> Text:
+    limits budget 1 USD
+
+    answer = agent gemini:
+        tools [get_latest_release, list_pull_requests, list_commits, get_file_contents]
+        max_turns 8
+        task investigate(owner, repo, question)
+        on turn_limit: final_answer
+        on stuck: final_answer
+
+    return answer
