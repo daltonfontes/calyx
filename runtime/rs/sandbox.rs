@@ -331,6 +331,62 @@ pub fn with_borrows<T, E>(
     }
 }
 
+// ----- fork ----------------------------------------------------------------
+
+/// `fork repo` (decision D13): the copy of `src` that the expression keyed
+/// `key` (a hash) owns, at `<src>.forks/<key>`. A new run copies `src`, under
+/// its read lock (no call edits it meanwhile), with a first snapshot. A
+/// resumed run that finds the copy puts it back to its last snapshot in the
+/// journal at `journal_dir`, as for the run's own sandboxes. Returns the
+/// copy's path.
+pub fn fork(src: &Path, key: &str, resume: Option<&Path>) -> Result<PathBuf, String> {
+    let mut forks = src.as_os_str().to_owned();
+    forks.push(".forks");
+    let dest = PathBuf::from(forks).join(key);
+    match resume {
+        Some(journal_dir) if dest.is_dir() => recover(&dest, &journaled(journal_dir))?,
+        _ => {
+            let lock = lock_for(&src.display().to_string());
+            let _read = lock.read().unwrap_or_else(|e| e.into_inner());
+            create(src, &dest)?;
+        }
+    }
+    Ok(dest.canonicalize().unwrap_or(dest))
+}
+
+/// `fork` for the interpreter: the copy's path, or NULL (the reason on
+/// stderr). Free it with `calyx_string_free`.
+///
+/// # Safety
+/// The strings are NUL-terminated; `journal_dir` may be NULL (a new run).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn calyx_sandbox_fork(
+    src: *const std::ffi::c_char,
+    key: *const std::ffi::c_char,
+    journal_dir: *const std::ffi::c_char,
+) -> *mut std::ffi::c_char {
+    let text = |p: *const std::ffi::c_char| {
+        // SAFETY: the caller passes NUL-terminated strings or NULL.
+        (!p.is_null()).then(|| {
+            unsafe { std::ffi::CStr::from_ptr(p) }
+                .to_string_lossy()
+                .into_owned()
+        })
+    };
+    let (Some(src), Some(key)) = (text(src), text(key)) else {
+        return std::ptr::null_mut();
+    };
+    let resume = text(journal_dir).map(PathBuf::from);
+    match fork(Path::new(&src), &key, resume.as_deref()) {
+        Ok(p) => std::ffi::CString::new(p.display().to_string())
+            .map_or(std::ptr::null_mut(), std::ffi::CString::into_raw),
+        Err(e) => {
+            eprintln!("calyx: fork: {e}");
+            std::ptr::null_mut()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,61 +465,5 @@ mod tests {
         let _ = fs::remove_dir_all(&src);
         let _ = fs::remove_dir_all(&sb);
         let _ = fs::remove_dir_all(store(&sb));
-    }
-}
-
-// ----- fork ----------------------------------------------------------------
-
-/// `fork repo` (decision D13): the copy of `src` that the expression keyed
-/// `key` (a hash) owns, at `<src>.forks/<key>`. A new run copies `src`, under
-/// its read lock (no call edits it meanwhile), with a first snapshot. A
-/// resumed run that finds the copy puts it back to its last snapshot in the
-/// journal at `journal_dir`, as for the run's own sandboxes. Returns the
-/// copy's path.
-pub fn fork(src: &Path, key: &str, resume: Option<&Path>) -> Result<PathBuf, String> {
-    let mut forks = src.as_os_str().to_owned();
-    forks.push(".forks");
-    let dest = PathBuf::from(forks).join(key);
-    match resume {
-        Some(journal_dir) if dest.is_dir() => recover(&dest, &journaled(journal_dir))?,
-        _ => {
-            let lock = lock_for(&src.display().to_string());
-            let _read = lock.read().unwrap_or_else(|e| e.into_inner());
-            create(src, &dest)?;
-        }
-    }
-    Ok(dest.canonicalize().unwrap_or(dest))
-}
-
-/// `fork` for the interpreter: the copy's path, or NULL (the reason on
-/// stderr). Free it with `calyx_string_free`.
-///
-/// # Safety
-/// The strings are NUL-terminated; `journal_dir` may be NULL (a new run).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn calyx_sandbox_fork(
-    src: *const std::ffi::c_char,
-    key: *const std::ffi::c_char,
-    journal_dir: *const std::ffi::c_char,
-) -> *mut std::ffi::c_char {
-    let text = |p: *const std::ffi::c_char| {
-        // SAFETY: the caller passes NUL-terminated strings or NULL.
-        (!p.is_null()).then(|| {
-            unsafe { std::ffi::CStr::from_ptr(p) }
-                .to_string_lossy()
-                .into_owned()
-        })
-    };
-    let (Some(src), Some(key)) = (text(src), text(key)) else {
-        return std::ptr::null_mut();
-    };
-    let resume = text(journal_dir).map(PathBuf::from);
-    match fork(Path::new(&src), &key, resume.as_deref()) {
-        Ok(p) => std::ffi::CString::new(p.display().to_string())
-            .map_or(std::ptr::null_mut(), std::ffi::CString::into_raw),
-        Err(e) => {
-            eprintln!("calyx: fork: {e}");
-            std::ptr::null_mut()
-        }
     }
 }
