@@ -158,11 +158,32 @@ def main():
         if not os.environ.get("GEMINI_API_KEY"):
             sys.exit("--real needs GEMINI_API_KEY")
         models.append((REAL_MODEL, REPS))
+    # Each run is appended to a log as it ends; a harness stopped midway
+    # takes up where it was (E6_FRESH=1 starts over).
+    log = os.path.join(HERE, "results", "e6_runs.jsonl")
+    os.makedirs(os.path.dirname(log), exist_ok=True)
+    if os.environ.get("E6_FRESH") == "1" and os.path.exists(log):
+        os.remove(log)
+    done = {}
+    if os.path.exists(log):
+        for line in open(log):
+            r = json.loads(line)
+            done.setdefault((r["model"], r["variant"], r["rep"], r["ticket"]), r)
     for model, reps in models:
         results["models"][model] = {}
         for policy in (False, True):
-            rows = [run_one(t, model, policy) for _ in range(reps) for t in scenarios.tickets()]
             name = "policy" if policy else "prompt"
+            rows = []
+            for rep in range(reps):
+                for t in scenarios.tickets():
+                    key = (model, name, rep, t[0])
+                    if key not in done:
+                        r = run_one(t, model, policy)
+                        r.update(model=model, variant=name, rep=rep)
+                        with open(log, "a") as f:
+                            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+                        done[key] = r
+                    rows.append(done[key])
             results["models"][model][name] = {"summary": summary(rows), "runs": rows}
             print(model, name, json.dumps(summary(rows), ensure_ascii=False))
     os.makedirs(os.path.join(HERE, "results"), exist_ok=True)
