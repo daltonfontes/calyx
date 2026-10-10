@@ -225,6 +225,9 @@ pub enum Expr {
         on_none: Option<Box<Expr>>,
         on_none_fail: Option<String>,
     },
+    /// `fork repo` (decision D13): a copy of the sandbox, made once (keyed
+    /// like a call) and owned by whoever receives it.
+    Fork(Box<Expr>),
     Done(Box<Expr>),
     Next(Box<Expr>),
     /// `Ok(value)` or `Failed(error)` (decision D11).
@@ -424,6 +427,7 @@ impl Graph {
                 Expr::Unary { value, .. }
                 | Expr::Done(value)
                 | Expr::Next(value)
+                | Expr::Fork(value)
                 | Expr::Try(value) => calls(value),
                 Expr::If { cond, then, els } => calls(cond) + calls(then).max(calls(els)),
                 Expr::Match { value, cases } => {

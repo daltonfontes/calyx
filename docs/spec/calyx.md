@@ -396,7 +396,7 @@ best = race first where it.confident:
 - **Cancelamento entre passos:** os subgrafos dos ramos perdedores param (as tarefas deles não rodam mais) e as chamadas que ainda esperavam a vez não são feitas. Uma chamada já em andamento termina, e a resposta não é usada (o rastro diz "lost the race"); a execução espera por ela antes de terminar.
 - **Quórum (`race first N`):** `dois = race first 2:` com três ramos termina quando **dois** passam na condição (ou não falham, sem `where`), e dá uma `List[T]` com os valores deles, na ordem dos ramos. Os outros são cancelados (e as escritas deles compensadas, como abaixo). Se menos de N passam, vale `on none`, que dá uma `List[T]` ou falha. O diário guarda os vencedores (`"winners"`), então a corrida é decidida uma vez só, também na retomada. `N` vai de 1 ao número de ramos (`E0686`). O grafo segue com os vencedores assim que eles chegam; uma chamada de um perdedor que já estava a caminho termina sem ser usada, e a execução só acaba depois dela (o provedor a cobra de qualquer jeito). Na E5, a resposta fica pronta em 0,32 s, contra 2,0 s esperando os três.
 - **Escritas nos ramos e compensação (*saga*):** um ramo que perde pode já ter escrito, e uma escrita em andamento termina quando a corrida é decidida. Se a tool declara `compensate g(...)`, a escrita é **desfeita**: antes de mandá-la, o runtime grava no diário como desfazê-la (`owe:<chave>`); quando o ramo perde, a corrida só termina depois de chamar `g` para cada escrita dele que foi mandada, com a chave `undo:<chave>`. Uma escrita ainda a caminho é esperada antes de ser desfeita; uma cancelada antes de começar não é desfeita. Depois de uma queda, a retomada acha a corrida decidida e as dívidas no diário, e desfaz o que falta, uma vez só. A compensação pode ser chamada para uma escrita que não chegou a acontecer (a queda veio entre gravar a dívida e mandar), então ela precisa aceitar não ter o que desfazer. Uma escrita sem `compensate` num ramo (inclusive mensagens a entidades e escritas de agentes) recebe o aviso `W0604`; o caminho seguro, então, é escrever depois da corrida, com o vencedor. Exemplo: `examples/saga.clyx`.
-- **Sandboxes:** dois ramos não podem editar a mesma sandbox (`E0645`). `fork` (uma cópia por ramo) fica para depois.
+- **Sandboxes:** dois ramos não podem editar a mesma sandbox (`E0645`). Cada um pode editar a sua cópia: `a: tentar(fork repo, ...)` (seção 7).
 
 ### 5.9 Falha como valor (D11)
 
@@ -550,8 +550,8 @@ O efeito de um nó é **inferido**: o maior efeito de tudo o que ele chama. Orde
 `Sandbox`, `Budget` e capacidades `write once` têm **um dono por vez**.
 
 - Emprestar: `reads recurso` (leitura; vários ao mesmo tempo) ou `edits recurso` (escrita; um por vez).
+- **`fork repo`** (D13): uma cópia isolada, para um subgrafo editar à vontade: `tentar(fork repo, ...)`. Para a análise, o `fork` só **lê** o original (no momento da cópia), então dois ramos de uma corrida, ou os itens de um `for each`, com `fork repo` não conflitam. A cópia fica ao lado do original (`<sandbox>.forks/<chave>`), feita uma vez por lugar do `fork` na execução (cada ramo e cada item tem a sua), sob a trava de leitura do original, com o primeiro snapshot. A retomada encontra a cópia e a põe de volta no último snapshot do diário. O que um ramo faz na cópia não volta ao original: o resultado do subgrafo é que diz o que aproveitar.
 - Dividir explicitamente entre ramos *(ainda não implementado)*:
-  - `repo.fork(n)`: cópias isoladas (D13);
   - `repo.share(n)`: o mesmo repositório, com validação pelo conjunto de leitura a cada escrita (D13);
   - `orcamento.split(6 USD, 4 USD)` *(sintaxe provisória)*.
 
@@ -572,7 +572,7 @@ graph solve(issue: Text, repo: Sandbox) -> Text:
 - **O compilador recusa** itens de um `for each` editando a mesma sandbox (`E0644`); duas partes de um passo que rodariam ao mesmo tempo, uma editando (`E0645`); e a sandbox como valor: guardada num passo, devolvida, mostrada a um prompt (`E0647`).
 - **No runtime:** edições de uma sandbox rodam uma por vez, leituras ao mesmo tempo (também as tools de uma volta de um agente). Antes de cada chamada que edita, um snapshot; se a chamada falha, a sandbox volta a ele, e chamadas `effect sandbox` são repetidas em erros temporários a partir do mesmo estado.
 - **Snapshots por conteúdo**, em `<sandbox>.snapshots/`: cada arquivo é guardado uma vez pelo SHA-256; um snapshot é um manifesto (caminho → hash). O hash do snapshot depois de cada edição vai para o diário com a resposta da tool. **Na retomada, a sandbox volta ao último snapshot do diário**: o que uma chamada interrompida fez é desfeito, e ela roda de novo.
-- **Limites:** a sandbox não é isolamento do sistema operacional; uma tool que escreve fora do caminho que recebe não é impedida. Links simbólicos não são copiados. `fork`/`share` ainda não existem.
+- **Limites:** a sandbox não é isolamento do sistema operacional; uma tool que escreve fora do caminho que recebe não é impedida. Links simbólicos não são copiados. `share` ainda não existe.
 
 ---
 

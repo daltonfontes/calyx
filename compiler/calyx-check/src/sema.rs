@@ -2154,7 +2154,7 @@ impl<'p> Cx<'_, 'p> {
                             span,
                         )
                         .expected(format!(
-                            "the edit of `{s}` in a step of its own, so the order is defined"
+                            "the edit of `{s}` in a step of its own, so the order is defined, or `fork {s}`: a copy for each"
                         ))
                         .observed(format!(
                             "`{s}` borrowed twice in one expression, at least once with `edits`"
@@ -2549,6 +2549,9 @@ impl<'p> Cx<'_, 'p> {
                 }
             }
             ExprKind::Borrow { mode, target } => match gc.scope.get(&target.name) {
+                // `fork repo`: a copy of its own, for a subgraph to edit;
+                // the original is only read, when the copy is made (D13).
+                Some(Ty::Sandbox) if mode.name == "fork" => Typed::pure(Ty::Sandbox),
                 Some(Ty::Sandbox) => Typed::pure(Ty::Lent(mode.name == "edits")),
                 Some(Ty::Error) => Typed::pure(Ty::Error),
                 Some(other) => {

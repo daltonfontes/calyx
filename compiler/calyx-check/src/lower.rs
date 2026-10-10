@@ -327,6 +327,9 @@ impl Lower<'_> {
                 ir::Expr::Field(Box::new(self.expr(base, scope)), name.name.clone())
             }
             ExprKind::Call { callee, args } => self.call(callee, args, scope),
+            ExprKind::Borrow { mode, target } if mode.name == "fork" => {
+                ir::Expr::Fork(Box::new(self.name(&target.name, scope)))
+            }
             ExprKind::Borrow { target, .. } => self.name(&target.name, scope),
             ExprKind::Bool(b) => ir::Expr::Bool(*b),
             ExprKind::Receive {

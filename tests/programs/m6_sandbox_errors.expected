@@ -39,7 +39,7 @@ error[E0644]: items of a `for each` cannot edit the same sandbox
 Location: m6_sandbox_errors.clyx:30:18
 
 error[E0645]: two uses of a sandbox that could run at the same time, one editing it
-- expected : the edit of `repo` in a step of its own, so the order is defined
+- expected : the edit of `repo` in a step of its own, so the order is defined, or `fork repo`: a copy for each
 - observed : `repo` borrowed twice in one expression, at least once with `edits`
 Location: m6_sandbox_errors.clyx:31:9
 

@@ -2844,6 +2844,46 @@ static cx_value *compensate_losers(ctx *c, const char *key, cx_value *names, cx_
     return waiting ? PENDING : cx_null(&c->w->arena);
 }
 
+char *calyx_sandbox_fork(const char *src, const char *key, const char *journal_dir);
+
+/*
+ * `fork repo` (D13): a copy of the sandbox for whoever receives it (a
+ * subgraph that edits it, a branch of a race). Made once per key (the
+ * place of the `fork` in the run, so each branch and each item has its
+ * own), next to the original; a resumed run finds it and puts it back to
+ * its last journaled snapshot.
+ */
+static cx_value *eval_fork(ctx *c, cx_value *e) {
+    exec *x = c->x;
+    const char *key = call_key(c, e);
+    pthread_mutex_lock(&x->mu);
+    pending *p = ptab_get(x, key);
+    pthread_mutex_unlock(&x->mu);
+    if (p && p->state == P_DONE) return p->value;
+    cx_value *src = eval(c, cx_get(e, "v"));
+    if (!src || src == PENDING) return src;
+    if (src->kind != CX_STR) return fatalf(c, "invalid IR: `fork` of something not a sandbox");
+    char hash[65];
+    cx_sha256_hex(key, strlen(key), hash);
+    hash[16] = '\0';
+    cx_value *path;
+    if (x->journal && cx_journal_get_mode(x->journal) == CX_JOURNAL_REPLAY) {
+        /* A replay calls no tool: the path is enough. */
+        path = cx_cstr(&c->w->arena, fmt(&c->w->arena, "%s.forks/%s", src->u.str.s, hash));
+    } else {
+        int resume = x->journal && cx_journal_get_mode(x->journal) == CX_JOURNAL_RESUME;
+        char *made = calyx_sandbox_fork(src->u.str.s, hash, resume ? x->run_dir : NULL);
+        if (!made) return fatalf(c, "cannot fork the sandbox %.300s", src->u.str.s);
+        path = cx_cstr(&c->w->arena, made);
+        calyx_string_free(made);
+        trace(x, c->label, "fork  %s", path->u.str.s);
+    }
+    pthread_mutex_lock(&x->mu);
+    new_pending(x, &c->w->arena, key, P_DONE, path);
+    pthread_mutex_unlock(&x->mu);
+    return path;
+}
+
 /* "`a`" or "`a`, `b`", for the trace. */
 static const char *race_names(ctx *c, cx_value *winners) {
     if (winners && winners->kind == CX_STR) return fmt(&c->w->arena, "`%s`", winners->u.str.s);
@@ -3394,6 +3434,7 @@ static cx_value *eval(ctx *c, cx_value *e) {
     if (strcmp(k, "receive") == 0) return call_receive(c, e);
     if (strcmp(k, "each") == 0) return eval_each(c, e);
     if (strcmp(k, "race") == 0) return eval_race(c, e);
+    if (strcmp(k, "fork") == 0) return eval_fork(c, e);
     if (strcmp(k, "let") == 0) {
         cx_value *v = eval(c, cx_get(e, "v"));
         if (!v || v == PENDING) return v;

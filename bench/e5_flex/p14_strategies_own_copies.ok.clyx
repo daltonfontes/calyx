@@ -1,4 +1,4 @@
-# Contorno: sem `fork`, quem chama passa uma cópia para cada estratégia.
+# Contorno: `fork repo`, uma cópia do repositório para cada estratégia.
 tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Text:
     effect sandbox
     max_output 100 tokens
@@ -7,9 +7,9 @@ graph strategy(repo: Sandbox, new: Text) -> Text:
     out = edit_file(edits repo, "a.py", "x", new)
     return out
 
-graph g(repo_a: Sandbox, repo_b: Sandbox) -> Text:
+graph g(repo: Sandbox) -> Text:
     best = race first:
-        a: strategy(repo_a, "y")
-        b: strategy(repo_b, "z")
+        a: strategy(fork repo, "y")
+        b: strategy(fork repo, "z")
         on none: fail "nenhuma"
     return best

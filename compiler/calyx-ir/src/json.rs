@@ -606,6 +606,13 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
             o.push_str(&inner);
             o.push('}');
         }
+        Expr::Fork(v) => {
+            let id = *ids;
+            *ids += 1;
+            o.push_str(&format!("{{\"k\":\"fork\",\"id\":{id},\"v\":"));
+            expr(o, v, ids);
+            o.push('}');
+        }
         Expr::Done(v) | Expr::Next(v) | Expr::Try(v) => {
             let k = match e {
                 Expr::Done(_) => "done",

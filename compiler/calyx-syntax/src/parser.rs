@@ -1197,10 +1197,11 @@ impl Parser<'_> {
                 "`name = for each item in list: ...`",
             ));
         }
-        if (self.is_word("reads") || self.is_word("edits")) && self.nth_kind(1) == TokenKind::Ident
+        if (self.is_word("reads") || self.is_word("edits") || self.is_word("fork"))
+            && self.nth_kind(1) == TokenKind::Ident
         {
             let start = self.tok().span;
-            let mode = self.ident("`reads` or `edits`")?;
+            let mode = self.ident("`reads`, `edits` or `fork`")?;
             let target = self.ident("the resource to lend")?;
             return Ok(Expr {
                 span: self.span_from(start),
