@@ -1,6 +1,4 @@
 # Padrão: quórum, perguntar a 3 modelos e seguir com as 2 primeiras respostas.
-# Não há como dizer "as 2 primeiras a chegar": `take` pega as 2 primeiras da lista,
-# e a lista só existe quando as 3 chegam.
 model a = "fake-model"
 model b = "fake-slow-300"
 model c = "fake-slow-2000"
@@ -12,5 +10,9 @@ prompt combine(xs: List[Text]) -> Text:
     """{xs}"""
 
 graph g(q: Text) -> Text:
-    answers = [a(ask(q)), b(ask(q)), c(ask(q))]
-    return a(combine(take(answers, 2)))
+    two = race first 2:
+        fast: a(ask(q))
+        medium: b(ask(q))
+        slow: c(ask(q))
+        on none: fail "menos de duas respostas"
+    return a(combine(two))

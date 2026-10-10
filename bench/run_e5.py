@@ -80,9 +80,7 @@ def corpus() -> dict:
 
 
 # Patterns whose natural program compiles but does not do what was meant.
-NOT_EXPRESSIBLE = {
-    "p20_quorum": "there is no 'first k of n': the closest program waits for all n",
-}
+NOT_EXPRESSIBLE: dict[str, str] = {}
 
 
 def patterns() -> list[dict]:
@@ -145,18 +143,27 @@ def latency() -> dict:
                                                      ["--q", "x"]),
         "p08 rewritten: cache write after the race": ("p08_race_with_harmless_write.ok.clyx",
                                                       ["--q", "x"]),
-        "p20 quorum, closest program: waits for all 3": ("p20_quorum.clyx", ["--q", "x"]),
+        "p20 quorum before `race first N`: waits for all 3": ("alt_p20_wait_all.clyx",
+                                                               ["--q", "x"]),
+        "p20 quorum with `race first 2`": ("p20_quorum.clyx", ["--q", "x"]),
     }
     out = {}
     for label, (prog, args) in runs.items():
         shutil.copy(os.path.join(FLEX, prog), work)
-        out[label] = round(statistics.median(
-            timed(["run", prog, "--graph", "g", "--fake-models", "--no-journal", "--quiet", *args], work)
-            for _ in range(REPS)), 3)
+        ends, answers = [], []
+        for _ in range(REPS):
+            t = time.perf_counter()
+            r = subprocess.run([CALYX, "run", prog, "--graph", "g", "--fake-models", "--no-journal",
+                                *args], cwd=work, capture_output=True, text=True, check=True)
+            ends.append(time.perf_counter() - t)
+            # When the graph had its answer (the trace's `return ... done`):
+            # a lost branch's call already sent may still be finishing.
+            done = [float(l.split()[0].rstrip("s")) for l in r.stderr.splitlines()
+                    if " return " in l and " done " in l]
+            answers.append(done[-1] if done else ends[-1])
+        out[label] = {"answer": round(statistics.median(answers), 3),
+                      "end": round(statistics.median(ends), 3)}
         print(label, out[label], flush=True)
-    # A quorum would go on with the 2nd answer: the fake models answer at
-    # once, in 0.3 s and in 2 s.
-    out["p20 quorum, ideal (2nd answer)"] = 0.3
     return out
 
 
