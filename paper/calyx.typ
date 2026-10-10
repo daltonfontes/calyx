@@ -496,6 +496,51 @@ rounds, losing 1 to 3 conversations), stores again after a crash and resume,
 and repeats 30 facts when 10 runs all crash and resume; with manual care
 (one item per fact, keyed by message id) it gets 3/3.
 
+== Several machines (W8)
+
+With the journal in PostgreSQL, runs move between machines (§5). W8
+measures what that costs, against PostgreSQL 16 on the same machine and a
+few milliseconds away (a proxy that delays every byte; 2.8 and 7.0 ms of
+round trip), median of 5 (`bench/run_w8.py`).
+
+#figure(
+  table(
+    columns: (1fr, auto, auto, auto),
+    align: (left, right, right, right),
+    thick, [*Journal*], [*Local*], [*2.8 ms*], [*7.0 ms*], rule,
+    [File], [0.12 s], [—], [—],
+    [PostgreSQL, a commit per line (v0.3.5)], [0.85 s], [6.9 s], [15.8 s],
+    [PostgreSQL, group commit], [*0.15 s*], [*0.24 s*], [*0.37 s*],
+    thick,
+  ),
+  caption: [W8, W1's fan-out of 500 questions with models that answer at
+    once (1,003 journal lines from 8 threads).],
+) <tab-w8>
+
+The first version committed every line in its own transaction, under the
+journal's lock: one round trip per line. A writer thread now commits all
+the lines appended meanwhile in one transaction, and the runtime waits for
+it before every external write and at the end, the file journal's rule
+(`fsync` at most once a second, always before a write). An agent of 100
+turns (one thread) goes from 3.5 s to 0.43 s at 7.0 ms; the file takes
+0.25 s.
+
+*Taking a run over.* Machine A dies in the middle of W2's refund; a
+`calyx worker` on B finishes it, one payment and one e-mail. When A's
+process is killed, its OS closes the connection and B has the run 1.3 s
+later (most of it B's polling). When A's machine goes silent (we drop
+every packet of its connection, as a power cut would), the server learns
+it only from TCP keepalive, two hours by default: v0.3.5 did not take the
+run over in 60 s. Each connection now sets its session's keepalive (5 s,
+then 3 probes 2 s apart): 11.5 s.
+
+*Entities.* Eight processes on two machines send 50 messages each to one
+entity: none is lost (400 of 400). A message is two round trips, the row
+locked during one: 116 messages/s at 7.0 ms, 620–750 with the database
+on the machine, 740–880 in files on one machine. Listing 531 runs (`calyx runs`, which the worker
+does on every pass) takes 0.13 s; the first version read every journal,
+0.90 s.
+
 == Bugs before running (Q2)
 
 A corpus of 54 state bugs, each a Calyx program with its expected outcome in
@@ -647,8 +692,8 @@ annotations only works for servers that send them, and misses ignored keys.
 *Models.* Most experiments use fake models; W1 and W2 were repeated with
 Gemini at small N, and in W2 the model always proposed the same amount, so
 the risk of a different answer after a crash was not exercised. *Setting.*
-One machine (the PostgreSQL journal, which lets another machine take over a
-run, is tested but not measured); only the Stripe runs use a real service
+One machine; W8 (several machines) adds latency with a proxy rather than
+running against a database across a real network; only the Stripe runs use a real service
 over the network, the rest use fake services; versions are pinned. *Real-bug study.* Issues
 read from their summaries, one classifier, a sample limited by GitHub
 search.

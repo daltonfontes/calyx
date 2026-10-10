@@ -432,6 +432,72 @@ leitura (`bench/stripe/probe.sh`, `bench/results/stripe_probe.txt`):
 | `stripe_server.py` como é | 1 | passa |
 | o mesmo com `STRIPE_DROP_KEY=1` (não repassa a chave, mas anuncia `idempotencyKeyHint: true`) | 2 | `E0704` |
 
+## W8: várias máquinas (o diário no PostgreSQL)
+
+Com o diário no PostgreSQL, uma execução pode ser assumida por outra máquina
+(spec, seção 9.3). A W8 (`bench/run_w8.py`, resultados em
+`bench/results/w8.json`) mede quanto isso custa, contra o PostgreSQL 16 na
+mesma máquina e "a alguns milissegundos": um proxy (`w8_machines/delay_proxy.py`)
+atrasa cada byte nos dois sentidos, dando 2,8 e 7,0 ms de ida e volta.
+Mediana de 5 rodadas. A medição achou três problemas na v0.3.5, corrigidos
+antes dos números abaixo; a v0.3.5 aparece para comparar.
+
+**O custo do diário.** Fan-out da W1 com 500 perguntas e modelos que
+respondem na hora (1.003 linhas de 8 threads), e um agente de 100 voltas
+(uma thread, uma chamada de modelo e uma de tool por volta):
+
+| Diário | Fan-out local | 2,8 ms | 7,0 ms | Agente local | 2,8 ms | 7,0 ms |
+|---|---|---|---|---|---|---|
+| Arquivo | 0,12 s | — | — | 0,25 s | — | — |
+| PostgreSQL, um commit por linha (v0.3.5) | 0,85 s | 6,9 s | 15,8 s | 0,47 s | 1,8 s | 3,5 s |
+| PostgreSQL, *group commit* | **0,15 s** | **0,24 s** | **0,37 s** | **0,25 s** | **0,36 s** | **0,43 s** |
+
+A v0.3.5 confirmava cada linha numa transação própria, sob o lock do
+diário: o fan-out ficava preso a uma ida e volta por linha. Agora uma thread
+com conexão própria confirma de uma vez as linhas que chegaram enquanto
+isso, e o runtime espera por ela antes de toda escrita externa e no fim: a
+mesma regra do arquivo (`fsync` no máximo uma vez por segundo, sempre antes
+de uma escrita).
+
+**Assumir uma execução.** A máquina A morre no meio do reembolso da W2
+(modelos de 1 s); um `calyx worker --every 1` na máquina B a termina. Do
+momento da morte até a execução terminar em B, sempre com um pagamento e um
+e-mail:
+
+| Como A morre | v0.3.5 | Agora |
+|---|---|---|
+| O processo é morto (o sistema fecha a conexão) | 2,1 s | 1,3 s |
+| A máquina some (todo pacote da conexão é descartado, com `iptables`) | **não assumiu em 60 s** | **11,5 s** |
+
+Quando a máquina some, nada avisa o servidor: ele só descobre pelo
+*keepalive* do TCP, que por padrão começa depois de duas horas, e até lá a
+sessão de A segura o lock da execução. Agora cada conexão ajusta o da
+própria sessão (5 s ociosa, 3 sondas a cada 2 s, `tcp_user_timeout` de
+11 s).
+
+**Entidades disputadas.** P processos, metade em cada máquina, mandam 50
+mensagens cada à mesma entidade. Em todos os casos a contagem final é
+exata (nenhuma mensagem perdida):
+
+| Onde | 1 processo | 2 | 4 | 8 |
+|---|---|---|---|---|
+| Arquivos (uma máquina, `flock`) | 743/s | 878/s | 884/s | 868/s |
+| PostgreSQL local | 624/s | 736/s | 754/s | 639/s |
+| PostgreSQL a 7,0 ms | 47/s | 93/s | 108/s | 116/s |
+
+Na v0.3.5 uma mensagem custava umas 9 idas e voltas (BEGIN, e um *prepare*
+e um *execute* por comando), com a linha travada na maior parte delas: 41
+mensagens/s a 7,0 ms. Agora são duas, com a linha travada durante uma.
+
+**Listar as execuções.** `calyx runs` (e cada passada do `calyx worker`)
+com as 531 execuções e 156 mil linhas que a W8 deixa no banco: 0,90 s na
+v0.3.5, que lia o diário inteiro de cada uma; 0,13 s agora, com o servidor
+contando.
+
+**Limites.** A latência vem de um proxy local, não de uma rede de verdade
+(sem perda de pacotes nem variação), e o servidor está na mesma máquina que
+os clientes. Os modelos são falsos.
+
 ## O que a comparação mostra e o que não mostra
 
 **Mostra:**

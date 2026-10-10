@@ -1,0 +1,153 @@
+{
+  "database": "calyx@127.0.0.1:55432/postgres",
+  "server": "16.14 (Ubuntu 16.14-0ubuntu0.24.04.1)",
+  "synchronous_commit": "on",
+  "reps": 5,
+  "journal": {
+    "rtt_ms": {
+      "0": 0.13,
+      "1": 2.8,
+      "2.5": 7.02
+    },
+    "workloads": {
+      "fanout_500": {
+        "file": 0.122,
+        "pg_group_commit_delay_0": 0.152,
+        "pg_group_commit_delay_1": 0.243,
+        "pg_group_commit_delay_2.5": 0.373,
+        "pg_per_line_delay_0": 0.854,
+        "pg_per_line_delay_1": 6.906,
+        "pg_per_line_delay_2.5": 15.759
+      },
+      "agent_100_turns": {
+        "file": 0.254,
+        "pg_group_commit_delay_0": 0.247,
+        "pg_group_commit_delay_1": 0.356,
+        "pg_group_commit_delay_2.5": 0.427,
+        "pg_per_line_delay_0": 0.472,
+        "pg_per_line_delay_1": 1.769,
+        "pg_per_line_delay_2.5": 3.503
+      }
+    }
+  },
+  "takeover": {
+    "process_killed_new": {
+      "seconds": [
+        1.24,
+        1.32,
+        1.21,
+        1.26,
+        1.28
+      ],
+      "median": 1.26
+    },
+    "machine_silent_new": {
+      "seconds": [
+        11.48,
+        11.49,
+        11.51,
+        11.45,
+        11.57
+      ],
+      "cap": 60.0,
+      "median": 11.49
+    },
+    "process_killed_v0.3.5": {
+      "seconds": [
+        1.98,
+        2.12,
+        2.1,
+        2.17,
+        2.2
+      ],
+      "median": 2.12
+    },
+    "machine_silent_v0.3.5": {
+      "seconds": [
+        null
+      ],
+      "cap": 60.0,
+      "median": null
+    }
+  },
+  "entities": {
+    "file_1": {
+      "messages": 50,
+      "count": 50,
+      "seconds": 0.067,
+      "per_second": 743.2
+    },
+    "file_2": {
+      "messages": 100,
+      "count": 100,
+      "seconds": 0.114,
+      "per_second": 878.4
+    },
+    "file_4": {
+      "messages": 200,
+      "count": 200,
+      "seconds": 0.226,
+      "per_second": 884.0
+    },
+    "file_8": {
+      "messages": 400,
+      "count": 400,
+      "seconds": 0.461,
+      "per_second": 867.9
+    },
+    "pg_delay_0_1": {
+      "messages": 50,
+      "count": 50,
+      "seconds": 0.08,
+      "per_second": 623.9
+    },
+    "pg_delay_0_2": {
+      "messages": 100,
+      "count": 100,
+      "seconds": 0.136,
+      "per_second": 736.0
+    },
+    "pg_delay_0_4": {
+      "messages": 200,
+      "count": 200,
+      "seconds": 0.265,
+      "per_second": 753.8
+    },
+    "pg_delay_0_8": {
+      "messages": 400,
+      "count": 400,
+      "seconds": 0.626,
+      "per_second": 639.1
+    },
+    "pg_delay_2.5_1": {
+      "messages": 50,
+      "count": 50,
+      "seconds": 1.073,
+      "per_second": 46.6
+    },
+    "pg_delay_2.5_2": {
+      "messages": 100,
+      "count": 100,
+      "seconds": 1.08,
+      "per_second": 92.6
+    },
+    "pg_delay_2.5_4": {
+      "messages": 200,
+      "count": 200,
+      "seconds": 1.861,
+      "per_second": 107.5
+    },
+    "pg_delay_2.5_8": {
+      "messages": 400,
+      "count": 400,
+      "seconds": 3.455,
+      "per_second": 115.8
+    }
+  },
+  "listing": {
+    "runs": 531,
+    "journal_lines": 155668,
+    "new": 0.126,
+    "v0.3.5": 0.898
+  }
+}

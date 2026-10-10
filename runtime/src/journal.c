@@ -30,6 +30,7 @@ int calyx_pg_enabled(void);
 int calyx_pg_create(const char *run);
 int calyx_pg_status(const char *run, const char *status);
 int calyx_pg_append(const char *run, const char *line, size_t len);
+int calyx_pg_flush(void);
 char *calyx_pg_read(const char *run);
 int calyx_pg_blob_put(const char *hash, const char *data, size_t len);
 char *calyx_pg_blob_get(const char *hash);
@@ -140,10 +141,11 @@ static int writable(const cx_journal *j) {
     return j->pg ? j->mode != CX_JOURNAL_REPLAY : j->f != NULL;
 }
 
-/* 0 if the journal may not be on disk. In PostgreSQL every line is
- * committed as it is appended. */
+/* 0 if the journal may not be on disk. In PostgreSQL, waits until every
+ * line appended is committed (lines are committed in groups, pg.rs). */
 static int sync_file(cx_journal *j) {
-    if (j->pg || !j->f) return 1;
+    if (j->pg) return j->mode == CX_JOURNAL_REPLAY ? 1 : calyx_pg_flush();
+    if (!j->f) return 1;
     int ok = fflush(j->f) == 0 && fsync(fileno(j->f)) == 0;
     j->last_sync = now();
     return ok;
@@ -151,7 +153,11 @@ static int sync_file(cx_journal *j) {
 
 /* Appends one line; it reaches the OS before this returns. */
 static int append(cx_journal *j, const char *line, size_t len, int must_sync) {
-    if (j->pg) return j->mode == CX_JOURNAL_REPLAY ? 1 : calyx_pg_append(j->run, line, len);
+    if (j->pg) {
+        if (j->mode == CX_JOURNAL_REPLAY) return 1;
+        if (!calyx_pg_append(j->run, line, len)) return 0;
+        return must_sync ? sync_file(j) : 1;
+    }
     if (!j->f) return 1;
     if (fwrite(line, 1, len, j->f) != len || fputc('\n', j->f) == EOF || fflush(j->f) != 0)
         return 0;
@@ -430,6 +436,7 @@ void cx_journal_end(cx_journal *j, const char *ok_json, const char *error) {
 
 void cx_journal_close(cx_journal *j) {
     if (!j) return;
+    if (j->pg) sync_file(j);
     if (j->f) {
         sync_file(j);
         fclose(j->f);

@@ -507,6 +507,52 @@ depois de uma queda e retomada, e repete 30 fatos quando 10 execuções caem e
 retomam; com cuidado manual (um item por fato, com o id da mensagem como
 chave) faz 3/3.
 
+== Várias máquinas (W8)
+
+Com o diário no PostgreSQL, as execuções passam de uma máquina para outra
+(§5). A W8 mede quanto isso custa, contra o PostgreSQL 16 na mesma máquina
+e a alguns milissegundos (um proxy que atrasa cada byte; 2,8 e 7,0 ms de
+ida e volta), mediana de 5 (`bench/run_w8.py`).
+
+#figure(
+  table(
+    columns: (1fr, auto, auto, auto),
+    align: (left, right, right, right),
+    thick, [*Diário*], [*Local*], [*2,8 ms*], [*7,0 ms*], rule,
+    [Arquivo], [0,12 s], [—], [—],
+    [PostgreSQL, um commit por linha (v0.3.5)], [0,85 s], [6,9 s], [15,8 s],
+    [PostgreSQL, *group commit*], [*0,15 s*], [*0,24 s*], [*0,37 s*],
+    thick,
+  ),
+  caption: [W8, o fan-out da W1 com 500 perguntas e modelos que respondem
+    na hora (1.003 linhas de diário de 8 threads).],
+) <tab-w8>
+
+A primeira versão confirmava cada linha numa transação, sob o lock do
+diário: uma ida e volta por linha. Agora uma thread confirma numa
+transação só todas as linhas escritas enquanto isso, e o runtime espera
+por ela antes de toda escrita externa e no fim, a regra do diário em
+arquivo (`fsync` no máximo uma vez por segundo, sempre antes de uma
+escrita). Um agente de 100 voltas (uma thread) cai de 3,5 s para 0,43 s a
+7,0 ms; o arquivo leva 0,25 s.
+
+*Assumir uma execução.* A máquina A morre no meio do reembolso da W2; um
+`calyx worker` em B a termina, com um pagamento e um e-mail. Quando o
+processo de A é morto, o sistema operacional fecha a conexão e B tem a
+execução 1,3 s depois (quase tudo é o intervalo de consulta de B). Quando a
+máquina de A some sem avisar (derrubamos todo pacote da conexão, como uma
+queda de energia faria), o servidor só descobre pelo *keepalive* do TCP,
+duas horas por padrão: a v0.3.5 não assumiu a execução em 60 s. Agora cada
+conexão ajusta o *keepalive* da própria sessão (5 s, depois 3 sondas a
+cada 2 s): 11,5 s.
+
+*Entidades.* Oito processos em duas máquinas mandam 50 mensagens cada a
+uma entidade: nenhuma se perde (400 de 400). Uma mensagem são duas idas e
+voltas, com a linha travada durante uma: 116 mensagens/s a 7,0 ms, 620 a 750
+com o banco na máquina, 740 a 880 em arquivos numa máquina só. Listar 531
+execuções (`calyx runs`, o que o worker faz a cada passada) leva 0,13 s; a
+primeira versão lia todos os diários, 0,90 s.
+
 == Bugs antes de rodar (Q2)
 
 Um corpus de 54 bugs de estado, cada um um programa Calyx com o resultado
@@ -659,8 +705,8 @@ as anotações MCP só funciona para servidores que as enviam, e deixa passar
 chaves ignoradas. *Modelos.* A maioria dos experimentos usa modelos falsos;
 W1 e W2 foram repetidos com o Gemini com N pequeno, e na W2 o modelo sempre
 propôs o mesmo valor, então o risco de uma resposta diferente depois de uma
-queda não foi exercitado. *Ambiente.* Uma máquina (o diário no PostgreSQL, que deixa outra
-máquina assumir uma execução, tem testes, mas não foi medido); só as rodadas
+queda não foi exercitado. *Ambiente.* Uma máquina; a W8 (várias máquinas) acrescenta latência
+com um proxy em vez de rodar contra um banco numa rede de verdade; só as rodadas
 do Stripe usam
 um serviço real pela rede, o resto usa serviços falsos; as versões são
 fixas. *Estudo de bugs reais.* Issues lidas pelos resumos, um

@@ -101,7 +101,10 @@ máquinas compartilham as execuções: se uma morre no meio, um `calyx worker`
 em outra assume a execução e a termina a partir do diário, e uma execução
 nunca roda em duas máquinas ao mesmo tempo. Entidades e as esperas de
 `receive` também ficam no banco, e a conexão pode usar TLS
-(`sslmode=verify-full`).
+(`sslmode=verify-full`). Com o banco a 7 ms, uma execução que escreve
+1.000 linhas de diário leva 0,37 s, contra 0,12 s em arquivo, e uma máquina
+que some sem avisar tem as execuções assumidas em 11,5 s
+([W8](docs/evaluation/comparacao.md)).
 
 **Contra a API real do Stripe** (modo de teste,
 [`bench/stripe/`](bench/stripe)): um reembolso e um crédito, com o processo
