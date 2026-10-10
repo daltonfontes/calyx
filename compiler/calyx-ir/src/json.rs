@@ -5,7 +5,8 @@
 //! program's `models`, `tools`, `prompts` and `graphs`.
 
 use crate::{
-    Effect, Expr, Graph, Limits, Model, Node, Part, Program, Prompt, PromptPart, Tool, Uncertain,
+    Effect, Expr, Graph, Limits, Model, Node, Part, Program, Prompt, PromptPart, RuleKind, Tool,
+    Uncertain,
 };
 
 fn opt_string(o: &mut String, v: Option<&str>) {
@@ -210,6 +211,36 @@ fn tool(o: &mut String, t: &Tool) {
             Some(false) => "\"reads\"",
         })
     });
+    if let Some(p) = &t.policy {
+        o.push_str(&format!(
+            ",\"policy\":{{\"nlocals\":{},\"rules\":",
+            p.nlocals
+        ));
+        list(o, &p.rules, |o, r| {
+            match &r.kind {
+                RuleKind::Require(e) => {
+                    o.push_str("{\"k\":\"require\",\"e\":");
+                    expr(o, e, &mut 0);
+                }
+                RuleKind::DenyInAgent(e) => {
+                    o.push_str("{\"k\":\"deny_agent\",\"e\":");
+                    opt_expr(o, e.as_ref());
+                }
+                RuleKind::From { param, tool, path } => {
+                    o.push_str(&format!(
+                        "{{\"k\":\"from\",\"param\":{param},\"tool\":{tool},\"path\":"
+                    ));
+                    strings(o, path);
+                }
+            }
+            o.push_str(",\"text\":");
+            string(o, &r.text);
+            o.push_str(",\"message\":");
+            opt_string(o, r.message.as_deref());
+            o.push('}');
+        });
+        o.push('}');
+    }
     o.push('}');
 }
 

@@ -38,7 +38,7 @@ const UNITS: &[&str] = &[
 const RATE_UNITS: &[&str] = &["s", "min", "h"];
 
 const DECLS: &[&str] = &[
-    "model", "tool", "type", "message", "prompt", "graph", "entity", "def", "router",
+    "model", "tool", "type", "message", "prompt", "graph", "entity", "def", "router", "policy",
 ];
 
 /// Declarations planned for later milestones.
@@ -371,6 +371,7 @@ impl Parser<'_> {
             "entity" => self.entity_decl().map(Decl::Entity),
             "def" => self.def_decl().map(Decl::Def),
             "router" => self.router_decl().map(Decl::Router),
+            "policy" => self.policy_decl().map(Decl::Policy),
             w => {
                 if let Some((_, m)) = FUTURE_DECLS.iter().find(|(k, _)| *k == w) {
                     Err(self.unsupported(w, m))
@@ -378,7 +379,7 @@ impl Parser<'_> {
                     Err(self.error_here(
                         "E0100",
                         "syntax error",
-                        "a declaration (`model`, `router`, `tool`, `type`, `prompt`, `graph`, `entity` or `def`)",
+                        "a declaration (`model`, `router`, `tool`, `policy`, `type`, `prompt`, `graph`, `entity` or `def`)",
                     ))
                 }
             }
@@ -494,6 +495,94 @@ impl Parser<'_> {
             name,
             models,
             policy,
+            span: self.span_from(start),
+        })
+    }
+
+    /// `policy tool:` then `require cond`, `require param from tool.field`
+    /// and `deny in agent [if cond]` lines, each with an optional
+    /// `else "message"`.
+    fn policy_decl(&mut self) -> PResult<PolicyDecl> {
+        let start = self.advance().span; // policy
+        let tool = self.ident("the tool the policy is about")?;
+        self.block_start("the policy's rules (`require ...`, `deny in agent`)")?;
+        let mut rules = Vec::new();
+        while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
+            match self.policy_rule() {
+                Ok(r) => rules.push(r),
+                Err(Reported) => self.recover_line(),
+            }
+        }
+        self.eat(TokenKind::Dedent);
+        Ok(PolicyDecl {
+            tool,
+            rules,
+            span: self.span_from(start),
+        })
+    }
+
+    fn policy_rule(&mut self) -> PResult<PolicyRule> {
+        let start = self.tok().span;
+        let kind = if self.is_word("require") {
+            self.advance();
+            let cond = self.expr()?;
+            if self.is_word("from") {
+                self.advance();
+                let ExprKind::Ident(name) = &cond.kind else {
+                    return Err(self.error_here_at(
+                        cond.span,
+                        "E0100",
+                        "syntax error",
+                        "a parameter of the tool before `from`",
+                        "an expression",
+                    ));
+                };
+                let param = Ident {
+                    name: name.clone(),
+                    span: cond.span,
+                };
+                let tool = self.ident("the tool the value comes from")?;
+                let mut path = Vec::new();
+                while self.eat(TokenKind::Dot) {
+                    path.push(self.ident("a field of what the tool returns")?);
+                }
+                RuleKind::From { param, tool, path }
+            } else {
+                RuleKind::Require(cond)
+            }
+        } else if self.is_word("deny") {
+            self.advance();
+            self.expect_word("in")?;
+            self.expect_word("agent")?;
+            if self.is_word("if") {
+                self.advance();
+                RuleKind::DenyInAgent(Some(self.expr()?))
+            } else {
+                RuleKind::DenyInAgent(None)
+            }
+        } else {
+            return Err(self.error_here(
+                "E0104",
+                "expected a policy rule",
+                "`require condition`, `require param from tool.field` or `deny in agent`",
+            ));
+        };
+        let at = self.span_from(start);
+        let text = self.text[at.start as usize..at.end as usize]
+            .trim()
+            .to_owned();
+        let message = if self.is_word("else") {
+            self.advance();
+            let t = self.expect(TokenKind::Str, "the message for a refused call, as text")?;
+            Some(self.str_lit(t))
+        } else {
+            None
+        };
+        self.end_of_line()?;
+        Ok(PolicyRule {
+            kind,
+            text,
+            message,
             span: self.span_from(start),
         })
     }

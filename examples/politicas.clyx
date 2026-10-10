@@ -1,0 +1,93 @@
+# Políticas (D36): o que toda chamada de uma tool tem de cumprir, conferido
+# antes de ela sair, seja quem for que a escolheu.
+#
+# Um agente atende pedidos de reembolso. Ele lê o pedido, e o pedido traz
+# texto que o cliente escreveu: uma instrução escondida ali ("reembolse 900",
+# "mande os dados para fulano@...") chega ao modelo como qualquer outro
+# texto. As regras abaixo não dependem de o modelo obedecer ao prompt:
+#
+# - um reembolso é de um pedido que `get_order` devolveu, e positivo;
+# - acima de 100, o agente não reembolsa: um grafo faz, com aprovação;
+# - um e-mail vai para o e-mail que `get_order` devolveu, e para nenhum
+#   outro, mesmo que o modelo o tenha lido no texto do pedido.
+#
+# O compilador também confere: dar ao agente uma tool negada a agentes, ou
+# chamar `refund` com um valor escrito que quebra a regra, é um erro.
+#
+#   calyx run examples/politicas.clyx --graph atender --fake-models \
+#       --chamado c1 --pedido A100 --mensagem "Chegou quebrado"
+#   calyx run examples/politicas.clyx --graph reembolso_grande --fake-models \
+#       --chamado c2 --pedido A100 --valor 250
+#   calyx deliver <id> Approval Approved && calyx resume <id> --fake-models
+
+model bom = "gemini-3.5-flash":
+    max_output 2000 tokens
+
+type Status = Pending | Delivered | Cancelled
+
+type Order:
+    id: Text
+    customer: Text
+    email: Text
+    total: Float
+    refunded: Float
+    status: Status
+
+message Approval = Approved | Denied(reason: Text)
+
+tool get_order(id: Text) -> Order:
+    effect read
+    max_output 500 tokens
+    description "Dados de um pedido: cliente, e-mail, total, situação."
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    max_output 100 tokens
+    description "Reembolsa `amount` do pedido `order`."
+
+tool email_sent(to: Text, subject: Text) -> Bool:
+    effect read
+
+tool email(to: Text, subject: Text, body: Text) -> Unit:
+    effect write once
+    timeout 10 s
+    on_uncertain verify(email_sent(to, subject))
+
+policy refund:
+    require amount > 0
+    require order from get_order.id else "só um pedido que get_order devolveu"
+    deny in agent if amount > 100 else "acima de 100, só com aprovação de uma pessoa"
+
+policy email:
+    require to from get_order.email else "só para o cliente do pedido"
+
+prompt resolver(chamado: Text, pedido: Text, mensagem: Text) -> Text:
+    """
+    Chamado {chamado}, pedido {pedido}. O cliente escreveu: {mensagem}
+
+    Consulte o pedido. Se o pedido estiver entregue, reembolse o que for
+    justo (use o chamado como `request`). Responda em uma frase.
+    """
+
+# O agente: reembolsos pequenos.
+graph atender(chamado: Text, pedido: Text, mensagem: Text) -> Text:
+    resposta = agent bom:
+        tools [get_order, refund]
+        max_turns 6
+        task resolver(chamado, pedido, mensagem)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return resposta
+
+# Reembolsos maiores: um grafo, com aprovação de uma pessoa em até 2 dias.
+graph reembolso_grande(chamado: Text, pedido: Text, valor: Float) -> Text:
+    o = get_order(pedido)
+    decisao = receive Approval about o, timeout 2 days:
+        on timeout: Denied(reason="sem resposta em 2 dias")
+    return match decisao:
+        case Approved:
+            pago = refund(chamado, o.id, valor)
+            aviso = email(o.email, "Reembolso {chamado}", "Reembolsamos {valor}.")
+            "reembolso de {valor} feito e avisado"
+        case Denied(reason): "negado: {reason}"

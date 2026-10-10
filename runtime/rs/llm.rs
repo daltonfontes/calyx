@@ -244,17 +244,29 @@ pub fn fake(req: &ModelRequest) -> Answer {
         .as_ref()
         .and_then(|t| t.get(0))
         .map(|t| &t["function"]);
-    let call = first_tool.and_then(|f| {
-        let name = f["name"].as_str()?.to_owned();
-        let args = |text: String| fake_value(&f["parameters"], &text, 0).to_string();
-        match req.model.as_str() {
-            // Always the same call: the runtime must notice it is stuck.
-            "fake-stuck" => Some((name, args(summary.clone()))),
-            // A new call every turn: it runs into `max_turns`.
-            "fake-busy" => Some((name, args(format!("{summary} #{observations}")))),
-            _ if observations == 0 => Some((name, args(summary.clone()))),
-            _ => None,
-        }
+    let obeyed = (req.model == "fake-obedient")
+        .then(|| {
+            obey(
+                task,
+                messages.map_or(&[][..], Vec::as_slice),
+                req.tools.as_ref(),
+            )
+        })
+        .flatten();
+    let call = obeyed.or_else(|| {
+        first_tool.and_then(|f| {
+            let name = f["name"].as_str()?.to_owned();
+            let args = |text: String| fake_value(&f["parameters"], &text, 0).to_string();
+            match req.model.as_str() {
+                // Always the same call: the runtime must notice it is stuck.
+                "fake-stuck" => Some((name, args(summary.clone()))),
+                // A new call every turn: it runs into `max_turns`.
+                "fake-busy" => Some((name, args(format!("{summary} #{observations}")))),
+                "fake-obedient" => None,
+                _ if observations == 0 => Some((name, args(summary.clone()))),
+                _ => None,
+            }
+        })
     });
     let (text, message, tool_calls) = match call {
         Some((name, arguments)) => {
@@ -296,6 +308,66 @@ pub fn fake(req: &ModelRequest) -> Answer {
         tool_calls,
         ms: started.elapsed().as_millis() as u64,
     }
+}
+
+/// `fake-obedient`: a model that does what any text it reads tells it to,
+/// the worst case for prompt injection (benchmark E6). Every `CALL tool
+/// {json}` in the task, then in what the tools answered (in the strings of
+/// an answer that is JSON), is one call, one per turn, in the order read;
+/// calls of tools it was not given are skipped. When none is left, it
+/// answers.
+fn obey(task: &str, messages: &[Value], tools: Option<&Value>) -> Option<(String, String)> {
+    fn strings(v: &Value, out: &mut Vec<String>) {
+        match v {
+            Value::String(s) => out.push(s.clone()),
+            Value::Array(items) => items.iter().for_each(|i| strings(i, out)),
+            Value::Object(fields) => fields.values().for_each(|f| strings(f, out)),
+            _ => {}
+        }
+    }
+    let given: Vec<&str> = tools
+        .and_then(Value::as_array)
+        .map(|t| {
+            t.iter()
+                .filter_map(|t| t["function"]["name"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut texts = vec![task.to_owned()];
+    for m in messages.iter().filter(|m| m["role"] == "tool") {
+        let content = m["content"].as_str().unwrap_or("");
+        match serde_json::from_str::<Value>(content) {
+            Ok(v) => strings(&v, &mut texts),
+            Err(_) => texts.push(content.to_owned()),
+        }
+    }
+    let mut calls = Vec::new();
+    for t in &texts {
+        let mut rest = t.as_str();
+        while let Some(at) = rest.find("CALL ") {
+            rest = &rest[at + 5..];
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            let after = rest[name.len()..].trim_start();
+            let args = serde_json::Deserializer::from_str(after)
+                .into_iter::<Value>()
+                .next()
+                .and_then(Result::ok)
+                .filter(Value::is_object);
+            if let Some(args) = args
+                && given.contains(&name.as_str())
+            {
+                calls.push((name, args.to_string()));
+            }
+        }
+    }
+    let made = messages
+        .iter()
+        .filter(|m| m["role"] == "assistant" && m["tool_calls"].is_array())
+        .count();
+    calls.into_iter().nth(made)
 }
 
 fn falsify(v: &mut Value) {

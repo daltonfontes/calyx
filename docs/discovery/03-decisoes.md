@@ -1,6 +1,6 @@
 # Decisões de design
 
-Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, o que a literatura faz e uma recomendação. Todas as decisões estão fechadas (✅). A D34 surgiu ao montar o [plano de implementação](../roadmap.md), e a D35 ao preparar a distribuição. A especificação consolidada está em [`docs/spec/calyx.md`](../spec/calyx.md).
+Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, o que a literatura faz e uma recomendação. Todas as decisões estão fechadas (✅). A D34 surgiu ao montar o [plano de implementação](../roadmap.md), a D35 ao preparar a distribuição, e a D36 ao tratar injeção de prompt em agentes. A especificação consolidada está em [`docs/spec/calyx.md`](../spec/calyx.md).
 
 | # | Decisão | Recomendação preliminar |
 |---|---|---|
@@ -39,6 +39,7 @@ Decisões que a [hipótese](01-hipotese.md) levanta. Cada uma traz as opções, 
 | D33 | Impasse entre entidades | ✅ **Decidido:** o compilador recusa ciclos de `ask`; `send` pode formar ciclos |
 | D34 | Implementação das tools | ✅ **Decidido:** tools rodam como servidores **MCP** (Model Context Protocol), em qualquer linguagem; o código Calyx só declara o contrato (efeito, `max_output`, timeout, idempotência, política); o runtime em C fala o protocolo |
 | D35 | Distribuição | ✅ **Decidido:** quem usa a Calyx instala **um binário só**, autocontido, sem Rust nem compilador C. Binários prontos para Linux (estáticos, musl) e macOS, x86_64 e ARM, publicados em cada versão, com script de instalação. `calyx build` deixa de gerar C: copia o próprio binário e anexa o programa (fonte + `calyx.toml`), e o resultado roda onde não há Calyx. Rust e C ficam só para quem desenvolve a Calyx. Gerar C nativo continua possível depois, como otimização, não como requisito |
+| D36 | Políticas de segurança das tools | ✅ **Decidido:** `policy tool:` declara o que toda chamada da tool tem de cumprir: condições puras sobre os argumentos (`require`), procedência (`require param from tool.campo`: o valor veio de uma resposta daquela tool nesta execução) e `deny in agent [if cond]`. O compilador recusa o que já se sabe errado antes de rodar (argumentos escritos no programa, agente com tool negada); o runtime confere toda chamada antes de ela sair, de grafo ou de agente. Regras de segurança passam a ser propriedades verificáveis do fluxo, não instruções do prompt que uma injeção desfaz |
 
 As decisões D11 a D19 surgiram no [teste no papel](04-teste-no-papel.md), onde estão descritas com os workflows que as motivaram. As propostas de D11, D12, D14 e D15 foram revisadas, e D20 a D23 surgiram, na leitura do [Temporal](05-temporal.md).
 

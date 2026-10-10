@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use calyx_ir::{self as ir, Effect, NodeId, Part, PromptPart};
 use calyx_syntax::ast::{
     Arg, Decl, DefDecl, DefStmt, EntityDecl, Expr, ExprKind, GraphDecl, Ident, OnLimit, OnNone,
-    Program, Stmt, StrLit, ToolDecl, TypeDecl, TypeExpr, TypeKind,
+    PolicyDecl, Program, RuleKind, Stmt, StrLit, ToolDecl, TypeDecl, TypeExpr, TypeKind,
 };
 
 pub fn lower(program: &Program, out: &mut ir::Program) {
@@ -67,7 +67,7 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
                     check: 0,
                 });
             }
-            Decl::Tool(_) | Decl::Prompt(_) | Decl::Graph(_) => {}
+            Decl::Tool(_) | Decl::Prompt(_) | Decl::Graph(_) | Decl::Policy(_) => {}
         }
     }
     // Tools after types: their argument schemas need them.
@@ -114,6 +114,14 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
         {
             out.tools[*i].on_uncertain = cx.uncertain(t);
             out.tools[*i].compensate = cx.compensate(t);
+        }
+    }
+    // Policies name other tools (`from`) and `def`s, all known by now.
+    for d in &program.decls {
+        if let Decl::Policy(p) = d
+            && let Some((i, t)) = cx.tools.get(p.tool.name.as_str())
+        {
+            out.tools[*i].policy = Some(cx.policy(p, t));
         }
     }
     for d in &program.decls {
@@ -644,6 +652,49 @@ impl Lower<'_> {
             name: e.name.name.clone(),
             state,
             handlers,
+        }
+    }
+
+    /// A `policy` (D36): the tool's parameters in slots `0..n`, as in a
+    /// `def`.
+    fn policy(&self, p: &PolicyDecl, t: &ToolDecl) -> ir::Policy {
+        let scope = Scope {
+            params: Vec::new(),
+            nodes: HashMap::new(),
+            item: None,
+            locals: RefCell::new(Vec::new()),
+            slots: Cell::new(0),
+            state: Vec::new(),
+        };
+        for param in &t.params {
+            scope.bind(&param.name.name);
+        }
+        let rules = p
+            .rules
+            .iter()
+            .map(|r| ir::Rule {
+                kind: match &r.kind {
+                    RuleKind::Require(e) => ir::RuleKind::Require(self.expr(e, &scope)),
+                    RuleKind::DenyInAgent(e) => {
+                        ir::RuleKind::DenyInAgent(e.as_ref().map(|e| self.expr(e, &scope)))
+                    }
+                    RuleKind::From { param, tool, path } => ir::RuleKind::From {
+                        param: t
+                            .params
+                            .iter()
+                            .position(|x| x.name.name == param.name)
+                            .unwrap_or(0),
+                        tool: self.tools.get(tool.name.as_str()).map_or(0, |(i, _)| *i),
+                        path: path.iter().map(|f| f.name.clone()).collect(),
+                    },
+                },
+                text: r.text.clone(),
+                message: r.message.as_ref().map(plain_text),
+            })
+            .collect();
+        ir::Policy {
+            rules,
+            nlocals: scope.slots.get(),
         }
     }
 
@@ -1332,6 +1383,7 @@ fn tool(t: &ToolDecl) -> ir::Tool {
         retry_on,
         returns_text: is_text(&t.ret),
         returns: String::new(),
+        policy: None,
     }
 }
 

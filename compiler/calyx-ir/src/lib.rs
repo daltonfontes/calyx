@@ -283,7 +283,7 @@ pub struct Model {
     pub max_output: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Tool {
     pub name: String,
     pub params: Vec<String>,
@@ -325,6 +325,41 @@ pub struct Tool {
     /// Per parameter: a sandbox it borrows, `Some(true)` to edit it,
     /// `Some(false)` to read it (decision D26).
     pub borrows: Vec<Option<bool>>,
+    /// `policy tool:` (decision D36): rules checked before every call.
+    pub policy: Option<Policy>,
+}
+
+/// What every call of a tool must pass before it is made (decision D36).
+/// Conditions see the tool's arguments in local slots `0..n`, by parameter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Policy {
+    pub rules: Vec<Rule>,
+    pub nlocals: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rule {
+    pub kind: RuleKind,
+    /// The rule as written, for the message of a refused call.
+    pub text: String,
+    /// `else "message"`.
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuleKind {
+    /// The condition must hold.
+    Require(Expr),
+    /// The argument of parameter `param` must be a value that an earlier
+    /// call of `tool` in the run returned at `path` (lists looked into).
+    From {
+        param: usize,
+        tool: usize,
+        path: Vec<String>,
+    },
+    /// Calls chosen by an agent's model are refused (when the condition
+    /// holds).
+    DenyInAgent(Option<Expr>),
 }
 
 /// The `on_uncertain` policy of a `write once` tool (decision D2).

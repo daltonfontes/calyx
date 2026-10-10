@@ -257,6 +257,28 @@ No máximo **uma** entidade aberta por chave. Se um handler altera `state`, ele 
 - **Um dono por chave, entre processos:** `flock`; perguntas compartilham a trava, mudanças a têm sozinhas. 50 execuções simultâneas mandando ao mesmo contador terminam com 50. No PostgreSQL, a transação da mensagem trava a linha da entidade (`FOR SHARE` para `ask`, `FOR UPDATE` para `send`), entre máquinas.
 - **Cada mensagem é aplicada uma vez:** o id de uma mensagem é a execução e o lugar da chamada; uma execução retomada que manda de novo encontra o id e não aplica outra vez.
 
+### 4.10 Política (D36)
+
+```
+policy NOME_DA_TOOL:
+    require condição [else "mensagem"]                  # vale para toda chamada
+    require param from outra_tool.campo [else "..."]    # procedência do argumento
+    deny in agent [if condição] [else "..."]            # um modelo não escolhe esta chamada
+```
+
+Uma política diz o que **toda** chamada de uma tool tem de cumprir, seja quem for que a escolheu: um passo do grafo ou o modelo de um agente. As regras são propriedades do fluxo, conferidas antes de a chamada sair, e não instruções no prompt que um texto injetado possa desfazer. As condições usam os parâmetros da tool pelo nome, e são puras como um `def`.
+
+- `require cond`: a condição tem de valer com os argumentos (`amount > 0 and amount <= 500`, `not ("://" in body)`).
+- `require to from get_order.email`: o argumento tem de ser um valor que uma chamada anterior de `get_order`, **nesta execução**, devolveu nesse lugar (listas são olhadas por dentro: `get_orders.items.email`). É a regra contra injeção: um e-mail que só aparece num texto que o cliente escreveu não é um e-mail que `get_order` devolveu.
+- `deny in agent`: um agente não pode receber a tool (`E0724`, antes de rodar). Com `if cond`, o agente a recebe, e as chamadas que ele escolher com `cond` verdadeira são recusadas; um grafo pode fazê-las (`deny in agent if amount > 100`: acima disso, um passo do grafo, depois de um `receive` de aprovação).
+- `else "mensagem"`: o que quem foi recusado lê.
+
+**O que o compilador confere:** a tool existe e tem uma política só (`E0720`); as condições são `Bool` e puras (`E0721`); `from` nomeia um parâmetro, uma tool e um lugar do tipo do parâmetro (`E0722`). Uma chamada num grafo cujos argumentos escritos no programa já quebram um `require` é um erro (`E0723`); um agente que recebe uma tool negada a agentes, também (`E0724`).
+
+**O que o runtime confere:** toda chamada, antes de sair. Num grafo, a recusa é uma falha da chamada (`try` a pega: `Failed("refused by the policy of ...")`). Num agente, é a observação daquela chamada (`error: refused by ...`), e o modelo segue com ela. As chamadas de um turno do agente são julgadas antes de qualquer uma sair: o modelo as escolheu com o que sabia antes do turno, e uma não é liberada pela resposta de outra do mesmo turno. A recusa fica guardada pela chave da chamada, então a execução retomada decide igual. `from` vê as respostas que a execução já usou, inclusive as que o diário devolve ao retomar. No trace, `deny  tool: regra`; no fim, quantas chamadas as políticas recusaram.
+
+Na E6 (`bench/run_e6.py`), um agente de atendimento com 12 tickets que trazem instruções injetadas: com um modelo que obedece a qualquer instrução, os 12 ataques acontecem com as regras só no prompt, e nenhum com as políticas; nenhuma chamada legítima é recusada.
+
 ---
 
 ## 5. O corpo de um grafo
@@ -709,6 +731,7 @@ Todas lineares ou composicionais (meta: `calyx check` em até 1 segundo):
 | Corridas: dois ou mais ramos do mesmo tipo, condição pura, `on none` presente; escrita num ramo (aviso) | D12 |
 | Roteadores: dois ou mais modelos, política conhecida, verificação pura que recebe o tipo da resposta | D30 |
 | Ciclos de `ask` | D33 |
+| Políticas: tool e regras válidas, condições puras, procedência de um lugar do tipo certo; chamada com argumentos que quebram um `require`; agente com tool negada a agentes | D36 |
 | Regras de `respond` / `return` | D19 |
 | Com `calyx check --tools`: a declaração de cada tool contra as anotações do servidor MCP dela (seção 11.2) | D2, D34 |
 

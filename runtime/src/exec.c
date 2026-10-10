@@ -122,6 +122,7 @@ struct pending {
     cx_value *value;
     const char *error; /* P_FAILED: why */
     waiter *waiters;
+    int seen; /* a tool's answer, already in `outputs` */
 };
 
 /* A running instance of a graph. */
@@ -251,6 +252,14 @@ struct exec {
     double rate, next_start;
     double budget, spent;
     int unpriced_warned;
+    /* Policies (D36): what each tool answered in this run, in the order
+     * the run used the answers (for `require x from tool.field`). With `mu`. */
+    struct output {
+        const char *tool;
+        cx_value *value;
+    } *outputs;
+    size_t noutputs, outputs_cap;
+    unsigned long denied;
     /* Totals. */
     unsigned long model_calls, tool_calls, retries, from_journal;
     unsigned long long input_tokens, output_tokens;
@@ -466,6 +475,7 @@ static pending *new_pending(exec *x, cx_arena *a, const char *key, int state, cx
     p->value = value;
     p->error = NULL;
     p->waiters = NULL;
+    p->seen = 0;
     ptab_insert(x, p);
     return p;
 }
@@ -1492,6 +1502,21 @@ static void *io_main(void *arg) {
  * The value of a call: from memory or the journal if it finished, or
  * PENDING after handing it to an I/O thread. Takes the request text.
  */
+/* A tool's answer the run now uses: `require x from tool.field` may name
+ * it from here on (D36). Once per call. With `mu` held. */
+static void note_output(exec *x, pending *p, const char *tool) {
+    if (p->seen || !p->value) return;
+    p->seen = 1;
+    if (x->noutputs == x->outputs_cap) {
+        x->outputs_cap = x->outputs_cap ? 2 * x->outputs_cap : 16;
+        x->outputs = realloc(x->outputs, x->outputs_cap * sizeof *x->outputs);
+        if (!x->outputs) abort();
+    }
+    x->outputs[x->noutputs].tool = tool;
+    x->outputs[x->noutputs].value = p->value;
+    x->noutputs++;
+}
+
 static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_value *prompt,
                          cx_buf *req, const char *note) {
     exec *x = c->x;
@@ -1510,7 +1535,10 @@ static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_v
     pthread_mutex_lock(&x->mu);
     pending *p = ptab_get(x, key);
     if (p) {
-        if (p->state == P_DONE) result = p->value;
+        if (p->state == P_DONE) {
+            result = p->value;
+            if (kind == CALL_TOOL) note_output(x, p, name);
+        }
         if (p->state == P_INFLIGHT) {
             add_waiter(&c->w->arena, p, c->t);
             result = PENDING;
@@ -1558,7 +1586,8 @@ static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_v
                 x->from_journal++;
                 if (is_model) account(x, name, hit);
                 if (kind == CALL_ENTITY) is_model = 0;
-                new_pending(x, &c->w->arena, key, P_DONE, v);
+                pending *done = new_pending(x, &c->w->arena, key, P_DONE, v);
+                if (kind == CALL_TOOL) note_output(x, done, name);
                 trace(x, c->label, "%-5s %s%s%s%s  from the journal", effect, name,
                       is_model ? "(" : "", is_model ? cx_get_str(prompt, "name", "?") : "",
                       is_model ? ")" : "");
@@ -1733,6 +1762,109 @@ static int guard_json(ctx *c, cx_value *e, cx_buf *b) {
     return 1;
 }
 
+/* ----- policies (D36) ------------------------------------------------------- */
+
+/* `v` has `want` at `path[i..]`: fields followed, lists looked into. */
+static int found_at(const cx_value *v, const cx_value *path, size_t i, const cx_value *want) {
+    if (!v) return 0;
+    if (v->kind == CX_LIST) {
+        for (size_t k = 0; k < v->u.list.len; k++)
+            if (found_at(v->u.list.items[k], path, i, want)) return 1;
+        return 0;
+    }
+    if (i == len_of(path)) return cx_equal(v, want);
+    if (v->kind != CX_REC) return 0;
+    return found_at(cx_get(v, at(path, i)->u.str.s), path, i + 1, want);
+}
+
+/* A condition of a policy with the arguments in local slots: 1 if it
+ * holds, 0 if not, -1 if it has no value (a failure, or not a Bool). */
+static int policy_holds(ctx *c, cx_value *e, cx_value **locals) {
+    cx_value **outer = c->locals;
+    cx_value *outer_state = c->estate;
+    const char *outer_failure = c->failure;
+    c->locals = locals;
+    c->estate = NULL;
+    c->failure = NULL;
+    cx_value *v = eval(c, e);
+    c->locals = outer;
+    c->estate = outer_state;
+    c->failure = outer_failure;
+    if (!v || v == PENDING || v->kind != CX_BOOL) return -1;
+    return v->u.b;
+}
+
+/*
+ * Checks a call of `tool` with arguments `vals` (by parameter; NULL for
+ * one not given) against the tool's policy, before it is made. NULL if
+ * the call may go; else why not. `by_agent`: a model chose the call.
+ * Rules are pure, so the same call with the same answers before it gets
+ * the same decision on every evaluation and when the run is resumed.
+ */
+static const char *policy_denies(ctx *c, cx_value *tool, cx_value **vals, size_t n,
+                                 int by_agent) {
+    exec *x = c->x;
+    cx_arena *a = &c->w->arena;
+    cx_value *policy = cx_get(tool, "policy");
+    if (!policy || policy->kind != CX_REC) return NULL;
+    const char *name = cx_get_str(tool, "name", "?");
+    cx_value *params = cx_get(tool, "params");
+    size_t np = len_of(params);
+    size_t nl = (size_t)cx_get_num(policy, "nlocals", 0);
+    if (nl < np) nl = np;
+    cx_value **locals = cx_alloc(a, (nl ? nl : 1) * sizeof *locals);
+    for (size_t i = 0; i < nl; i++) locals[i] = i < n && i < np ? vals[i] : NULL;
+    for (size_t i = 0; i < np; i++)
+        if (!locals[i])
+            return fmt(a, "refused by the policy of `%s`: no value for `%s`", name,
+                       at(params, i)->u.str.s);
+    cx_value *rules = cx_get(policy, "rules");
+    for (size_t r = 0; r < len_of(rules); r++) {
+        cx_value *rule = at(rules, r);
+        const char *k = cx_get_str(rule, "k", "");
+        const char *why = NULL;
+        if (strcmp(k, "require") == 0) {
+            int h = policy_holds(c, cx_get(rule, "e"), locals);
+            if (h < 0) why = "cannot be checked with these arguments";
+            else if (!h) why = "does not hold";
+        } else if (strcmp(k, "deny_agent") == 0) {
+            if (!by_agent) continue;
+            cx_value *e = cx_get(rule, "e");
+            if (!e || e->kind == CX_NULL) {
+                why = "a model may not choose this call";
+            } else {
+                int h = policy_holds(c, e, locals);
+                if (h != 0) why = "holds: a model may not choose this call";
+            }
+        } else if (strcmp(k, "from") == 0) {
+            size_t param = index_of(rule, "param");
+            cx_value *src = at(x->tools, index_of(rule, "tool"));
+            const char *src_name = cx_get_str(src, "name", "");
+            cx_value *path = cx_get(rule, "path");
+            cx_value *want = param < np ? locals[param] : NULL;
+            int found = 0;
+            pthread_mutex_lock(&x->mu);
+            for (size_t o = 0; o < x->noutputs && !found; o++)
+                if (strcmp(x->outputs[o].tool, src_name) == 0)
+                    found = found_at(x->outputs[o].value, path, 0, want);
+            pthread_mutex_unlock(&x->mu);
+            if (!found) why = "does not hold: no earlier answer of the tool has this value there";
+        }
+        if (!why) continue;
+        const char *msg = cx_get_str(rule, "message", NULL);
+        const char *text = cx_get_str(rule, "text", "?");
+        pthread_mutex_lock(&x->mu);
+        x->denied++;
+        pthread_mutex_unlock(&x->mu);
+        const char *out = msg ? fmt(a, "refused by the policy of `%s`: %s (`%s` %s)", name, msg,
+                                    text, why)
+                              : fmt(a, "refused by the policy of `%s`: `%s` %s", name, text, why);
+        trace(x, c->label, "deny  %s: `%s`", name, text);
+        return out;
+    }
+    return NULL;
+}
+
 static cx_value *tool_request(ctx *c, cx_value *tool, cx_value **args, size_t n,
                               cx_value *requires, const char *key);
 
@@ -1752,6 +1884,8 @@ static cx_value *tool_request(ctx *c, cx_value *tool, cx_value **args, size_t n,
                               cx_value *requires, const char *key) {
     const char *name = cx_get_str(tool, "name", "?");
     cx_value *params = cx_get(tool, "params");
+    const char *denied = policy_denies(c, tool, args, n, 0);
+    if (denied) return failf(c, "%s", denied);
     cx_buf req = {0};
     cx_buf_puts(&req, "{\"tool\":");
     cx_buf_json_str(&req, name, strlen(name));
@@ -3257,6 +3391,43 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
                                  "Stop calling tools and give your final answer now.");
             break;
         }
+        /* Policies (D36), for every call of the turn before any is made: the
+         * model chose them all with what it knew before the turn, so none
+         * is judged by another's answer, live or (when resumed) from the
+         * journal. A refusal is kept under the call's key, like a failed
+         * call: the next evaluations of this step give the same. */
+        for (size_t i = 0; i < len_of(calls); i++) {
+            cx_value *call = at(calls, i);
+            const char *name = cx_get_str(call, "name", "?");
+            const char *ckey = fmt(a, "%s.t%ld.c%zu", base, turn, i);
+            for (size_t k = 0; k < len_of(tools); k++) {
+                cx_value *t = at(x->tools, (size_t)at(tools, k)->u.num);
+                if (strcmp(cx_get_str(t, "name", ""), name) != 0) continue;
+                pthread_mutex_lock(&x->mu);
+                int known = ptab_get(x, ckey) != NULL;
+                pthread_mutex_unlock(&x->mu);
+                if (known) break;
+                cx_value *tparams = cx_get(t, "params");
+                size_t np = len_of(tparams);
+                cx_value **vals = cx_alloc(a, (np ? np : 1) * sizeof *vals);
+                cx_value *arguments = cx_get(call, "arguments");
+                for (size_t p = 0; p < np; p++)
+                    vals[p] = bound[k][p] ? bound[k][p]
+                              : arguments && arguments->kind == CX_REC
+                                  ? cx_get(arguments, at(tparams, p)->u.str.s)
+                                  : NULL;
+                const char *denied = policy_denies(c, t, vals, np, 1);
+                if (denied) {
+                    pthread_mutex_lock(&x->mu);
+                    if (!ptab_get(x, ckey)) {
+                        pending *d = new_pending(x, a, ckey, P_FAILED, NULL);
+                        d->error = denied;
+                    }
+                    pthread_mutex_unlock(&x->mu);
+                }
+                break;
+            }
+        }
         int waiting = 0;
         for (size_t i = 0; i < len_of(calls); i++) {
             cx_value *call = at(calls, i);
@@ -3770,6 +3941,7 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
                 x->input_tokens,
                 x->output_tokens, x->tool_calls, x->retries, x->max_inflight);
         if (x->journal) fprintf(stderr, ", %lu taken from the journal", x->from_journal);
+        if (x->denied) fprintf(stderr, ", %lu refused by policies", x->denied);
         if (x->spent > 0) fprintf(stderr, ", %.4f USD", x->spent);
         fputc('\n', stderr);
     }
@@ -3809,6 +3981,7 @@ done:
     free(x->io_arenas);
     free(x->io);
     free(x->ptab);
+    free(x->outputs);
     for (size_t i = 0; i < 256; i++)
         for (agent_progress *p = x->agents[i], *next; p; p = next) {
             next = p->next;

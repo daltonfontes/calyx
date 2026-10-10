@@ -511,6 +511,14 @@ mesmo servidor MCP em série). Depois das seis mudanças que o estudo propôs
 `decreases`, `resource`): 24 de 25 impedidos (16 antes de rodar), 18 de 21
 padrões aceitos como escritos, todos expressáveis, e nenhum dos três custos.
 
+## E6: políticas contra injeção de prompt
+
+Regras de segurança declaradas como `policy` contra as mesmas regras só no
+prompt, num agente de atendimento com 12 tickets injetados:
+[`politicas.md`](politicas.md). Com um modelo que obedece a qualquer
+instrução, 12 de 12 ataques acontecem com as regras no prompt e nenhum com
+as políticas, sem recusar uma chamada legítima.
+
 ## O que a comparação mostra e o que não mostra
 
 **Mostra:**
