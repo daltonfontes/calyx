@@ -181,8 +181,12 @@ def takeover(binary: str, silent: bool) -> float | None:
     os.makedirs(os.path.join(work, "b"))
     env = dict(os.environ, CALYX_FAKE_STORE=os.path.join(work, "store.json"))
     a_url = url(host=SILENT_ADDR) if silent else url()
-    a = subprocess.Popen([binary, "run", os.path.join(W2, "refund.clyx"), "--request", "R1",
-                          "--order", "A100", "--message", "chegou quebrado",
+    # Its own request: a run left over in the database by an earlier round
+    # (one that was never taken over) may be finished by this round's
+    # worker too, against this round's store; only this one's effects count.
+    tag = f"w8-{time.time_ns()}"
+    a = subprocess.Popen([binary, "run", os.path.join(W2, "refund.clyx"), "--request", tag,
+                          "--order", "A100", "--message", f"chegou quebrado {tag}",
                           "--config", os.path.join(W2, "calyx.toml")],
                          cwd=os.path.join(work, "a"), env=dict(env, CALYX_DATABASE_URL=a_url),
                          stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
@@ -217,7 +221,9 @@ def takeover(binary: str, silent: bool) -> float | None:
                  "WHERE usename = current_user AND pid <> pg_backend_pid()")
     with open(env["CALYX_FAKE_STORE"]) as f:
         db = json.load(f)
-    assert took is None or (len(db.get("payments", [])), len(db.get("outbox", []))) == (1, 1), db
+    paid = [p for p in db.get("payments", []) if p.get("request") == tag]
+    sent = [m for m in db.get("outbox", []) if tag in m.get("body", "")]
+    assert took is None or (len(paid), len(sent)) == (1, 1), db
     return took
 
 
