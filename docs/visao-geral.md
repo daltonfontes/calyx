@@ -92,7 +92,7 @@ O script baixa o binário da última versão em [Releases](https://github.com/da
 **Programas como executáveis.** `calyx build` gera um executável que roda um grafo, com o programa e o `calyx.toml` dentro. Quem recebe o arquivo não precisa instalar nada:
 
 ```sh
-calyx build examples/research.clyx          # gera ./research (~3 MB)
+calyx build examples/research.clyx          # gera ./research (~5 MB)
 ./research --topic "energia solar no Brasil"
 ./research --help                           # mostra os parâmetros do grafo
 ```

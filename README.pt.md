@@ -154,7 +154,7 @@ devolve a resposta dela, ou a retoma se ela morreu, e nunca roda duas vezes.
 agente possa verificar a cada mudança. **Situação:** o exemplo de atendimento
 ao cliente, de 155 linhas ([`atendimento.clyx`](examples/atendimento.clyx)),
 é verificado em **0,5 ms**. O verificador e o runtime compilam para código
-nativo; o `calyx` é um binário só, de ~3 MB.
+nativo; o `calyx` é um binário só, de ~5 MB.
 
 ## A Calyx é PROVADA, dentro de limites
 

@@ -146,7 +146,7 @@ run's answer, or resumes it if it died, and never runs it twice.
 **Target:** check any program in under 1 second, so an agent can check after
 every edit. **Status:** the 155-line customer-service example
 ([`atendimento.clyx`](examples/atendimento.clyx)) checks in **0.5 ms**.
-The checker and runtime compile to native code; `calyx` is one ~3 MB binary.
+The checker and runtime compile to native code; `calyx` is one ~5 MB binary.
 
 ## Calyx is PROVEN, within limits
 
