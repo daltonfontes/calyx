@@ -1,0 +1,20 @@
+# Contorno: gravar no cache depois da corrida, só a resposta do vencedor.
+model fast = "fake-model"
+model strong = "fake-slow-500"
+
+tool cache_put(key: Text, value: Text) -> Unit:
+    effect write
+    idempotency_key key
+
+prompt ask(q: Text) -> Text:
+    """{q}"""
+
+graph g(q: Text) -> Text:
+    best = race first:
+        a: fast(ask(q))
+        b: strong(ask(q))
+        on none: fail "nenhum respondeu"
+    stored = cache_put("best-{q}", best)
+    out = best
+    out after stored
+    return out

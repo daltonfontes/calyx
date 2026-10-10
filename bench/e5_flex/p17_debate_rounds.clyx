@@ -1,0 +1,17 @@
+# Padrão: rodadas com barreira (cada agente vê a rodada anterior inteira).
+model m = "fake-model"
+
+prompt open(r: Text) -> Text:
+    """{r}"""
+
+prompt reply(r: Text, xs: List[Text]) -> Text:
+    """{r} {xs}"""
+
+graph g(roles: List[Text]) -> List[Text]:
+    start = for each r in roles:
+        m(open(r))
+    final = rounds 2, carry xs = start:
+        turn = for each r in roles:
+            m(reply(r, xs))
+        next turn
+    return final

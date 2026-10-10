@@ -856,6 +856,8 @@ static int shrink(cx_arena *a, cx_value **v, size_t limit) {
 static cx_value *decode_tool(cx_arena *a, cx_value *tool, cx_value *ok, cx_value **record) {
     if (record) *record = ok;
     if (cx_get_bool(tool, "returns_text", 1)) return cx_get(ok, "text");
+    /* `Unit`: what the server says back is not a value of the program. */
+    if (cx_get_bool(tool, "returns_unit", 0)) return cx_null(a);
     cx_value *v = cx_get(ok, "json");
     if (!v || v->kind == CX_NULL) {
         cx_value *t = cx_get(ok, "text");

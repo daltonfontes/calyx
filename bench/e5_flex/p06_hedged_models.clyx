@@ -1,0 +1,13 @@
+# Padrão: hedging, a mesma pergunta a dois modelos e fica a primeira resposta.
+model fast = "fake-model"
+model strong = "fake-slow-500"
+
+prompt ask(q: Text) -> Text:
+    """{q}"""
+
+graph g(q: Text) -> Text:
+    best = race first:
+        a: fast(ask(q))
+        b: strong(ask(q))
+        on none: fail "nenhum respondeu"
+    return best

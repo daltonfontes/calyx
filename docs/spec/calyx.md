@@ -211,7 +211,7 @@ graph NOME(parametros) -> Tipo:
 ```
 
 - `effect` restringe o efeito máximo do grafo; o compilador verifica.
-- `decreases` indica o parâmetro que diminui a cada chamada recursiva (D17).
+- `decreases` indica o parâmetro que diminui a cada chamada recursiva (D17). **Ainda não implementado:** um grafo que chama a si mesmo, direta ou indiretamente, é recusado (`E0101`); a profundidade se escreve à mão, um grafo por nível (a E5 mede o custo: `docs/evaluation/contratos-e-concorrencia.md`).
 
 ### 4.9 Entidade (D15)
 

@@ -1,0 +1,26 @@
+# Contorno: sem recursão de grafos, a profundidade (2) escrita à mão.
+model m = "fake-model"
+
+prompt split(t: Text) -> List[Text] max 3:
+    """{t}"""
+
+prompt solve(t: Text) -> Text:
+    """{t}"""
+
+prompt merge(xs: List[Text]) -> Text:
+    """{xs}"""
+
+graph leaf(task: Text) -> Text:
+    return m(solve(task))
+
+graph level1(task: Text) -> Text:
+    parts = m(split(task))
+    subs = for each p in parts:
+        leaf(p)
+    return m(merge(subs))
+
+graph work(task: Text) -> Text:
+    parts = m(split(task))
+    subs = for each p in parts:
+        level1(p)
+    return m(merge(subs))

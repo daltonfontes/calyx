@@ -1,0 +1,13 @@
+# Padrão: duas leituras do mesmo repositório ao mesmo tempo (testes e lint).
+tool run_tests(box: reads Sandbox) -> Text:
+    effect read
+    max_output 1000 tokens
+
+tool lint(box: reads Sandbox) -> Text:
+    effect read
+    max_output 1000 tokens
+
+graph g(repo: Sandbox) -> Text:
+    t = run_tests(reads repo)
+    l = lint(reads repo)
+    return "{t}\n{l}"

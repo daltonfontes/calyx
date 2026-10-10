@@ -1,0 +1,9 @@
+# Padrão: escritas em paralelo no mesmo recurso externo, que comutam (uma linha de log por item).
+tool append_log(key: Text, line: Text) -> Unit:
+    effect write
+    idempotency_key key
+
+graph g(items: List[Text]) -> Text:
+    done = for each i in items:
+        append_log("log-{i}", "processado {i}")
+    return "ok"

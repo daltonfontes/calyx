@@ -1,0 +1,15 @@
+# Padrão: duas estratégias de correção, cada uma na sua cópia do repositório, em corrida.
+tool edit_file(box: edits Sandbox, path: Text, old: Text, new: Text) -> Text:
+    effect sandbox
+    max_output 100 tokens
+
+graph strategy(repo: Sandbox, new: Text) -> Text:
+    out = edit_file(edits repo, "a.py", "x", new)
+    return out
+
+graph g(repo: Sandbox) -> Text:
+    best = race first:
+        a: strategy(repo, "y")
+        b: strategy(repo, "z")
+        on none: fail "nenhuma"
+    return best

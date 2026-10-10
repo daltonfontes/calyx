@@ -1,0 +1,17 @@
+# Padrão: dois efeitos em ordem porque o segundo usa o resultado do primeiro (pagar, depois o recibo).
+type Payment:
+    id: Text
+    amount: Float
+
+tool pay(request: Text, amount: Float) -> Payment:
+    effect write
+    idempotency_key request
+
+tool email(request: Text, to: Text, body: Text) -> Unit:
+    effect write
+    idempotency_key request
+
+graph g(request: Text, to: Text) -> Text:
+    p = pay(request, 30.0)
+    sent = email(request, to, "pago: {p.id}")
+    return "ok"

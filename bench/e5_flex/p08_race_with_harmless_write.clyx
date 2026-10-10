@@ -1,0 +1,23 @@
+# Padrão: corrida em que cada ramo grava num cache (escrita inofensiva: o perdedor pode ficar).
+model fast = "fake-model"
+model strong = "fake-slow-500"
+
+tool cache_put(key: Text, value: Text) -> Unit:
+    effect write
+    idempotency_key key
+
+prompt ask(q: Text) -> Text:
+    """{q}"""
+
+graph cached(q: Text, label: Text, answer: Text) -> Text:
+    stored = cache_put("{label}-{q}", answer)
+    out = answer
+    out after stored
+    return out
+
+graph g(q: Text) -> Text:
+    best = race first:
+        a: cached(q, "fast", fast(ask(q)))
+        b: cached(q, "strong", strong(ask(q)))
+        on none: fail "nenhum respondeu"
+    return best

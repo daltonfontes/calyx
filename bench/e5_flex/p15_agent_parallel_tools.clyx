@@ -1,0 +1,23 @@
+# Padrão: agente que chama tools de leitura em paralelo e uma escrita com chave.
+model m = "fake-model"
+
+tool search(query: Text) -> Text:
+    effect read
+    max_output 1000 tokens
+
+tool open_ticket(key: Text, title: Text) -> Text:
+    effect write
+    idempotency_key key
+    max_output 200 tokens
+
+prompt task(q: Text) -> Text:
+    """{q}"""
+
+graph g(q: Text) -> Text:
+    answer = agent m:
+        tools [search, open_ticket]
+        max_turns 5
+        task task(q)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer

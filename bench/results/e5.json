@@ -1,0 +1,421 @@
+{
+  "corpus": {
+    "bugs": [
+      {
+        "bug": "01_ramos_sobrescrevem",
+        "kind": "conflicting writes",
+        "stage": "compiler (error)",
+        "codes": [
+          "E0501"
+        ],
+        "declared": "E0501"
+      },
+      {
+        "bug": "04_aviso_antes_do_pagamento",
+        "kind": "order of effects",
+        "stage": "compiler (warning)",
+        "codes": [
+          "W0602"
+        ],
+        "declared": "W0602"
+      },
+      {
+        "bug": "14_ordem_com_nome_errado",
+        "kind": "order of effects",
+        "stage": "compiler (error)",
+        "codes": [
+          "E0639",
+          "W0602"
+        ],
+        "declared": "E0639"
+      },
+      {
+        "bug": "15_ordem_circular",
+        "kind": "order of effects",
+        "stage": "compiler (error)",
+        "codes": [
+          "E0506"
+        ],
+        "declared": "E0506"
+      },
+      {
+        "bug": "19_estado_mudou_durante_a_espera",
+        "kind": "atomicity (check, then act)",
+        "stage": "runtime",
+        "codes": [],
+        "declared": "runtime"
+      },
+      {
+        "bug": "20_verificar_e_agir_separados",
+        "kind": "atomicity (check, then act)",
+        "stage": "missed",
+        "codes": [],
+        "declared": "none"
+      },
+      {
+        "bug": "22_itens_paralelos_mesmo_recurso",
+        "kind": "conflicting writes",
+        "stage": "missed",
+        "codes": [],
+        "declared": "none"
+      },
+      {
+        "bug": "23_itens_editam_em_paralelo",
+        "kind": "conflicting writes",
+        "stage": "compiler (error)",
+        "codes": [
+          "E0644"
+        ],
+        "declared": "E0644"
+      },
+      {
+        "bug": "24_edicao_com_emprestimo_de_leitura",
+        "kind": "conflicting writes",
+        "stage": "compiler (error)",
+        "codes": [
+          "E0643"
+        ],
+        "declared": "E0643"
+      },
+      {
+        "bug": "25_testes_e_edicao_em_paralelo",
+        "kind": "conflicting writes",
+        "stage": "compiler (error)",
+        "codes": [
+          "E0645"
+        ],
+        "declared": "E0645"
+      },
+      {
+        "bug": "26_sandbox_guardada_num_passo",
+        "kind": "conflicting writes",
+        "stage": "compiler (error)",
+        "codes": [
+          "E0647"
+        ],
+        "declared": "E0647"
+      },
+      {
+        "bug": "33_atualizacao_perdida",
+        "kind": "atomicity (check, then act)",
+        "stage": "compiler (warning)",
+        "codes": [
+          "W0603"
+        ],
+        "declared": "W0603"
+      },
+      {
+        "bug": "34_handler_chama_modelo",
+        "kind": "atomicity (check, then act)",
+        "stage": "compiler (error)",
+        "codes": [
+          "E0654"
+        ],
+        "declared": "E0654"
+      },
+      {
+        "bug": "38_ler_antes_de_gravar_na_mesma_execucao",
+        "kind": "order of effects",
+        "stage": "language",
+        "codes": [],
+        "declared": "design"
+      },
+      {
+        "bug": "39_execucoes_simultaneas",
+        "kind": "simultaneous runs",
+        "stage": "runtime",
+        "codes": [],
+        "declared": "runtime"
+      },
+      {
+        "bug": "41_mesmo_fato_duas_vezes",
+        "kind": "simultaneous runs",
+        "stage": "missed",
+        "codes": [],
+        "declared": "none"
+      },
+      {
+        "bug": "44_resposta_entregue_duas_vezes",
+        "kind": "simultaneous runs",
+        "stage": "runtime",
+        "codes": [],
+        "declared": "runtime"
+      },
+      {
+        "bug": "46_pagamento_na_corrida",
+        "kind": "races",
+        "stage": "compiler (warning)",
+        "codes": [
+          "W0604"
+        ],
+        "declared": "W0604"
+      },
+      {
+        "bug": "47_estrategias_no_mesmo_repo",
+        "kind": "conflicting writes",
+        "stage": "compiler (error)",
+        "codes": [
+          "E0645"
+        ],
+        "declared": "E0645"
+      },
+      {
+        "bug": "48_corrida_decidida_de_novo",
+        "kind": "races",
+        "stage": "runtime",
+        "codes": [],
+        "declared": "runtime"
+      },
+      {
+        "bug": "49_rodada_ve_resposta_pela_metade",
+        "kind": "races",
+        "stage": "language",
+        "codes": [],
+        "declared": "design"
+      },
+      {
+        "bug": "50_perdedor_continua_gastando",
+        "kind": "races",
+        "stage": "runtime",
+        "codes": [],
+        "declared": "runtime"
+      },
+      {
+        "bug": "51_corrida_sem_saida",
+        "kind": "races",
+        "stage": "compiler (error)",
+        "codes": [
+          "E0683"
+        ],
+        "declared": "E0683"
+      },
+      {
+        "bug": "52_condicao_que_paga",
+        "kind": "races",
+        "stage": "compiler (error)",
+        "codes": [
+          "E0682"
+        ],
+        "declared": "E0682"
+      },
+      {
+        "bug": "54_resposta_depois_do_prazo",
+        "kind": "races",
+        "stage": "runtime",
+        "codes": [],
+        "declared": "runtime"
+      }
+    ],
+    "by_stage": {
+      "compiler (error)": 11,
+      "compiler (warning)": 3,
+      "runtime": 6,
+      "missed": 3,
+      "language": 2
+    },
+    "total": 25
+  },
+  "patterns": [
+    {
+      "pattern": "p01_fanout_fanin",
+      "what": "fan-out e fan-in (map-reduce): N buscas e resumos em paralelo, um relatório.",
+      "status": "accepted",
+      "codes": [],
+      "lines": 11
+    },
+    {
+      "pattern": "p02_parallel_distinct_writes",
+      "what": "escritas em paralelo em recursos diferentes (um reembolso por pedido), cada uma com chave.",
+      "status": "accepted",
+      "codes": [],
+      "lines": 7
+    },
+    {
+      "pattern": "p03_parallel_commutative_external",
+      "what": "escritas em paralelo no mesmo recurso externo, que comutam (uma linha de log por item).",
+      "status": "accepted",
+      "codes": [],
+      "lines": 7
+    },
+    {
+      "pattern": "p04_shared_counter",
+      "what": "contador compartilhado incrementado em paralelo (por itens e por execuções simultâneas).",
+      "status": "accepted",
+      "codes": [],
+      "lines": 10
+    },
+    {
+      "pattern": "p05_independent_fields",
+      "what": "ramos independentes calculam partes diferentes de um resultado.",
+      "status": "accepted",
+      "codes": [],
+      "lines": 12
+    },
+    {
+      "pattern": "p06_hedged_models",
+      "what": "hedging, a mesma pergunta a dois modelos e fica a primeira resposta.",
+      "status": "accepted",
+      "codes": [],
+      "lines": 10
+    },
+    {
+      "pattern": "p07_race_with_compensated_write",
+      "what": "corrida entre estratégias que escrevem, com a escrita do perdedor desfeita (saga).",
+      "status": "accepted",
+      "codes": [],
+      "lines": 21
+    },
+    {
+      "pattern": "p08_race_with_harmless_write",
+      "what": "corrida em que cada ramo grava num cache (escrita inofensiva: o perdedor pode ficar).",
+      "status": "warned",
+      "codes": [
+        "W0604"
+      ],
+      "lines": 18,
+      "rewrite": {
+        "codes": [],
+        "lines": 16,
+        "extra_lines": -2
+      }
+    },
+    {
+      "pattern": "p09_ordered_by_data",
+      "what": "dois efeitos em ordem porque o segundo usa o resultado do primeiro (pagar, depois o recibo).",
+      "status": "accepted",
+      "codes": [],
+      "lines": 13
+    },
+    {
+      "pattern": "p10_independent_writes_any_order",
+      "what": "duas escritas independentes, em qualquer ordem (avisar o cliente e registrar na análise).",
+      "status": "warned",
+      "codes": [
+        "W0602"
+      ],
+      "lines": 10,
+      "rewrite": {
+        "codes": [],
+        "lines": 11,
+        "extra_lines": 1
+      }
+    },
+    {
+      "pattern": "p11_atomic_update_in_handler",
+      "what": "ler-alterar-gravar atômico num estado compartilhado (o depósito somado no handler).",
+      "status": "accepted",
+      "codes": [],
+      "lines": 9
+    },
+    {
+      "pattern": "p12_check_then_act",
+      "what": "conferir e agir de forma atômica (otimista): o reembolso só se o pedido ainda estiver entregue.",
+      "status": "accepted",
+      "codes": [],
+      "lines": 13
+    },
+    {
+      "pattern": "p13_parallel_reads_sandbox",
+      "what": "duas leituras do mesmo repositório ao mesmo tempo (testes e lint).",
+      "status": "accepted",
+      "codes": [],
+      "lines": 10
+    },
+    {
+      "pattern": "p14_strategies_own_copies",
+      "what": "duas estratégias de correção, cada uma na sua cópia do repositório, em corrida.",
+      "status": "refused",
+      "codes": [
+        "E0645"
+      ],
+      "lines": 12,
+      "rewrite": {
+        "codes": [],
+        "lines": 12,
+        "extra_lines": 0
+      }
+    },
+    {
+      "pattern": "p15_agent_parallel_tools",
+      "what": "agente que chama tools de leitura em paralelo e uma escrita com chave.",
+      "status": "accepted",
+      "codes": [],
+      "lines": 18
+    },
+    {
+      "pattern": "p16_retry_loop_with_keyed_write",
+      "what": "laço de novas tentativas com uma escrita idempotente (mesma chave a cada volta).",
+      "status": "accepted",
+      "codes": [],
+      "lines": 20
+    },
+    {
+      "pattern": "p17_debate_rounds",
+      "what": "rodadas com barreira (cada agente vê a rodada anterior inteira).",
+      "status": "accepted",
+      "codes": [],
+      "lines": 13
+    },
+    {
+      "pattern": "p18_human_with_deadline",
+      "what": "esperar uma pessoa com prazo, em paralelo com outro trabalho.",
+      "status": "accepted",
+      "codes": [],
+      "lines": 11
+    },
+    {
+      "pattern": "p19_recursive_decomposition",
+      "what": "decomposição recursiva (dividir a tarefa em subtarefas até ficarem simples).",
+      "status": "refused",
+      "codes": [
+        "E0101",
+        "E0104",
+        "E0608"
+      ],
+      "lines": 15,
+      "rewrite": {
+        "codes": [],
+        "lines": 19,
+        "extra_lines": 4
+      }
+    },
+    {
+      "pattern": "p20_quorum",
+      "what": "quórum, perguntar a 3 modelos e seguir com as 2 primeiras respostas.",
+      "status": "not expressible",
+      "codes": [],
+      "lines": 10,
+      "why": "there is no 'first k of n': the closest program waits for all n"
+    },
+    {
+      "pattern": "p21_bounded_parallelism",
+      "what": "limitar quantas chamadas rodam ao mesmo tempo (limite do provedor).",
+      "status": "accepted",
+      "codes": [],
+      "lines": 8
+    }
+  ],
+  "check_time": {
+    "patterns_median_ms": 2.5,
+    "patterns_max_ms": 3.5,
+    "largest_example": "atendimento.clyx",
+    "largest_example_lines": 103,
+    "largest_example_ms": 2.6
+  },
+  "latency_s": {
+    "p10 two independent writes (warned)": 0.549,
+    "p10 rewritten with `after`": 1.053,
+    "p08 cache write inside the race (warned)": 1.034,
+    "p08 rewritten: cache write after the race": 0.532,
+    "p20 quorum, closest program: waits for all 3": 2.005,
+    "p20 quorum, ideal (2nd answer)": 0.3
+  },
+  "contracts": {
+    "programs": 12,
+    "lines": 498,
+    "effect_lines": 23,
+    "contract_lines": 19,
+    "limit_lines": 31,
+    "share_effect_and_contracts": 0.084
+  }
+}

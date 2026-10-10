@@ -1,0 +1,13 @@
+# Padrão: duas escritas independentes, em qualquer ordem (avisar o cliente e registrar na análise).
+tool email(request: Text, to: Text, body: Text) -> Unit:
+    effect write
+    idempotency_key request
+
+tool track(request: Text, event: Text) -> Unit:
+    effect write
+    idempotency_key request
+
+graph g(request: Text, to: Text) -> Text:
+    sent = email(request, to, "recebemos seu pedido")
+    logged = track(request, "pedido_recebido")
+    return "ok"
