@@ -291,6 +291,10 @@ pub struct Tool {
     pub retry_on: Vec<String>,
     /// The tool returns `Text`; otherwise its output is decoded as JSON.
     pub returns_text: bool,
+    /// JSON Schema of what the tool returns, when it is not `Text`: the
+    /// runtime keeps only these fields of the server's answer, checks them,
+    /// and applies `max_output` to what is left. Empty for `Text`.
+    pub returns: String,
     /// JSON Schema of the arguments, for models that call the tool.
     pub schema: String,
     /// What the tool does, in words, for models that call it.
