@@ -377,6 +377,9 @@ pub enum ExprKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RaceExpr {
+    /// `race first N`: the first N branches that pass win, as a list (a
+    /// quorum). None: `race first`, one winner, its value.
+    pub count: Option<(u64, Span)>,
     /// `where cond`, with `it` for a branch's value; none: the first
     /// branch that does not fail wins.
     pub cond: Option<Expr>,

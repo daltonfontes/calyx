@@ -1637,6 +1637,17 @@ impl Parser<'_> {
     fn race_expr(&mut self) -> PResult<Expr> {
         let start = self.advance().span; // race
         self.expect_word("first")?;
+        let count = if self.kind() == TokenKind::Int {
+            let t = self.tok();
+            self.advance();
+            let text = self.text_of(t).replace('_', "");
+            let n: u64 = text.parse().map_err(|_| {
+                self.error_here_at(t.span, "E0100", "syntax error", "a whole number", &text)
+            })?;
+            Some((n, t.span))
+        } else {
+            None
+        };
         let cond = if self.is_word("where") {
             self.advance();
             Some(self.expr()?)
@@ -1697,6 +1708,7 @@ impl Parser<'_> {
         Ok(Expr {
             span: self.span_from(start),
             kind: ExprKind::Race(Box::new(RaceExpr {
+                count,
                 cond,
                 branches,
                 on_none,

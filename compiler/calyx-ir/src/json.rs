@@ -574,6 +574,7 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
         // A branch's calls are keyed by it: `scope#id.name#call`; the
         // winner goes to the journal as `scope#id`.
         Expr::Race {
+            count,
             branches,
             slot,
             cond,
@@ -581,6 +582,8 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
             on_none_fail,
         } => {
             let mut inner = String::new();
+            inner.push_str(",\"count\":");
+            opt_u64(&mut inner, *count);
             inner.push_str(",\"names\":");
             list(&mut inner, branches, |o, (n, _)| string(o, n));
             inner.push_str(",\"branches\":");

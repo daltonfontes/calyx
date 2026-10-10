@@ -3090,9 +3090,29 @@ impl<'p> Cx<'_, 'p> {
             Some(t) => t,
             None => Ty::Error,
         };
+        // `race first N`: a quorum. N winners, as a list; `on none` (fewer
+        // than N passed) gives a list too.
+        let branch_ty = ty.clone();
+        let ty = match r.count {
+            Some((n, s)) => {
+                if n == 0 || n as usize > r.branches.len() {
+                    self.push(
+                        err(
+                            "E0686",
+                            "`race first N` needs 1 to as many winners as branches",
+                            s,
+                        )
+                        .expected(format!("a number from 1 to {}", r.branches.len()))
+                        .observed(format!("{n}")),
+                    );
+                }
+                Ty::List(Box::new(branch_ty.clone()), None)
+            }
+            None => ty,
+        };
         if let Some(c) = &r.cond {
             let mut inner = gc.clone();
-            inner.scope.insert("it".into(), ty.clone());
+            inner.scope.insert("it".into(), branch_ty.clone());
             let t = self.expr(c, &inner);
             self.expect_bool(&t.ty, c.span);
             if let Some(s) = self.impure(c) {
@@ -3116,7 +3136,11 @@ impl<'p> Cx<'_, 'p> {
                 if !assignable(&t.ty, &ty) {
                     self.push(
                         err("E0684", "`on none` gives a value of another type", v.span)
-                            .expected(format!("`{ty}`, like the branches"))
+                            .expected(if r.count.is_some() {
+                                format!("`{ty}`, the list of winners the race gives")
+                            } else {
+                                format!("`{ty}`, like the branches")
+                            })
                             .observed(format!("`{}`", t.ty)),
                     );
                 }

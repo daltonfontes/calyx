@@ -521,6 +521,7 @@ impl Lower<'_> {
                 let cond = r.cond.as_ref().map(|c| Box::new(self.expr(c, scope)));
                 scope.unbind(1);
                 ir::Expr::Race {
+                    count: r.count.map(|(n, _)| n),
                     branches,
                     slot,
                     cond,

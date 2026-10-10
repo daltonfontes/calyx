@@ -50,6 +50,22 @@ graph nobody(q: Text) -> Text:
         on none: fail "nenhuma busca respondeu"
     return best
 
+graph quorum(q: Text) -> Text:
+    two = race first 2:
+        slow: slow(q)
+        quick: m(solve(q))
+        other: m(solve("{q}?"))
+        on none: fail "poucas"
+    return join(two, " | ")
+
+graph few(q: Text) -> Text:
+    two = race first 2:
+        one: web_search("__fail__ {q}")
+        two: web_search("__fail__ {q}?")
+        three: m(solve(q))
+        on none: ["menos de duas"]
+    return join(two, " | ")
+
 graph fallback(q: Text) -> Text:
     best = race first where len(it) > 1000:
         one: web_search(q)
@@ -201,4 +217,35 @@ fn failed_branches_lose_and_on_none_decides() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stdout), "nenhuma resposta longa\n");
     assert!(text(&out.stderr).contains("race  no branch won"));
+}
+
+#[test]
+fn a_quorum_goes_on_with_the_first_n_and_keeps_them() {
+    let d = Dir::new("quorum");
+    let out = d.run("quorum", None);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let err = text(&out.stderr);
+    assert!(err.contains("race  won by `quick`, `other`"), "{err}");
+    assert_eq!(
+        text(&out.stdout).trim(),
+        "[resposta falsa para: resolva x] | [resposta falsa para: resolva x?]"
+    );
+    let journal = d.journal(&out);
+    assert!(
+        journal.contains("\"winners\":[\"quick\",\"other\"]"),
+        "{journal}"
+    );
+    // Decided once: the replay takes the winners from the journal.
+    let id = run_id(&out);
+    let again = d.calyx(&["replay", &id, "--quiet"], None);
+    assert_eq!(text(&again.stdout), text(&out.stdout));
+}
+
+#[test]
+fn a_quorum_not_reached_gives_on_none() {
+    let d = Dir::new("few");
+    let out = d.run("few", None);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(text(&out.stderr).contains("race  fewer than 2 branches won"));
+    assert_eq!(text(&out.stdout).trim(), "menos de duas");
 }

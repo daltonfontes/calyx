@@ -1,0 +1,34 @@
+# `race first N`: um quórum. O valor é a lista dos N primeiros que passam.
+model m = "m"
+
+prompt ask(q: Text) -> Text:
+    """{q}"""
+
+graph ok(q: Text) -> List[Text]:
+    two = race first 2:
+        a: m(ask(q))
+        b: m(ask(q))
+        c: m(ask(q))
+        on none: ["nenhuma"]
+    return two
+
+graph too_many(q: Text) -> List[Text]:
+    four = race first 4:
+        a: m(ask(q))
+        b: m(ask(q))
+        on none: fail "poucas"
+    return four
+
+graph wrong_on_none(q: Text) -> List[Text]:
+    two = race first 2:
+        a: m(ask(q))
+        b: m(ask(q))
+        on none: "uma só"
+    return two
+
+graph not_a_list(q: Text) -> Text:
+    two = race first 2:
+        a: m(ask(q))
+        b: m(ask(q))
+        on none: fail "poucas"
+    return two

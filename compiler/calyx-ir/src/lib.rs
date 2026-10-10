@@ -217,6 +217,8 @@ pub enum Expr {
     /// (in local `slot`) passes `cond` wins. With no winner, `on_none`, or
     /// failing with `on_none_fail`.
     Race {
+        /// `race first N`: N winners, as a list. None: one, its value.
+        count: Option<u64>,
         branches: Vec<(String, Expr)>,
         slot: usize,
         cond: Option<Box<Expr>>,
