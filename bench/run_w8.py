@@ -128,7 +128,8 @@ def proxies():
         port = str(55460 + i)
         p = subprocess.Popen([sys.executable, os.path.join(W8, "delay_proxy.py"), port, HOST, PORT,
                               str(d)], stdout=subprocess.PIPE, text=True)
-        p.stdout.readline()
+        if p.stdout.readline().strip() != "ready":
+            raise SystemExit(f"the delay proxy did not start on port {port}")
         procs.append(p)
         ports[d] = port
     return procs, ports

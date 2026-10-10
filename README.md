@@ -96,7 +96,10 @@ those lines are required. Details in
 `calyx worker` on another takes the run over and finishes it from the
 journal, and a run is never run by two machines at once. Entities and the
 waits of `receive` live in the database too, and the connection can use TLS
-(`sslmode=verify-full`).
+(`sslmode=verify-full`). With the database 7 ms away, a run that
+writes 1,000 journal lines takes 0.37 s instead of 0.12 s in a file, and a
+machine that vanishes without a word has its runs taken over in 11.5 s
+([W8](docs/evaluation/comparacao.md)).
 
 **Against the real Stripe API** (test mode, [`bench/stripe/`](bench/stripe)):
 a refund and a store credit, the process killed at 5 points. Stripe itself
