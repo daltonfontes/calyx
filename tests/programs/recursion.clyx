@@ -1,0 +1,40 @@
+# Grafos recursivos (D17): `decreases p`, um `Nat` que cada chamada a si mesmo diminui.
+model m = "m"
+
+prompt split(t: Text) -> List[Text] max 3:
+    """{t}"""
+
+prompt solve(t: Text) -> Text:
+    """{t}"""
+
+graph ok(task: Text, depth: Nat) -> Text:
+    decreases depth
+    answer = if depth == 0:
+        m(solve(task))
+    else:
+        parts = m(split(task))
+        subs = for each p in parts:
+            ok(p, depth - 1)
+        join(subs, "\n")
+    return answer
+
+graph no_decreases(task: Text, depth: Nat) -> Text:
+    return no_decreases(task, depth - 1)
+
+graph not_a_nat(task: Text, depth: Text) -> Text:
+    decreases depth
+    return m(solve(task))
+
+graph not_smaller(task: Text, depth: Nat) -> Text:
+    decreases depth
+    answer = if depth == 0:
+        m(solve(task))
+    else:
+        not_smaller(task, depth)
+    return answer
+
+graph ping(x: Text) -> Text:
+    return pong(x)
+
+graph pong(x: Text) -> Text:
+    return ping(x)

@@ -1,0 +1,24 @@
+error[E0510]: a graph that calls itself needs `decreases`
+- expected : `decreases p` under the graph's line: a `Nat` parameter that each call to itself makes smaller (`p - 1`), so the recursion ends
+- observed : `no_decreases` calls itself
+Location: recursion.clyx:22:12
+
+error[E0608]: argument has the wrong type
+- expected : `Nat` for `depth`
+- observed : `Int`
+Location: recursion.clyx:22:31
+
+error[E0511]: `decreases` names a parameter that is not a `Nat`
+- expected : a `Nat` parameter: a count that goes down to 0
+- observed : `depth` is `Text`
+Location: recursion.clyx:25:15
+
+error[E0512]: a call to itself must make the `decreases` parameter smaller
+- expected : `depth - 1` (or minus another whole number) for `depth`
+- observed : something that may not be smaller
+Location: recursion.clyx:33:27
+
+error[E0101]: graphs that call each other in a circle are not supported
+- expected : a graph that calls itself, with `decreases`; or the cycle broken into one graph
+- observed : `pong` calls `ping`
+Location: recursion.clyx:40:12

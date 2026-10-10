@@ -249,6 +249,8 @@ fn graph(o: &mut String, g: &Graph) {
     list(o, &g.params, |o, (_, t)| string(o, t));
     o.push_str(",\"ret\":");
     string(o, &g.ret);
+    o.push_str(",\"decreases\":");
+    opt_u64(o, g.decreases.map(|i| i as u64));
     o.push_str(",\"nodes\":");
     list(o, &g.nodes, node);
     o.push_str(",\"output\":");

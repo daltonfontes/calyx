@@ -1807,6 +1807,16 @@ static cx_value *call_graph(ctx *c, cx_value *e) {
                       len_of(cx_get(g, "params")));
     cx_value **args = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *args);
     EVAL_ALL(c, args_e, args);
+    /* `decreases p` (D17): the compiler makes each call to itself pass a
+     * smaller `p`; one that went below 0 missed its base case. */
+    cx_value *dec = cx_get(g, "decreases");
+    if (dec && dec->kind == CX_NUM && (size_t)dec->u.num < n) {
+        cx_value *v = args[(size_t)dec->u.num];
+        if (v && v->kind == CX_NUM && v->u.num < 0)
+            return failf(c, "`%s` called with `%s` = %g: below 0, the recursion missed its base case",
+                         cx_get_str(g, "name", "?"),
+                         at(cx_get(g, "params"), (size_t)dec->u.num)->u.str.s, v->u.num);
+    }
     const char *key = call_key(c, e);
     cx_value *result = PENDING;
     pthread_mutex_lock(&x->mu);

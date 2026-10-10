@@ -31,6 +31,7 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
         graph_effects: HashMap::new(),
         raw_write: false,
         raw_write_graphs: HashSet::new(),
+        recursing: None,
     };
     cx.collect(program);
     cx.resolve_signatures(program);
@@ -160,6 +161,9 @@ struct Cx<'a, 'p> {
     raw_write: bool,
     /// The graphs that make such writes.
     raw_write_graphs: HashSet<String>,
+    /// While checking a graph that calls itself: its name and the parameter
+    /// it `decreases` (decision D17).
+    recursing: Option<(String, String)>,
 }
 
 fn err(code: &'static str, msg: impl Into<String>, span: Span) -> Diagnostic {
@@ -1618,13 +1622,24 @@ impl<'p> Cx<'_, 'p> {
         }
         state[i] = 1;
         for &(j, span) in &calls[i] {
-            if state[j] == 1 {
+            // A graph that calls itself (D17): with `decreases`, checked in
+            // its body; its effect is a fixed point, so the order is fine.
+            if j == i {
+                if graphs[i].decreases.is_none() {
+                    self.push(
+                        err("E0510", "a graph that calls itself needs `decreases`", span)
+                            .expected("`decreases p` under the graph's line: a `Nat` parameter that each call to itself makes smaller (`p - 1`), so the recursion ends")
+                            .observed(format!("`{}` calls itself", graphs[i].name.name)),
+                    );
+                }
+            } else if state[j] == 1 {
                 self.push(
                     err(
                         "E0101",
-                        "recursive graphs are not supported yet (planned for a later milestone)",
+                        "graphs that call each other in a circle are not supported",
                         span,
                     )
+                    .expected("a graph that calls itself, with `decreases`; or the cycle broken into one graph")
                     .observed(format!(
                         "`{}` calls `{}`",
                         graphs[i].name.name, graphs[j].name.name
@@ -1642,6 +1657,32 @@ impl<'p> Cx<'_, 'p> {
         self.raw_write = false;
         let sig_params = self.graphs[g.name.name.as_str()].1.params.clone();
         let ret = self.graphs[g.name.name.as_str()].1.ret.clone();
+        // `decreases p`: a `Nat` parameter (D17).
+        let mut decreases = None;
+        if let Some(p) = &g.decreases {
+            match sig_params.iter().position(|(n, _)| *n == p.name) {
+                Some(i) if sig_params[i].1 == Ty::Nat => decreases = Some(i),
+                Some(i) => self.push(
+                    err(
+                        "E0511",
+                        "`decreases` names a parameter that is not a `Nat`",
+                        p.span,
+                    )
+                    .expected("a `Nat` parameter: a count that goes down to 0")
+                    .observed(format!("`{}` is `{}`", p.name, sig_params[i].1)),
+                ),
+                None => self.push(
+                    err(
+                        "E0511",
+                        "`decreases` names something that is not a parameter",
+                        p.span,
+                    )
+                    .expected("a `Nat` parameter of the graph")
+                    .observed(format!("`{}`", p.name)),
+                ),
+            }
+        }
+        self.recursing = decreases.map(|i| (g.name.name.clone(), sig_params[i].0.clone()));
 
         let mut gc = GraphCx::default();
         for (n, t) in &sig_params {
@@ -1986,7 +2027,9 @@ impl<'p> Cx<'_, 'p> {
             self.raw_write_graphs.insert(g.name.name.clone());
         }
 
+        self.recursing = None;
         ir::Graph {
+            decreases,
             name: g.name.name.clone(),
             params: sig_params
                 .iter()
@@ -3778,6 +3821,31 @@ impl<'p> Cx<'_, 'p> {
             }
             filled[slot] = true;
             let (pname, pty) = &params[slot];
+            if let Some((g, p)) = &self.recursing
+                && g == callee
+                && p == pname
+            {
+                // A call to itself: the count must go down (D17).
+                let goes_down = matches!(&a.value.kind, ExprKind::Binary { op, left, right }
+                    if op == "-"
+                        && matches!(&left.kind, ExprKind::Ident(n) if n == p)
+                        && matches!(&right.kind, ExprKind::Int { value, unit: None } if *value > 0));
+                if !goes_down {
+                    let p = p.clone();
+                    self.push(
+                        err(
+                            "E0512",
+                            "a call to itself must make the `decreases` parameter smaller",
+                            a.value.span,
+                        )
+                        .expected(format!(
+                            "`{p} - 1` (or minus another whole number) for `{p}`"
+                        ))
+                        .observed("something that may not be smaller".to_owned()),
+                    );
+                }
+                continue;
+            }
             if let Some(d) = lent_mismatch(&t.ty, pty, pname, a.value.span) {
                 self.push(d);
                 continue;

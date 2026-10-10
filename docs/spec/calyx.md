@@ -211,7 +211,20 @@ graph NOME(parametros) -> Tipo:
 ```
 
 - `effect` restringe o efeito máximo do grafo; o compilador verifica.
-- `decreases` indica o parâmetro que diminui a cada chamada recursiva (D17). **Ainda não implementado:** um grafo que chama a si mesmo, direta ou indiretamente, é recusado (`E0101`); a profundidade se escreve à mão, um grafo por nível (a E5 mede o custo: `docs/evaluation/contratos-e-concorrencia.md`).
+- `decreases p` (D17): um grafo pode chamar a si mesmo se declara qual parâmetro diminui. `p` precisa ser `Nat` (`E0511`), e em toda chamada a si mesmo o argumento dele é `p - k`, com `k` um número inteiro positivo (`E0512`); sem `decreases`, `E0510`. Assim toda recursão termina: se faltar o caso base, a chamada com `p` abaixo de 0 falha (`... called with p = -1: below 0`). Cada chamada tem as suas chaves (`work/subs#0[1]/work/...`), então a retomada aproveita o diário em qualquer profundidade. Grafos que se chamam em círculo (`a` chama `b`, que chama `a`) continuam recusados (`E0101`): o ciclo vira um grafo só.
+
+```
+graph work(task: Text, depth: Nat) -> Text:
+    decreases depth
+    answer = if depth == 0:
+        m(solve(task))
+    else:
+        parts = m(split(task))
+        subs = for each p in parts:
+            work(p, depth - 1)
+        m(merge(subs))
+    return answer
+```
 
 ### 4.9 Entidade (D15)
 

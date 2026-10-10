@@ -390,6 +390,9 @@ pub struct Limits {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Graph {
     pub name: String,
+    /// `decreases p` (decision D17): the index of the parameter that each
+    /// call to itself makes smaller; the runtime stops one that goes below 0.
+    pub decreases: Option<usize>,
     /// Parameters as `(name, type)`.
     pub params: Vec<(String, String)>,
     pub ret: String,
@@ -654,6 +657,7 @@ mod tests {
     #[test]
     fn displays_a_graph() {
         let g = Graph {
+            decreases: None,
             name: "g".into(),
             params: vec![("x".into(), "Text".into())],
             ret: "Text".into(),
