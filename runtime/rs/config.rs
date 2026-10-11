@@ -10,6 +10,11 @@
 //! [tools.web_search]
 //! command = ["python3", "tools/fake_search.py"]   # relative to this file
 //!
+//! [tools.list_commits]                       # a remote MCP server (Streamable HTTP)
+//! url = "https://api.githubcopilot.com/mcp/"
+//! token_env = "GITHUB_PERSONAL_ACCESS_TOKEN" # sent as `Authorization: Bearer ...`
+//! headers_env = { "X-MCP-Toolsets" = "GITHUB_TOOLSETS" }   # values from the environment
+//!
 //! [tools.refund.probe]           # for `calyx check --tools --probe` only
 //! setup = "probe_order"           # optional: a tool called first, no arguments
 //! args = { order = "{setup}", amount = 1.0 }       # the key's parameter is set by Calyx
@@ -42,10 +47,20 @@ pub struct Provider {
     pub prefixes: Vec<String>,
 }
 
-/// A command that starts an MCP server speaking over stdio.
+/// Where a tool's MCP server is: a command that starts it and speaks over
+/// stdio, or the URL of a remote one (Streamable HTTP).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolServer {
+    /// Empty for a remote server.
     pub command: Vec<String>,
+    /// A remote server's endpoint.
+    pub url: Option<String>,
+    /// The environment variable with the token sent as
+    /// `Authorization: Bearer <token>` to a remote server.
+    pub token_env: Option<String>,
+    /// More headers for a remote server: name to the environment variable
+    /// with its value (never the value itself: the file is not a secret).
+    pub headers_env: Vec<(String, String)>,
     /// The tool's name on the server, when it differs from the Calyx name.
     pub remote_name: Option<String>,
     /// Directory the command runs in (the directory of `calyx.toml`).
@@ -67,6 +82,24 @@ pub struct Probe {
     /// A read tool (by its name in `[tools]`) answering how many effects.
     pub count: String,
     pub count_args: serde_json::Map<String, serde_json::Value>,
+}
+
+impl ToolServer {
+    /// One server per distinct command or URL, shared by the tools on it.
+    pub fn key(&self) -> Vec<String> {
+        match &self.url {
+            Some(url) => vec!["url".into(), url.clone()],
+            None => self.command.clone(),
+        }
+    }
+
+    /// How the server is named in messages.
+    pub fn describe(&self) -> String {
+        match &self.url {
+            Some(url) => url.clone(),
+            None => self.command.join(" "),
+        }
+    }
 }
 
 fn probe(v: &toml::Value, owner: &str) -> Result<Option<Probe>, String> {
@@ -191,9 +224,56 @@ impl Config {
                 }
                 "tools" => {
                     for (name, v) in section(value, "tools")? {
-                        let command = strings(v, "command", name)?;
-                        if command.is_empty() {
+                        let opt = |k: &str| -> Result<Option<String>, String> {
+                            match v.get(k) {
+                                None => Ok(None),
+                                Some(x) => x
+                                    .as_str()
+                                    .map(|s| Some(s.to_owned()))
+                                    .ok_or(format!("tools.{name}.{k} must be text")),
+                            }
+                        };
+                        let url = opt("url")?;
+                        let command = match (&url, v.get("command")) {
+                            (Some(_), Some(_)) => {
+                                return Err(format!(
+                                    "tools.{name}: `command` or `url`, not both"
+                                ));
+                            }
+                            (Some(u), None) => {
+                                if !u.starts_with("http://") && !u.starts_with("https://") {
+                                    return Err(format!(
+                                        "tools.{name}.url must start with https:// (or http://)"
+                                    ));
+                                }
+                                Vec::new()
+                            }
+                            (None, _) => strings(v, "command", name).map_err(|_| {
+                                format!(
+                                    "`{name}` needs `command = [\"...\"]` (a local MCP server) or `url = \"https://...\"` (a remote one)"
+                                )
+                            })?,
+                        };
+                        if url.is_none() && command.is_empty() {
                             return Err(format!("tools.{name}.command is empty"));
+                        }
+                        let mut headers_env = Vec::new();
+                        if let Some(h) = v.get("headers_env") {
+                            let h = h.as_table().ok_or(format!(
+                                "tools.{name}.headers_env must be a table of header = \"VARIABLE\""
+                            ))?;
+                            for (header, var) in h {
+                                let var = var.as_str().ok_or(format!(
+                                    "tools.{name}.headers_env.{header} must name an environment variable"
+                                ))?;
+                                headers_env.push((header.clone(), var.to_owned()));
+                            }
+                        }
+                        let token_env = opt("token_env")?;
+                        if url.is_none() && (token_env.is_some() || !headers_env.is_empty()) {
+                            return Err(format!(
+                                "tools.{name}: `token_env` and `headers_env` are for a remote server (`url`)"
+                            ));
                         }
                         let remote_name = match v.get("name") {
                             Some(n) => Some(
@@ -207,6 +287,9 @@ impl Config {
                             name.clone(),
                             ToolServer {
                                 command,
+                                url,
+                                token_env,
+                                headers_env,
                                 remote_name,
                                 dir: dir.to_path_buf(),
                                 probe: probe(v, &format!("tools.{name}"))?,
