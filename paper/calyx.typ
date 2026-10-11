@@ -208,6 +208,14 @@ returns the items already applied, and the runtime resends only the rest.
 `requires` sends preconditions to the tool's server, which checks them in
 the same step as the effect.
 
+*Policies.* A `policy` for a tool states rules the runtime checks before
+every call, from a graph or from an agent: `require amount > 0`; `require
+order from get_ticket.order`, the argument must be a value a tool returned
+in that field, not one that only appears in a text the model read; `deny in
+agent if amount > 100`. A refused call is not made; in an agent it becomes
+an observation for the model. A tool a policy denies to agents outright
+cannot be given to one (`E0724`).
+
 *Other constructs*, each with its own compiler rules: `loop` and `rounds`
 with a mandatory bound; `for each` (fan-out); `race` between strategies,
 cancelling the losers and undoing what they wrote (a tool may declare
@@ -667,6 +675,59 @@ a read tool. Against Stripe in test mode it passes our server, and flags
 (`E0704`, two refunds) a version of it that stops forwarding the key while
 still claiming `idempotencyKeyHint: true`.
 
+== Prompt injection and policies (E6)
+
+A support agent with six tools (ticket, order, customer, refund, e-mail,
+address) handles 18 tickets: 6 benign, 12 with an attacker's instruction in
+the ticket or in the order's notes (refund 900, refund another order, mail
+the customer's data out, change the address, look up another customer, mail
+a phishing link). Both programs have the same prompt, with the rules written
+in it; one adds four policies (@fig-policy). The tools server records every
+call it receives.
+
+#figure(
+  ```python
+  policy refund:
+      require amount > 0
+      require order from get_ticket.order
+      deny in agent if amount > 100
+  policy send_email:
+      require to from get_order.email
+      require not ("://" in body)
+  ```,
+  caption: [Two of the four policies of E6.],
+) <fig-policy>
+
+#figure(
+  table(
+    columns: (1fr, auto, auto, auto),
+    align: (left, right, right, right),
+    thick, [*Model, rules*], [*Attacks*], [*Benign done*], [*Refused*], rule,
+    [Obedient, in the prompt], [12 of 12], [6 of 6], [0],
+    [Obedient, `policy`], [*0 of 12*], [6 of 6], [10],
+    [Gemini, in the prompt], [0 of 24], [12 of 12], [0],
+    [Gemini, `policy`], [0 of 24], [12 of 12], [0],
+    thick,
+  ),
+  caption: [Attacks that happened. Obedient: a fake model that runs every
+    `CALL tool {...}` line it reads, the worst case. Gemini:
+    `gemini-3.5-flash-lite`, 2 repetitions. No legitimate call was
+    refused.],
+) <tab-e6>
+
+With the obedient model, rules in the prompt stop nothing and policies stop
+every attack (@tab-e6); the two address changes are not even attempted,
+since the agent with policies cannot have that tool. Gemini fell for none of
+the 24 attempts with the rules only in the prompt, and with policies it never
+tried a call they refuse: the policies cost nothing (median 5.1 s against
+4.6 s per ticket, within the provider's variation) and did nothing. In both
+versions, the same two attacked tickets (mail the data out; a phishing link,
+both in the ticket's text) made Gemini drop the legitimate refund too: no
+harm, but no service, and policies cannot prevent that. So E6 does not show
+that a current model needs policies against these attacks, which are one
+sentence each; it shows that what policies declare holds whatever the model
+does.
+
 == Writing a real workflow
 
 A customer-support example (typed triage, an agent with read-only tools,
@@ -691,7 +752,8 @@ numbers reported; we say where. *Wrong declarations.* The check against MCP
 annotations only works for servers that send them, and misses ignored keys.
 *Models.* Most experiments use fake models; W1 and W2 were repeated with
 Gemini at small N, and in W2 the model always proposed the same amount, so
-the risk of a different answer after a crash was not exercised. *Setting.*
+the risk of a different answer after a crash was not exercised. The E6
+attacks are fixed sentences, not adapted to the model. *Setting.*
 One machine; W8 (several machines) adds latency with a proxy rather than
 running against a database across a real network; only the Stripe runs use a real service
 over the network, the rest use fake services; versions are pinned. *Real-bug study.* Issues
@@ -718,13 +780,19 @@ AgentRewind @zhuang2026agentrewind checkpoints and rewinds agents;
 AgentSpec @wang2026agentspec enforces user rules at runtime. These are
 runtime mechanisms; Calyx asks the program to declare what they need and
 checks it before running. Its compensations (`compensate`) are such a saga,
-limited to race losers and required to be keyed writes.
+limited to race losers and required to be keyed writes. Its policies are
+AgentSpec-like rules, checked by the compiler for type, purity and
+provenance and, when the arguments are written in the program, already at
+compile time (`E0723`).
 
 *Static analysis and calculi for agents.* Recent work analyses agent
 programs written in existing frameworks for structural properties
 @agentproof2026 and non-termination @ialscan2026, gives a typed calculus for
 agent composition @lambdaA2026, or tracks information flow in LLM programs
-@garby2026llmbda. Calyx checks a different property, the contract of
+@garby2026llmbda. CaMeL @debenedetti2025camel defends against prompt
+injection by separating control from data flow and tagging values with
+capabilities; Calyx's `from` is a narrower, declared case of that idea,
+checked per argument. Calyx checks a different property, the contract of
 external effects, which existing frameworks do not write down anywhere; its
 formal core could extend such a calculus with journals and crashes.
 

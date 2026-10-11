@@ -447,6 +447,29 @@ Com as duas correções, a Calyx termina todas as tarefas do LIMBO (TS 100%).
 O lote passou a usar `verify` em vez de `pause`, e isso tem um preço: no
 commit atrasado, ele duplica como as outras escritas que usam `verify`.
 
+### 6.9 Injeção de prompt e políticas (E6)
+
+Um agente de atendimento com seis tools atende 18 tickets: 6 benignos e 12
+com uma instrução de um atacante no ticket ou nas observações do pedido. Os
+dois programas têm o mesmo prompt, com as regras escritas nele; um acrescenta
+quatro `policy` (D36; spec, 4.10). O servidor de tools registra toda chamada que
+recebe ([`politicas.md`](../evaluation/politicas.md)).
+
+| Modelo, regras | Ataques | Benignos feitos | Recusadas |
+|---|---|---|---|
+| Obediente, no prompt | 12 de 12 | 6 de 6 | 0 |
+| Obediente, `policy` | **0 de 12** | 6 de 6 | 10 |
+| Gemini, no prompt | 0 de 24 | 12 de 12 | 0 |
+| Gemini, `policy` | 0 de 24 | 12 de 12 | 0 |
+
+Com o modelo obediente (que executa toda linha `CALL tool {...}` que lê), as
+políticas seguram todos os ataques sem recusar nada legítimo. O Gemini não
+caiu em nenhuma das 24 tentativas, nem com as regras só no prompt, e nunca
+tentou uma chamada que as políticas recusam. Os mesmos dois tickets atacados
+o fizeram largar também o reembolso legítimo, o que nenhuma política evita.
+A E6 não mostra que um modelo atual precisa de políticas contra ataques de
+uma frase; mostra que o que elas declaram vale, faça o modelo o que fizer.
+
 ## 7. Ameaças à validade
 
 - **Mesmo autor nas duas linguagens.** Os baselines e o corpus foram escritos

@@ -277,7 +277,7 @@ Uma política diz o que **toda** chamada de uma tool tem de cumprir, seja quem f
 
 **O que o runtime confere:** toda chamada, antes de sair. Num grafo, a recusa é uma falha da chamada (`try` a pega: `Failed("refused by the policy of ...")`). Num agente, é a observação daquela chamada (`error: refused by ...`), e o modelo segue com ela. As chamadas de um turno do agente são julgadas antes de qualquer uma sair: o modelo as escolheu com o que sabia antes do turno, e uma não é liberada pela resposta de outra do mesmo turno. A recusa fica guardada pela chave da chamada, então a execução retomada decide igual. `from` vê as respostas que a execução já usou, inclusive as que o diário devolve ao retomar. No trace, `deny  tool: regra`; no fim, quantas chamadas as políticas recusaram.
 
-Na E6 (`bench/run_e6.py`), um agente de atendimento com 12 tickets que trazem instruções injetadas: com um modelo que obedece a qualquer instrução, os 12 ataques acontecem com as regras só no prompt, e nenhum com as políticas; nenhuma chamada legítima é recusada.
+Na E6 (`bench/run_e6.py`), um agente de atendimento com 12 tickets que trazem instruções injetadas: com um modelo que obedece a qualquer instrução, os 12 ataques acontecem com as regras só no prompt, e nenhum com as políticas; nenhuma chamada legítima é recusada. Com o Gemini, nenhum dos 24 ataques aconteceu, com ou sem políticas ([`docs/evaluation/politicas.md`](../evaluation/politicas.md)).
 
 ---
 
