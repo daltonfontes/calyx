@@ -779,6 +779,8 @@ output = 0.40
 
 Sem preço para um modelo, as chamadas dele não contam no orçamento, e o runtime avisa.
 
+Telemetria (`[telemetry]`): seção 11.3.
+
 Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*` / `o3*` / `o4*` (`OPENAI_API_KEY`), `nvidia/*` (`NVIDIA_API_KEY`). Identificadores que começam com `fake` (e a opção `--fake-models`) usam um modelo falso, sem rede, que responde no formato do tipo do prompt.
 
 ### 11.2 Como o runtime chama modelos e tools
@@ -800,6 +802,35 @@ Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*`
 - **Saída de tools:** com `-> Text`, o texto do servidor, cortado em `max_output` (D16). Com outro tipo (um record, uma lista, um número...), o runtime lê a resposta inteira (o `structuredContent`, ou o texto como JSON), **guarda só os campos que o tipo declara**, em todos os níveis, confere o resultado contra o tipo (um campo declarado que falta é a falha `Decode`), e só então aplica `max_output` ao que sobrou (4 bytes de JSON por token): tira os últimos itens das listas mais longas e, se ainda for preciso, corta a segunda metade dos textos mais longos, sem nunca deixar um JSON pela metade. É esse valor que o diário guarda e que um agente vê como observação. No exemplo `examples/github/repo_agent.clyx`, as respostas do servidor do GitHub (16 mil caracteres só para uma versão, quase tudo metadado) caem para os campos que o agente usa, e a entrada do modelo, de 9.241 para 946 tokens. Uma tool que retorna `Unit` não é conferida.
 - **Programas como servidores MCP (`calyx serve`).** `calyx serve <arquivo.clyx>` serve o programa por MCP (stdio), no diretório do programa: cada `graph` é uma tool, com o esquema dos parâmetros. As anotações saem do programa: `readOnlyHint: true` se nenhum passo do grafo escreve (efeitos `pure`, `llm`, `read`); senão `idempotencyKeyHint: true` (a anotação proposta em [`docs/mcp/`](../mcp/idempotency-key-hint.md)). Uma chamada com chave (`idempotencyKey`, ou `calyx/idempotency_key` no `_meta`) fica presa a uma execução, gravada em `.calyx/serve/keys.json` antes de a execução passar do primeiro passo: a mesma chave com os mesmos argumentos devolve a resposta gravada (`_meta` `calyx/replayed`), ou retoma a execução se ela não terminou (queda, falha); com outros argumentos, erro `IdempotencyConflict`. Sem chave, cada chamada é uma execução nova. Uma execução que espera (`receive`) responde com o texto da espera, sem erro.
 - **Falha:** se um passo falha depois das tentativas, a execução para com o grafo, o passo e o motivo, a menos que um `try` a capture (D11).
+
+### 11.3 Observabilidade (OpenTelemetry)
+
+Desligada até ser configurada. A execução manda traces e métricas no formato do OpenTelemetry (OTLP por HTTP, em JSON) para qualquer coletor ou serviço que o aceite: o OpenTelemetry Collector, Jaeger, Grafana Tempo, Honeycomb, Datadog e outros.
+
+```toml
+[telemetry]
+endpoint = "http://localhost:4318"     # ou OTEL_EXPORTER_OTLP_ENDPOINT
+service_name = "atendimento"           # ou OTEL_SERVICE_NAME (padrão: calyx)
+headers_env = { "x-honeycomb-team" = "HONEYCOMB_API_KEY" }   # o valor vem do ambiente
+file = "telemetria.jsonl"              # ou CALYX_TELEMETRY_FILE: as mesmas requisições, uma por linha
+```
+
+As variáveis padrão do OpenTelemetry valem e ganham do arquivo: `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k2=v2`), `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`; `OTEL_SDK_DISABLED=true` desliga tudo. O arquivo tem o formato que o receptor `otlpjsonfile` do Collector lê.
+
+**Traces.** Um trace por execução, com o id derivado do id da execução: uma execução retomada (outro processo, talvez outra máquina, dias depois de um `receive`) continua o mesmo trace. Cada processo acrescenta um span raiz `run <grafo>` (atributos `calyx.run.id`, `calyx.graph`, `calyx.run.mode`, `calyx.run.status`: `finished`, `waiting` ou `failed`) e, abaixo dele, um span por **tentativa** de cada chamada:
+
+- `chat <modelo>`: `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `calyx.prompt`, `calyx.cost_usd`;
+- `execute_tool <tool>`: `gen_ai.tool.name`, `calyx.output.truncated`;
+- `entity <Entidade>.<Handler>`;
+- em todos: `calyx.call.key` (a chave do diário), `calyx.call.node`, `calyx.call.effect`, `calyx.call.attempt` e, numa falha, `error.type` e a mensagem.
+
+Chamadas tiradas do diário não viram spans (não foram feitas). Chamadas recusadas por uma política (`policy.denied`, com a regra) e escritas `write once` de resultado incerto (`write.uncertain`, com o que foi feito: refeita, tomada como feita, pausada) são eventos do span raiz.
+
+**Métricas** (somas delta, então processos curtos se somam): `calyx.calls` (por tipo, nome e resultado: `ok`, `error` ou `journal`), `calyx.call.duration` (histograma, ms), `calyx.tokens` (por modelo, entrada e saída), `calyx.cost` (USD, por modelo), `calyx.policy.denials` (por tool), `calyx.writes.uncertain` e `calyx.runs` (por grafo, modo e situação).
+
+**O que não sai:** nada que o programa lê ou escreve. Nem prompts, nem argumentos, nem respostas: só nomes, chaves, tempos, tamanhos e erros. O envio é feito por uma thread, a cada segundo e no fim; um coletor fora do ar nunca para uma execução (um aviso no stderr).
+
+Para ver localmente, com o Jaeger: `docker run -p 16686:16686 -p 4318:4318 jaegertracing/all-in-one`, `export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` e abra `http://localhost:16686`.
 
 ## 12. Implementação (D10)
 

@@ -367,6 +367,94 @@ static cx_value *fatalf(ctx *c, const char *f, ...) {
     return NULL;
 }
 
+/* ----- telemetry (runtime/rs/telemetry.rs) --------------------------------- */
+
+/* Events for traces and metrics, as JSON; built only when telemetry is on.
+ * Nothing the program reads or writes goes in: names, keys, times, sizes. */
+int calyx_telemetry_enabled(void);
+void calyx_telemetry_begin(const char *run_id, const char *graph, const char *mode);
+void calyx_telemetry_event(const char *json);
+void calyx_telemetry_end(const char *status, const char *error);
+
+/* Wall-clock time in microseconds, for spans. */
+static long long wall_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (long long)ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+}
+
+static void tel_str(cx_buf *b, const char *k, const char *v) {
+    if (!v) return;
+    cx_buf_printf(b, ",\"%s\":", k);
+    cx_buf_json_str(b, v, strlen(v));
+}
+
+static void tel_send(cx_buf *b) {
+    cx_buf_putc(b, '}');
+    calyx_telemetry_event(b->data);
+    cx_buf_free(b);
+}
+
+/* One attempt of a call ended: `ok` is the answer, or `err_kind` why not. */
+static void tel_call(const char *kind, const char *name, const char *prompt, const char *effect,
+                     const char *key, const char *node, int attempt, long long t0, cx_value *ok,
+                     const char *err_kind, const char *err) {
+    if (!calyx_telemetry_enabled()) return;
+    cx_buf b = {0};
+    cx_buf_printf(&b, "{\"type\":\"call\",\"t0\":%lld,\"t1\":%lld,\"attempt\":%d,\"ok\":%s", t0,
+                  wall_us(), attempt, err_kind ? "false" : "true");
+    tel_str(&b, "kind", kind);
+    tel_str(&b, "name", name);
+    tel_str(&b, "prompt", prompt);
+    tel_str(&b, "effect", effect);
+    tel_str(&b, "key", key);
+    tel_str(&b, "node", node);
+    tel_str(&b, "error_kind", err_kind);
+    tel_str(&b, "error", err);
+    if (ok) {
+        static const char *nums[] = {"input_tokens", "output_tokens", "cost_usd"};
+        for (size_t i = 0; i < 3; i++) {
+            cx_value *v = cx_get(ok, nums[i]);
+            if (v && v->kind == CX_NUM) cx_buf_printf(&b, ",\"%s\":%.17g", nums[i], v->u.num);
+        }
+        if (cx_get_bool(ok, "truncated", 0)) cx_buf_puts(&b, ",\"truncated\":true");
+    }
+    tel_send(&b);
+}
+
+/* A call taken from the journal, not made. */
+static void tel_journal(const char *kind, const char *name) {
+    if (!calyx_telemetry_enabled()) return;
+    cx_buf b = {0};
+    cx_buf_puts(&b, "{\"type\":\"journal\"");
+    tel_str(&b, "kind", kind);
+    tel_str(&b, "name", name);
+    tel_send(&b);
+}
+
+/* A call a policy refused (D36). */
+static void tel_deny(const char *tool, const char *rule, const char *key, int by_agent) {
+    if (!calyx_telemetry_enabled()) return;
+    cx_buf b = {0};
+    cx_buf_printf(&b, "{\"type\":\"deny\",\"t\":%lld,\"agent\":%s", wall_us(),
+                  by_agent ? "true" : "false");
+    tel_str(&b, "tool", tool);
+    tel_str(&b, "rule", rule);
+    tel_str(&b, "key", key);
+    tel_send(&b);
+}
+
+/* A `write once` of unknown outcome, and what was done about it (D2). */
+static void tel_uncertain(const char *tool, const char *key, const char *how) {
+    if (!calyx_telemetry_enabled()) return;
+    cx_buf b = {0};
+    cx_buf_printf(&b, "{\"type\":\"uncertain\",\"t\":%lld", wall_us());
+    tel_str(&b, "tool", tool);
+    tel_str(&b, "key", key);
+    tel_str(&b, "how", how);
+    tel_send(&b);
+}
+
 /* ----- rendering values into prompts ------------------------------------ */
 
 /* Text as is; lists one item per line; records as JSON. */
@@ -1257,7 +1345,17 @@ static void owe(exec *x, cx_arena *a, job *j) {
 }
 
 static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len) {
-    if (j->entity) return entity_job(x, a, j, why, why_len);
+    if (j->entity) {
+        long long t0 = wall_us();
+        cx_value *r = entity_job(x, a, j, why, why_len);
+        if (calyx_telemetry_enabled())
+            tel_call("entity",
+                     fmt(a, "%s.%s", cx_get_str(j->spec, "name", "?"),
+                         cx_get_str(j->prompt, "name", "?")),
+                     NULL, j->send ? "write" : "read", j->key, j->label, 1, t0, NULL,
+                     r ? NULL : "EntityError", r ? NULL : why);
+        return r;
+    }
     const char *name = cx_get_str(j->spec, j->is_model ? "id" : "name", "?");
     const char *effect = j->is_model ? "llm" : cx_get_str(j->spec, "effect", "read");
     const char *prompt_name = j->is_model ? cx_get_str(j->prompt, "name", "?") : "";
@@ -1270,8 +1368,10 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
 
     if (j->uncertain) {
         cx_value *found = NULL;
-        switch (resolve_uncertain(x, a, j, "the run stopped while it was in progress", &found, how,
-                                  sizeof how, why, why_len)) {
+        int r = resolve_uncertain(x, a, j, "the run stopped while it was in progress", &found, how,
+                                  sizeof how, why, why_len);
+        tel_uncertain(name, j->key, r == R_STOP ? "paused" : r == R_FAIL ? "failed" : how);
+        switch (r) {
         case R_DONE:
             return taken_as_done(x, a, j, found, how, why, why_len);
         case R_FAIL:
@@ -1333,6 +1433,7 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
         pthread_mutex_unlock(&x->mu);
         sleep_s(wait);
 
+        long long t_attempt = wall_us();
         cx_value *ans = io_call(a, j->is_model ? calyx_io_model_call : calyx_io_tool_call, j->req);
         cx_value *ok = cx_get(ans, "ok");
         const char *kind = "Unavailable";
@@ -1360,6 +1461,9 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
                       cx_get_bool(record, "truncated", 0) ? "  (output cut at max_output)" : "",
                       attempt > 1 ? "  (retry)" : "");
             }
+            tel_call(j->is_model ? "model" : "tool", name, j->is_model ? prompt_name : NULL, effect,
+                     j->key, j->label, attempt, t_attempt, ok, v ? NULL : "Decode",
+                     v ? NULL : "the answer does not have the declared type");
             if (v) {
                 /* Only answers that decode are recorded. */
                 if (!journal_record(x, j, effect, record)) {
@@ -1390,6 +1494,8 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
             else
                 snprintf(why, why_len, "tool `%s` failed: %s: %s", name, kind, message);
             trace(x, j->label, "%-5s %s  failed: %s: %s", effect, name, kind, message);
+            tel_call(j->is_model ? "model" : "tool", name, j->is_model ? prompt_name : NULL, effect,
+                     j->key, j->label, attempt, t_attempt, NULL, kind, message);
             /* A missing API key or tool server: no `try` or router may hide
              * it as a failed call; the run stops until the setup is fixed. */
             if (strcmp(kind, "Config") == 0) {
@@ -1401,7 +1507,10 @@ static cx_value *run_job(exec *x, cx_arena *a, job *j, char *why, size_t why_len
                 char cause[512];
                 snprintf(cause, sizeof cause, "%s: %s", kind, message);
                 cx_value *found = NULL;
-                switch (resolve_uncertain(x, a, j, cause, &found, how, sizeof how, why, why_len)) {
+                int r = resolve_uncertain(x, a, j, cause, &found, how, sizeof how, why, why_len);
+                tel_uncertain(name, j->key,
+                              r == R_STOP ? "paused" : r == R_FAIL ? "failed" : how);
+                switch (r) {
                 case R_DONE:
                     return taken_as_done(x, a, j, found, how, why, why_len);
                 case R_REDO:
@@ -1588,6 +1697,7 @@ static cx_value *request(ctx *c, const char *key, int kind, cx_value *spec, cx_v
                 if (kind == CALL_ENTITY) is_model = 0;
                 pending *done = new_pending(x, &c->w->arena, key, P_DONE, v);
                 if (kind == CALL_TOOL) note_output(x, done, name);
+                tel_journal(kind == CALL_ENTITY ? "entity" : is_model ? "model" : "tool", name);
                 trace(x, c->label, "%-5s %s%s%s%s  from the journal", effect, name,
                       is_model ? "(" : "", is_model ? cx_get_str(prompt, "name", "?") : "",
                       is_model ? ")" : "");
@@ -1802,7 +1912,7 @@ static int policy_holds(ctx *c, cx_value *e, cx_value **locals) {
  * the same decision on every evaluation and when the run is resumed.
  */
 static const char *policy_denies(ctx *c, cx_value *tool, cx_value **vals, size_t n,
-                                 int by_agent) {
+                                 int by_agent, const char *key) {
     exec *x = c->x;
     cx_arena *a = &c->w->arena;
     cx_value *policy = cx_get(tool, "policy");
@@ -1860,6 +1970,7 @@ static const char *policy_denies(ctx *c, cx_value *tool, cx_value **vals, size_t
                                     text, why)
                               : fmt(a, "refused by the policy of `%s`: `%s` %s", name, text, why);
         trace(x, c->label, "deny  %s: `%s`", name, text);
+        tel_deny(name, text, key, by_agent);
         return out;
     }
     return NULL;
@@ -1884,7 +1995,7 @@ static cx_value *tool_request(ctx *c, cx_value *tool, cx_value **args, size_t n,
                               cx_value *requires, const char *key) {
     const char *name = cx_get_str(tool, "name", "?");
     cx_value *params = cx_get(tool, "params");
-    const char *denied = policy_denies(c, tool, args, n, 0);
+    const char *denied = policy_denies(c, tool, args, n, 0, key);
     if (denied) return failf(c, "%s", denied);
     cx_buf req = {0};
     cx_buf_puts(&req, "{\"tool\":");
@@ -3416,7 +3527,7 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
                               : arguments && arguments->kind == CX_REC
                                   ? cx_get(arguments, at(tparams, p)->u.str.s)
                                   : NULL;
-                const char *denied = policy_denies(c, t, vals, np, 1);
+                const char *denied = policy_denies(c, t, vals, np, 1, ckey);
                 if (denied) {
                     pthread_mutex_lock(&x->mu);
                     if (!ptab_get(x, ckey)) {
@@ -3904,6 +4015,7 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
         }
     }
 
+    calyx_telemetry_begin(x->run_id, graph, cx_get_str(options, "mode", "new"));
     if (x->trace)
         fprintf(stderr, "%7.2fs  running graph `%s` (%d worker(s), up to %d call(s) at once)\n",
                 0.0, graph, x->nworkers, x->nio);
@@ -3932,6 +4044,8 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
     free(io_args);
 
     cx_value *result = x->err.len ? NULL : x->result;
+    calyx_telemetry_end(result ? "finished" : x->waiting ? "waiting" : "failed",
+                        x->err.len ? x->err.data : NULL);
     if (x->trace) {
         fprintf(stderr,
                 "%7.2fs  %s: %lu model call(s) (%llu -> %llu tokens), %lu tool call(s), %lu "
