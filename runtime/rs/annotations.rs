@@ -181,7 +181,7 @@ pub fn inspect(config: &Config, tools: &[Declared]) -> Vec<Finding> {
             continue;
         };
         let server = servers
-            .entry(cfg.command.clone())
+            .entry(cfg.key())
             .or_insert_with(|| mcp::Server::start(cfg).map_err(|e| e.message));
         let remote = cfg.remote_name.clone().unwrap_or_else(|| d.name.clone());
         match server {
@@ -278,7 +278,7 @@ pub fn probe(config: &Config, tools: &[Declared]) -> (Vec<Probed>, Vec<Finding>)
                 .get(tool)
                 .ok_or_else(|| format!("no `[tools.{tool}]` in calyx.toml"))?;
             let server = servers
-                .entry(cfg.command.clone())
+                .entry(cfg.key())
                 .or_insert_with(|| mcp::Server::start(cfg).map_err(|e| e.message));
             let server = server.as_mut().map_err(|e| e.clone())?;
             let remote = cfg.remote_name.clone().unwrap_or_else(|| tool.to_owned());
@@ -384,7 +384,7 @@ fn hint_of(
     tool: &str,
 ) -> String {
     let remote = cfg.remote_name.clone().unwrap_or_else(|| tool.to_owned());
-    match servers.get(&cfg.command) {
+    match servers.get(&cfg.key()) {
         Some(Ok(s)) => match s.annotations.get(&remote) {
             Some(ann) => hint(ann, "idempotencyKeyHint"),
             None => "no annotations".into(),

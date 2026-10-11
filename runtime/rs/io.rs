@@ -211,11 +211,11 @@ fn tool_call_unlocked(req: &Value) -> Result<Value, IoError> {
             IoError::new(
                 "Config",
                 format!(
-                    "no MCP server for tool `{tool}`: add `[tools.{tool}]` with `command = [...]` to {place}"
+                    "no MCP server for tool `{tool}`: add `[tools.{tool}]` with `command = [...]` (a local MCP server) or `url = \"https://...\"` (a remote one) to {place}"
                 ),
             )
         })?;
-        let key = server_cfg.command.clone();
+        let key = server_cfg.key();
         if !st.servers.contains_key(&key) {
             let server = mcp::Server::start(&server_cfg)?;
             st.servers.insert(key.clone(), Arc::new(server));

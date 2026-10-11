@@ -146,6 +146,17 @@ run's answer, or resumes it if it died, and never runs it twice.
     "command": "calyx", "args": ["serve", "/path/to/refund.clyx"] } } }
 ```
 
+## Calyx calls LOCAL and REMOTE tools
+
+Each tool is an MCP server: a command (stdio) or a URL (Streamable HTTP,
+with the token from the environment):
+
+```toml
+[tools.list_commits]
+url = "https://api.githubcopilot.com/mcp/"
+token_env = "GITHUB_PERSONAL_ACCESS_TOKEN"
+```
+
 ## Calyx is OBSERVABLE
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` (or `[telemetry]` in `calyx.toml`) and

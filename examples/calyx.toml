@@ -13,6 +13,12 @@
 [tools.web_search]
 command = ["python3", "tools/fake_search.py"]
 
+# Um servidor MCP remoto (Streamable HTTP), em vez de um comando:
+#
+#   [tools.list_commits]
+#   url = "https://api.githubcopilot.com/mcp/"
+#   token_env = "GITHUB_PERSONAL_ACCESS_TOKEN"   # Authorization: Bearer, do ambiente
+
 # Traces e métricas (OpenTelemetry), desligados sem configuração. Também
 # pelas variáveis padrão: OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME...
 #
