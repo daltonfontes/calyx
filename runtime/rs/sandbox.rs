@@ -29,7 +29,7 @@ unsafe extern "C" {
     fn cx_sha256_hex(data: *const u8, len: usize, out: *mut u8);
 }
 
-fn sha256(data: &[u8]) -> String {
+pub(crate) fn sha256(data: &[u8]) -> String {
     let mut out = [0u8; 65];
     // SAFETY: `out` has room for 64 hex digits and the NUL.
     unsafe { cx_sha256_hex(data.as_ptr(), data.len(), out.as_mut_ptr()) };

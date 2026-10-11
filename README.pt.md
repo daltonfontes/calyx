@@ -293,6 +293,7 @@ modelos, em [`examples/`](examples).
 - Paper: [Calyx: um compilador que exige o contrato de efeito em workflows de agentes](paper/Calyx-pt.pdf) (em inglês: [Calyx.pdf](paper/Calyx.pdf)).
 - Formalização: [Effects.lean](formal/Effects.lean), as regras de efeito e suas provas, em Lean; [formal.md](docs/paper/formal.md) e o verificador limitado [model.py](bench/formal/model.py).
 - Especificação: [calyx.md](docs/spec/calyx.md), a linguagem, toda verificação e todo código de erro.
+- Operação: [operacao.md](docs/operacao.md), instalar, onde fica o estado e o backup, atualizar sem perder execuções, trocar chaves, acompanhar.
 - Avaliação: [docs/evaluation/](docs/evaluation), contra Python, LangGraph e Temporal, bugs reais e o LIMBO.
 - Benchmarks: [bench/](bench), todo script por trás dos números acima, com os dados em `bench/results/`.
 - Visão geral: [visao-geral.md](docs/visao-geral.md), o estado de cada marco, como compilar e rodar, a pasta de cada parte.

@@ -71,6 +71,30 @@ pub struct RunOptions {
     pub uncertain_value: Option<serde_json::Value>,
 }
 
+/// What identifies a compiled program in a run's journal (D23): the
+/// SHA-256 of its IR in JSON, without the object fields that are `null`.
+/// A field a later version adds to the IR is `null` in programs that do
+/// not use it, so a new Calyx can resume the runs an older one started
+/// as long as it compiles their program to the same thing; when it does
+/// not, the run is resumed by the version that started it (see
+/// docs/operacao.md). `tests/program_hashes.rs` pins the examples' hashes.
+pub fn program_hash(ir_json: &str) -> Result<String, String> {
+    fn strip(v: &mut serde_json::Value) {
+        match v {
+            serde_json::Value::Object(m) => {
+                m.retain(|_, x| !x.is_null());
+                m.values_mut().for_each(strip);
+            }
+            serde_json::Value::Array(xs) => xs.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    let mut v: serde_json::Value =
+        serde_json::from_str(ir_json).map_err(|e| format!("invalid IR: {e}"))?;
+    strip(&mut v);
+    Ok(sandbox::sha256(v.to_string().as_bytes()))
+}
+
 /// Runs `graph` of a compiled program (the IR in JSON) with `args` (a JSON
 /// object of parameter name to value). Returns the result as JSON.
 pub fn run(
@@ -82,6 +106,7 @@ pub fn run(
     let (args, sandboxes) = prepare_sandboxes(ir_json, graph, args, &opts)?;
     let args = &args;
     let options = serde_json::json!({
+        "program_hash": program_hash(ir_json)?,
         "trace": opts.trace,
         "journal": opts.journal.as_ref().map(|p| p.display().to_string()),
         "mode": match opts.mode {

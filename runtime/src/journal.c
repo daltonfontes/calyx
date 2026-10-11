@@ -4,6 +4,8 @@
 
 #include "journal.h"
 
+#include "calyx_runtime.h"
+
 #include "sha256.h"
 
 #include <errno.h>
@@ -174,7 +176,7 @@ int cx_journal_sync(cx_journal *j) {
  * Loads the entries of an existing journal. Returns the size of the valid
  * prefix: a crash can leave a torn last line, which is dropped.
  */
-static long load(cx_journal *j, const char *ir_hash, cx_buf *err) {
+static long load(cx_journal *j, const char *ir_hash, const char *legacy_hash, cx_buf *err) {
     size_t len = 0;
     char *path = path_join(j->arena, j->dir, CX_JOURNAL_FILE);
     char *data = NULL;
@@ -216,10 +218,28 @@ static long load(cx_journal *j, const char *ir_hash, cx_buf *err) {
                 cx_buf_puts(err, "not a Calyx journal, or from another version");
                 return -1;
             }
-            if (strcmp(cx_get_str(e, "ir_hash", ""), ir_hash) != 0) {
-                cx_buf_puts(err,
-                            "the program changed since this run started: a run finishes on the "
-                            "version it started with (D23)");
+            const char *was = cx_get_str(e, "ir_hash", "");
+            if (strcmp(was, ir_hash) != 0 && !(legacy_hash && strcmp(was, legacy_hash) == 0)) {
+                const char *by = cx_get_str(e, "calyx", NULL);
+                if (by && strcmp(by, calyx_runtime_version()) != 0)
+                    cx_buf_printf(err,
+                                  "this run was started by Calyx %s, and its program, compiled "
+                                  "by Calyx %s, is not the same (the program changed, or this "
+                                  "version compiles it differently): a run finishes on the "
+                                  "version it started with (D23); with that version in "
+                                  "~/.calyx/versions/%s/calyx (install.sh keeps it there), "
+                                  "`calyx resume` uses it",
+                                  by, calyx_runtime_version(), by);
+                else if (!by)
+                    cx_buf_puts(err,
+                                "the program changed since this run started, or the run was "
+                                "started by Calyx 0.3.6 or earlier, which compiles it "
+                                "differently: a run finishes on the version it started with "
+                                "(D23); resume it with that version's binary");
+                else
+                    cx_buf_puts(err,
+                                "the program changed since this run started: a run finishes on "
+                                "the program it started with (D23)");
                 return -1;
             }
         } else if (strcmp(type, "call") == 0) {
@@ -240,7 +260,8 @@ static long load(cx_journal *j, const char *ir_hash, cx_buf *err) {
 }
 
 cx_journal *cx_journal_open(cx_arena *a, const char *dir, cx_journal_mode mode,
-                            const char *ir_hash, const char *header_json, cx_buf *err) {
+                            const char *ir_hash, const char *legacy_hash,
+                            const char *header_json, cx_buf *err) {
     cx_journal *j = cx_alloc(a, sizeof *j);
     memset(j, 0, sizeof *j);
     j->arena = a;
@@ -283,7 +304,7 @@ cx_journal *cx_journal_open(cx_arena *a, const char *dir, cx_journal_mode mode,
         return j;
     }
 
-    long valid = load(j, ir_hash, err);
+    long valid = load(j, ir_hash, legacy_hash, err);
     if (valid < 0) {
         free(j->slots);
         return NULL;
