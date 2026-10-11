@@ -504,8 +504,17 @@ static cx_value *parse_record(parser *ps) {
         ps->p++;
         cx_value *v = parse_value(ps);
         if (!v) goto bad;
-        ptrvec_push(&keys, (void *)k->u.str.s);
-        ptrvec_push(&vals, v);
+        /* A name given twice: the last value counts, as in serde_json (the
+         * Rust side), so both sides read a journal written by hand the
+         * same way. Found by fuzz_json. */
+        size_t i = 0;
+        while (i < keys.len && strcmp(keys.items[i], k->u.str.s) != 0) i++;
+        if (i < keys.len) {
+            vals.items[i] = v;
+        } else {
+            ptrvec_push(&keys, (void *)k->u.str.s);
+            ptrvec_push(&vals, v);
+        }
         skip_ws(ps);
         if (ps->p < ps->end && *ps->p == ',') {
             ps->p++;
