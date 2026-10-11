@@ -823,6 +823,19 @@ Provedores embutidos: `gemini-*` / `gemma-*` (`GEMINI_API_KEY`), `gpt-*` / `o1*`
 - **Servidores MCP:** um processo por comando do `calyx.toml`, iniciado na primeira chamada e mantido até o fim da execução. Várias chamadas ao mesmo servidor ficam em andamento ao mesmo tempo, como o protocolo permite: cada pedido tem seu id, e uma thread entrega cada resposta a quem a pediu. Só a escrita de cada pedido no stdin do servidor é uma de cada vez. (Antes, as chamadas a um servidor iam em série: duas escritas independentes levavam o dobro, E5.)
 - **Saída de tools:** com `-> Text`, o texto do servidor, cortado em `max_output` (D16). Com outro tipo (um record, uma lista, um número...), o runtime lê a resposta inteira (o `structuredContent`, ou o texto como JSON), **guarda só os campos que o tipo declara**, em todos os níveis, confere o resultado contra o tipo (um campo declarado que falta é a falha `Decode`), e só então aplica `max_output` ao que sobrou (4 bytes de JSON por token): tira os últimos itens das listas mais longas e, se ainda for preciso, corta a segunda metade dos textos mais longos, sem nunca deixar um JSON pela metade. É esse valor que o diário guarda e que um agente vê como observação. No exemplo `examples/github/repo_agent.clyx`, as respostas do servidor do GitHub (16 mil caracteres só para uma versão, quase tudo metadado) caem para os campos que o agente usa, e a entrada do modelo, de 9.241 para 946 tokens. Uma tool que retorna `Unit` não é conferida.
 - **Programas como servidores MCP (`calyx serve`).** `calyx serve <arquivo.clyx>` serve o programa por MCP (stdio), no diretório do programa: cada `graph` é uma tool, com o esquema dos parâmetros. As anotações saem do programa: `readOnlyHint: true` se nenhum passo do grafo escreve (efeitos `pure`, `llm`, `read`); senão `idempotencyKeyHint: true` (a anotação proposta em [`docs/mcp/`](../mcp/idempotency-key-hint.md)). Uma chamada com chave (`idempotencyKey`, ou `calyx/idempotency_key` no `_meta`) fica presa a uma execução, gravada em `.calyx/serve/keys.json` antes de a execução passar do primeiro passo: a mesma chave com os mesmos argumentos devolve a resposta gravada (`_meta` `calyx/replayed`), ou retoma a execução se ela não terminou (queda, falha); com outros argumentos, erro `IdempotencyConflict`. Sem chave, cada chamada é uma execução nova. Uma execução que espera (`receive`) responde com o texto da espera, sem erro.
+- **Por HTTP, com quem pode chamar o quê (`calyx serve <arquivo> --http 127.0.0.1:8080`).** O mesmo servidor, no transporte Streamable HTTP (`POST /mcp`, respostas em JSON, sessão dada no `initialize`), para os chamadores declarados no `calyx.toml`:
+
+  ```toml
+  [serve.callers.suporte]
+  token_env = "CALYX_TOKEN_SUPORTE"   # Authorization: Bearer <token>, de 16 caracteres ou mais
+  graphs = ["consulta", "pagar"]      # ou ["*"]
+
+  [serve.callers.painel]
+  token_env = "CALYX_TOKEN_PAINEL"
+  graphs = ["consulta"]
+  ```
+
+  Sem `[serve.callers]`, ou com um token que falta no ambiente, o servidor não sobe. Um pedido sem token conhecido recebe 401; o `tools/list` mostra a cada chamador só os seus grafos, e a chamada de outro é recusada (`Forbidden`), sem rodar nada. As chaves de idempotência são por chamador: um não pega a resposta de outro mandando a mesma chave. Uma sessão é de quem a abriu. Um pedido com cabeçalho `Origin` fora de `[serve] allowed_origins` recebe 403, para que uma página aberta no navegador de alguém não possa usar o servidor. Cada chamada fica no stderr (`calyx serve: suporte calls pagar`). Não há TLS: o padrão é ouvir em `127.0.0.1`; para outras máquinas, um proxy com TLS na frente. Conferido com o cliente do SDK oficial do MCP em Python (1.30) e com o próprio cliente da Calyx (`url` no `calyx.toml`).
 - **Falha:** se um passo falha depois das tentativas, a execução para com o grafo, o passo e o motivo, a menos que um `try` a capture (D11).
 
 ### 11.3 Observabilidade (OpenTelemetry)

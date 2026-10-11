@@ -50,13 +50,17 @@ commands:
       --budget replaces the program's budget (in USD).
       Independent calls run in parallel, up to the graph's `limits threads`
       (8 by default).
-  serve <file.clyx> [--fake-models] [--config FILE]
+  serve <file.clyx> [--http ADDR] [--fake-models] [--config FILE]
       Serve the program over MCP (stdio): each graph is a tool, for any MCP
       client (Claude Desktop, an IDE, another agent). A graph that writes is
       annotated `idempotencyKeyHint`, and keeps it: a call with an
       idempotency key (`idempotencyKey`, or `calyx/idempotency_key` in
       `_meta`) is tied to one run; the same key returns its answer, or
       resumes it if it did not finish, instead of running it again.
+      --http ADDR serves it over HTTP (Streamable HTTP, at /mcp) to the
+      callers in calyx.toml (`[serve.callers.NAME]`, with `token_env` and
+      `graphs`): each sees and calls only its graphs, with its own keys.
+      No TLS: use 127.0.0.1 and a proxy with TLS for other machines.
   worker [--fake-models] [--quiet] [--config FILE] [--every SECONDS] [--once]
       With the journal in PostgreSQL (CALYX_DATABASE_URL), several machines
       share the runs: any of them lists, resumes or replays any run, and a

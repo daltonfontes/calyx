@@ -146,6 +146,15 @@ run's answer, or resumes it if it died, and never runs it twice.
     "command": "calyx", "args": ["serve", "/path/to/refund.clyx"] } } }
 ```
 
+Over HTTP, `calyx serve refund.clyx --http 127.0.0.1:8080` serves only the
+callers calyx.toml names, each with its token and the graphs it may call:
+
+```toml
+[serve.callers.support]
+token_env = "CALYX_TOKEN_SUPPORT"
+graphs = ["handle_refund"]
+```
+
 ## Calyx calls LOCAL and REMOTE tools
 
 Each tool is an MCP server: a command (stdio) or a URL (Streamable HTTP,
