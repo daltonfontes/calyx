@@ -312,6 +312,38 @@ pub unsafe extern "C" fn calyx_io_tool_call(req: *const c_char) -> *mut c_char {
     unsafe { handle(req, tool_call) }
 }
 
+/// Whether run `run` may take a delivery (a line of its inbox, JSON):
+/// `{"ok": sender}` (`null` if unsigned) or `{"error": why}`, checked
+/// against `[senders]` and `[messages]` (see `senders`). Release with
+/// `calyx_string_free`.
+///
+/// # Safety
+/// `run` and `line` must be NUL-terminated strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn calyx_delivery_check(
+    run: *const c_char,
+    line: *const c_char,
+) -> *mut c_char {
+    if run.is_null() || line.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: the caller passes NUL-terminated strings.
+    let (run, line) = unsafe {
+        (
+            CStr::from_ptr(run).to_string_lossy().into_owned(),
+            CStr::from_ptr(line).to_string_lossy().into_owned(),
+        )
+    };
+    let out = match serde_json::from_str::<Value>(&line) {
+        Ok(v) => match with_state(|st| crate::senders::check(&st.config.senders, &run, &v)) {
+            Ok(sender) => json!({ "ok": sender }),
+            Err(why) => json!({ "error": why }),
+        },
+        Err(e) => json!({ "error": format!("the delivery is not JSON: {e}") }),
+    };
+    CString::new(out.to_string()).map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

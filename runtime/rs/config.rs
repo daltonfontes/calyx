@@ -137,6 +137,8 @@ pub struct Config {
     pub path: Option<PathBuf>,
     /// `[telemetry]`: where traces and metrics go (see `telemetry`).
     pub telemetry: crate::telemetry::TelemetryConfig,
+    /// `[senders]` and `[messages]`: who may deliver which message.
+    pub senders: crate::senders::Senders,
 }
 
 /// Providers known without configuration. A `calyx.toml` entry with the
@@ -349,7 +351,30 @@ impl Config {
                         file: text("file")?.map(|f| dir.join(f)),
                     };
                 }
+                "senders" => {
+                    for (name, v) in section(value, "senders")? {
+                        let text = v
+                            .as_str()
+                            .ok_or(format!("senders.{name} must be `\"ed25519:<hex>\"`"))?;
+                        let key = crate::senders::parse_public(text)
+                            .map_err(|e| format!("senders.{name}: {e}"))?;
+                        cfg.senders.keys.insert(name.clone(), key);
+                    }
+                }
+                "messages" => {
+                    for (message, v) in section(value, "messages")? {
+                        let names = strings(v, "senders", &format!("messages.{message}"))?;
+                        cfg.senders.allowed.insert(message.clone(), names);
+                    }
+                }
                 other => return Err(format!("unknown section `{other}`")),
+            }
+        }
+        for (message, names) in &cfg.senders.allowed {
+            if let Some(n) = names.iter().find(|n| !cfg.senders.keys.contains_key(*n)) {
+                return Err(format!(
+                    "messages.{message}: `{n}` is not in [senders] (add its public key from `calyx keys new {n}`)"
+                ));
             }
         }
         Ok(cfg)
