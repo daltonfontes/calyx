@@ -323,13 +323,35 @@ static cx_value *at(const cx_value *list, size_t i) {
     return list->u.list.items[i];
 }
 
+/* The text at `i` of a list, or "" when there is none (the IR and the
+ * journal are read without trusting their shape). */
+static const char *str_at(const cx_value *list, size_t i);
+
 static size_t len_of(const cx_value *list) {
     return list && list->kind == CX_LIST ? list->u.list.len : 0;
 }
 
+/* A number used as an index (from the IR, or from an answer), or
+ * (size_t)-1 when it is not one: absent, not a number, negative, not
+ * whole-sized or too large. Casting such a double is undefined behavior. */
+static size_t as_index(const cx_value *v) {
+    if (!v || v->kind != CX_NUM) return (size_t)-1;
+    double d = v->u.num;
+    return d >= 0 && d < 9e15 ? (size_t)d : (size_t)-1;
+}
+
+static const char *str_at(const cx_value *list, size_t i) {
+    cx_value *v = at(list, i);
+    return v && v->kind == CX_STR ? v->u.str.s : "";
+}
+
 static size_t index_of(const cx_value *e, const char *key) {
-    double d = cx_get_num(e, key, -1);
-    return d < 0 ? (size_t)-1 : (size_t)d;
+    return as_index(cx_get(e, key));
+}
+
+/* A count reported by a provider (tokens): 0 if it is not a sensible one. */
+static unsigned long long as_count(double d) {
+    return d > 0 && d < 1e15 ? (unsigned long long)d : 0;
 }
 
 static char *fmt(cx_arena *a, const char *f, ...) {
@@ -716,7 +738,7 @@ static void start_graph(exec *x, worker *w, cx_arena *a, cx_value *graph, cx_val
         cx_value *inputs = cx_get(at(g->nodes_ir, i), "inputs");
         g->missing[i] = (int)len_of(inputs);
         for (size_t k = 0; k < len_of(inputs); k++) {
-            size_t j = (size_t)at(inputs, k)->u.num;
+            size_t j = as_index(at(inputs, k));
             if (j < g->n) g->nusers[j]++;
         }
     }
@@ -727,7 +749,7 @@ static void start_graph(exec *x, worker *w, cx_arena *a, cx_value *graph, cx_val
     for (size_t i = 0; i < g->n; i++) {
         cx_value *inputs = cx_get(at(g->nodes_ir, i), "inputs");
         for (size_t k = 0; k < len_of(inputs); k++) {
-            size_t j = (size_t)at(inputs, k)->u.num;
+            size_t j = as_index(at(inputs, k));
             if (j < g->n) g->users[j][g->nusers[j]++] = i;
         }
     }
@@ -748,7 +770,7 @@ static int is_temporary(const char *kind) {
 
 static int listed(const cx_value *list, const char *kind) {
     for (size_t i = 0; i < len_of(list); i++)
-        if (at(list, i)->kind == CX_STR && strcmp(at(list, i)->u.str.s, kind) == 0) return 1;
+        if (at(list, i)->kind == CX_STR && strcmp(str_at(list, i), kind) == 0) return 1;
     return 0;
 }
 
@@ -832,7 +854,7 @@ static int conforms(const cx_value *v, const cx_value *schema, const char **why)
     if (v->kind == CX_REC) {
         cx_value *required = cx_get(schema, "required");
         for (size_t i = 0; i < len_of(required); i++) {
-            cx_value *f = cx_get(v, at(required, i)->u.str.s);
+            cx_value *f = cx_get(v, str_at(required, i));
             if (!f || f->kind == CX_NULL) {
                 *why = "a required field is missing from the answer";
                 return 0;
@@ -989,14 +1011,14 @@ static cx_value *decode_tool(cx_arena *a, cx_value *tool, cx_value *ok, cx_value
     const char *why = NULL;
     if (!conforms(v, schema, &why)) return NULL;
     int cut = cx_get_bool(ok, "truncated", 0);
-    cx_value *max = cx_get(tool, "max_output");
-    if (max && max->kind == CX_NUM && json_size(v) > (size_t)max->u.num * 4) {
+    size_t max = as_index(cx_get(tool, "max_output"));
+    if (max != (size_t)-1 && json_size(v) > max * 4) {
         /* A copy of its own to cut. */
         cx_buf b = {0};
         cx_write(&b, v);
         v = cx_parse(a, b.data, b.len, NULL);
         cx_buf_free(&b);
-        cut |= shrink(a, &v, (size_t)max->u.num * 4);
+        cut |= shrink(a, &v, max * 4);
     }
     if (record) {
         const char *keys[4] = {"json", "text", "truncated", "ms"};
@@ -1020,8 +1042,8 @@ static void put_max_output(cx_buf *b, cx_value *tool) {
 
 /* Tokens and cost of an answer, for the totals and the budget. With `mu` held. */
 static void account(exec *x, const char *model_id, cx_value *ok) {
-    x->input_tokens += (unsigned long long)cx_get_num(ok, "input_tokens", 0);
-    x->output_tokens += (unsigned long long)cx_get_num(ok, "output_tokens", 0);
+    x->input_tokens += as_count(cx_get_num(ok, "input_tokens", 0));
+    x->output_tokens += as_count(cx_get_num(ok, "output_tokens", 0));
     cx_value *cost = cx_get(ok, "cost_usd");
     if (cost && cost->kind == CX_NUM) {
         x->spent += cost->u.num;
@@ -1098,7 +1120,7 @@ static int verify_happened(exec *x, cx_arena *a, job *j, cx_value *policy, cx_va
     cx_buf_json_str(&b, vname, strlen(vname));
     cx_buf_puts(&b, ",\"args\":{");
     for (size_t i = 0; i < len_of(vargs); i++) {
-        cx_value *pname = at(wparams, (size_t)at(vargs, i)->u.num);
+        cx_value *pname = at(wparams, as_index(at(vargs, i)));
         const char *from = pname ? pname->u.str.s : "";
         if (i) cx_buf_putc(&b, ',');
         cx_write(&b, at(vparams, i));
@@ -1151,8 +1173,8 @@ enum { R_DONE, R_REDO, R_FAIL, R_STOP };
  * many are left; 0 means all were applied.
  */
 static size_t batch_remaining(cx_arena *a, job *j, cx_value *applied) {
-    size_t idx = (size_t)cx_get_num(j->spec, "batch", 0);
-    const char *pname = at(cx_get(j->spec, "params"), idx)->u.str.s;
+    size_t idx = index_of(j->spec, "batch");
+    const char *pname = str_at(cx_get(j->spec, "params"), idx);
     cx_value *req = cx_parse(a, j->req, strlen(j->req), NULL);
     cx_value *args = cx_get(req, "args");
     cx_value *items = cx_get(args, pname);
@@ -1241,7 +1263,7 @@ static int resolve_uncertain(exec *x, cx_arena *a, job *j, const char *cause, cx
         cx_value *bp = cx_get(j->spec, "batch");
         if (happened >= 0 && bp && bp->kind == CX_NUM) {
             size_t total = len_of(cx_get(cx_get(cx_parse(a, j->req, strlen(j->req), NULL), "args"),
-                                         at(cx_get(j->spec, "params"), (size_t)bp->u.num)->u.str.s));
+                                         str_at(cx_get(j->spec, "params"), as_index(bp))));
             size_t left = batch_remaining(a, j, *found);
             *found = NULL;
             if (left == 0) {
@@ -1335,7 +1357,7 @@ static void owe(exec *x, cx_arena *a, job *j) {
     cx_buf b = {0};
     cx_buf_printf(&b, "{\"tool\":%.0f,\"args\":[", cx_get_num(comp, "tool", 0));
     for (size_t i = 0; i < len_of(which); i++) {
-        size_t k = (size_t)at(which, i)->u.num;
+        size_t k = as_index(at(which, i));
         cx_value *pn = at(params, k);
         cx_value *v = pn && args ? cx_get(args, pn->u.str.s) : NULL;
         if (i) cx_buf_putc(&b, ',');
@@ -1791,10 +1813,10 @@ static cx_buf prompt_text(cx_value *prompt, cx_value **args, size_t n) {
         }
         cx_value *path = cx_get(part, "path");
         cx_value *v = NULL;
-        const char *root = at(path, 0) ? at(path, 0)->u.str.s : "";
+        const char *root = at(path, 0) ? str_at(path, 0) : "";
         for (size_t p = 0; p < len_of(params); p++)
-            if (strcmp(at(params, p)->u.str.s, root) == 0 && p < n) v = args[p];
-        for (size_t k = 1; v && k < len_of(path); k++) v = cx_get(v, at(path, k)->u.str.s);
+            if (strcmp(str_at(params, p), root) == 0 && p < n) v = args[p];
+        for (size_t k = 1; v && k < len_of(path); k++) v = cx_get(v, str_at(path, k));
         render(&text, v);
     }
     return text;
@@ -1906,7 +1928,7 @@ static int found_at(const cx_value *v, const cx_value *path, size_t i, const cx_
     }
     if (i == len_of(path)) return cx_equal(v, want);
     if (v->kind != CX_REC) return 0;
-    return found_at(cx_get(v, at(path, i)->u.str.s), path, i + 1, want);
+    return found_at(cx_get(v, str_at(path, i)), path, i + 1, want);
 }
 
 /* A condition of a policy with the arguments in local slots: 1 if it
@@ -1953,7 +1975,7 @@ static const char *policy_denies(ctx *c, cx_value *tool, cx_value **vals, size_t
     for (size_t i = 0; i < np; i++)
         if (!locals[i])
             return fmt(a, "refused by the policy of `%s`: no value for `%s`", name,
-                       at(params, i)->u.str.s);
+                       str_at(params, i));
     cx_value *rules = cx_get(policy, "rules");
     for (size_t r = 0; r < len_of(rules); r++) {
         cx_value *rule = at(rules, r);
@@ -2038,8 +2060,8 @@ static cx_value *tool_request(ctx *c, cx_value *tool, cx_value **args, size_t n,
     cx_buf_printf(&req, ",\"timeout_ms\":%.0f", cx_get_num(tool, "timeout_ms", 30000));
     /* The idempotency key: the value of the parameter the tool names. */
     cx_value *kp = cx_get(tool, "idempotency_key");
-    if (kp && kp->kind == CX_NUM && (size_t)kp->u.num < n) {
-        cx_value *kv = args[(size_t)kp->u.num];
+    if (as_index(kp) < n) {
+        cx_value *kv = args[as_index(kp)];
         cx_buf_puts(&req, ",\"idempotency_key\":");
         if (kv->kind == CX_STR) {
             cx_buf_json_str(&req, kv->u.str.s, kv->u.str.len);
@@ -2081,12 +2103,12 @@ static cx_value *call_graph(ctx *c, cx_value *e) {
     /* `decreases p` (D17): the compiler makes each call to itself pass a
      * smaller `p`; one that went below 0 missed its base case. */
     cx_value *dec = cx_get(g, "decreases");
-    if (dec && dec->kind == CX_NUM && (size_t)dec->u.num < n) {
-        cx_value *v = args[(size_t)dec->u.num];
+    if (as_index(dec) < n) {
+        cx_value *v = args[as_index(dec)];
         if (v && v->kind == CX_NUM && v->u.num < 0)
             return failf(c, "`%s` called with `%s` = %g: below 0, the recursion missed its base case",
                          cx_get_str(g, "name", "?"),
-                         at(cx_get(g, "params"), (size_t)dec->u.num)->u.str.s, v->u.num);
+                         str_at(cx_get(g, "params"), as_index(dec)), v->u.num);
     }
     const char *key = call_key(c, e);
     cx_value *result = PENDING;
@@ -2270,7 +2292,7 @@ static cx_value *call_route(ctx *c, cx_value *e) {
     cx_buf text = prompt_text(prompt, args, n);
     const char *outer_failure = c->failure;
     for (size_t i = 0; i < len_of(models); i++) {
-        cx_value *model = at(x->models, (size_t)at(models, i)->u.num);
+        cx_value *model = at(x->models, as_index(at(models, i)));
         if (!model) {
             cx_buf_free(&text);
             return fatalf(c, "invalid IR: unknown model in router `%s`", rname);
@@ -2446,9 +2468,7 @@ static cx_value *pick_case(ctx *c, cx_value *e, cx_value *v) {
         for (size_t k = 0; k < len_of(binds); k++) {
             cx_value *b = at(binds, k);
             cx_value *fname = at(b, 0), *fslot = at(b, 1);
-            cx_value **slot = fslot && fslot->kind == CX_NUM && fslot->u.num >= 0
-                                  ? slot_of(c, (size_t)fslot->u.num)
-                                  : NULL;
+            cx_value **slot = slot_of(c, as_index(fslot));
             if (!slot || !fname || fname->kind != CX_STR) {
                 fatalf(c, "invalid IR: a `case` binding");
                 return NULL;
@@ -2504,7 +2524,7 @@ static cx_value *eval_loop(ctx *c, cx_value *e) {
     double max = cx_get_num(e, "max", 1);
     const char *outer = c->scope;
     c->locals[slot] = v;
-    for (long turn = 0; turn < (long)max; turn++) {
+    for (long turn = 0; turn < max; turn++) {
         c->scope = fmt(&c->w->arena, "%s#%zu.%ld", outer, id, turn);
         int sig = TAIL_NONE;
         cx_value *r = eval_tail(c, cx_get(e, "body"), &sig);
@@ -2685,7 +2705,7 @@ static char *entity_step(emsg *m, const char *text, size_t len) {
         snprintf(id, sizeof id, "%s %s", x->run_id, j->key);
         int seen = 0;
         for (size_t i = 0; i < len_of(applied) && !seen; i++)
-            seen = at(applied, i)->kind == CX_STR && strcmp(at(applied, i)->u.str.s, id) == 0;
+            seen = at(applied, i)->kind == CX_STR && strcmp(str_at(applied, i), id) == 0;
         if (seen) {
             trace(x, j->label, "send  %s(%s).%s  already applied", ename, m->kjson, hname);
             m->result = cx_null(m->a);
@@ -3140,7 +3160,7 @@ static void owed_from_journal(void *ud, const char *key, cx_value *ok) {
 static int won_by(const cx_value *winners, const char *name) {
     if (winners && winners->kind == CX_STR) return strcmp(winners->u.str.s, name) == 0;
     for (size_t i = 0; i < len_of(winners); i++)
-        if (at(winners, i)->kind == CX_STR && strcmp(at(winners, i)->u.str.s, name) == 0) return 1;
+        if (at(winners, i)->kind == CX_STR && strcmp(str_at(winners, i), name) == 0) return 1;
     return 0;
 }
 
@@ -3148,7 +3168,7 @@ static cx_value *compensate_losers(ctx *c, const char *key, cx_value *names, cx_
     exec *x = c->x;
     int waiting = 0;
     for (size_t i = 0; i < len_of(names); i++) {
-        const char *name = at(names, i)->u.str.s;
+        const char *name = str_at(names, i);
         if (won_by(winners, name)) continue;
         owed o = {.prefix = fmt(&c->w->arena, "%s.%s", key, name), .a = &c->w->arena};
         pthread_mutex_lock(&x->mu);
@@ -3171,7 +3191,7 @@ static cx_value *compensate_losers(ctx *c, const char *key, cx_value *names, cx_
                 continue;
             }
             cx_value *ob = cx_parse(&c->w->arena, o.jsons[k], strlen(o.jsons[k]), NULL);
-            cx_value *tool = ob ? at(x->tools, (size_t)cx_get_num(ob, "tool", -1)) : NULL;
+            cx_value *tool = ob ? at(x->tools, index_of(ob, "tool")) : NULL;
             if (!tool) return fatalf(c, "invalid compensation for `%s`", o.keys[k]);
             cx_value *list = cx_get(ob, "args");
             size_t n = len_of(list);
@@ -3237,7 +3257,7 @@ static const char *race_names(ctx *c, cx_value *winners) {
     if (winners && winners->kind == CX_STR) return fmt(&c->w->arena, "`%s`", winners->u.str.s);
     cx_buf b = {0};
     for (size_t i = 0; i < len_of(winners); i++)
-        cx_buf_printf(&b, "%s`%s`", i ? ", " : "", at(winners, i)->u.str.s);
+        cx_buf_printf(&b, "%s`%s`", i ? ", " : "", str_at(winners, i));
     const char *s = fmt(&c->w->arena, "%s", b.data ? b.data : "");
     cx_buf_free(&b);
     return s;
@@ -3305,13 +3325,14 @@ static cx_value *eval_race(ctx *c, cx_value *e) {
     /* `race first N`: N winners, their values as a list (a quorum). */
     cx_value *count = cx_get(e, "count");
     int many = count && count->kind == CX_NUM;
-    size_t want = many ? (size_t)count->u.num : 1;
+    size_t want = many ? as_index(count) : 1;
+    if (want == (size_t)-1) return fatalf(c, "invalid IR: the count of `race first N`");
     int open = 0;
     size_t nwon = 0;
     size_t *wins = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *wins);
     cx_value **won = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *won);
     for (size_t i = 0; i < n && nwon < want; i++) {
-        const char *name = at(names, i)->u.str.s;
+        const char *name = str_at(names, i);
         c->scope = fmt(&c->w->arena, "%s.%s", key, name);
         c->label = fmt(&c->w->arena, "%s.%s", outer_label, name);
         c->failure = NULL;
@@ -3357,8 +3378,8 @@ static cx_value *eval_race(ctx *c, cx_value *e) {
         new_pending(x, &c->w->arena, key, P_DONE, value);
         new_pending(x, &c->w->arena, wkey, P_DONE, winners);
         for (size_t i = 0; i < n; i++)
-            if (!won_by(winners, at(names, i)->u.str.s))
-                cancel_branch(x, fmt(&c->w->arena, "%s.%s", key, at(names, i)->u.str.s));
+            if (!won_by(winners, str_at(names, i)))
+                cancel_branch(x, fmt(&c->w->arena, "%s.%s", key, str_at(names, i)));
         pthread_mutex_unlock(&x->mu);
         trace(x, c->label, "race  won by %s", race_names(c, winners));
         cx_value *u = compensate_losers(c, key, names, winners);
@@ -3381,7 +3402,7 @@ static cx_value *eval_race(ctx *c, cx_value *e) {
 static void tool_defs(exec *x, cx_value *tools, cx_buf *b) {
     cx_buf_putc(b, '[');
     for (size_t i = 0; i < len_of(tools); i++) {
-        cx_value *t = at(x->tools, (size_t)at(tools, i)->u.num);
+        cx_value *t = at(x->tools, as_index(at(tools, i)));
         const char *name = cx_get_str(t, "name", "?");
         if (i) cx_buf_putc(b, ',');
         cx_buf_puts(b, "{\"type\":\"function\",\"function\":{\"name\":");
@@ -3510,7 +3531,7 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
     size_t nt = len_of(tools);
     cx_value ***bound = cx_alloc(a, (nt ? nt : 1) * sizeof *bound);
     for (size_t k = 0; k < nt; k++) {
-        cx_value *t = at(x->tools, (size_t)at(tools, k)->u.num);
+        cx_value *t = at(x->tools, as_index(at(tools, k)));
         size_t np = len_of(cx_get(t, "params"));
         bound[k] = cx_alloc(a, (np ? np : 1) * sizeof **bound);
         for (size_t p = 0; p < np; p++) bound[k][p] = NULL;
@@ -3552,7 +3573,7 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
     }
     pthread_mutex_unlock(&x->mu);
     for (long turn = first;; turn++) {
-        if (turn >= (long)max_turns) {
+        if (turn >= max_turns) {
             result = agent_limit(c, e, "on_turn_limit", model, prompt, base, &msgs,
                                  "You reached the limit of turns. Do not call tools anymore: "
                                  "give your final answer now, with what you know.");
@@ -3578,7 +3599,7 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
             const char *name = cx_get_str(call, "name", "?");
             int repeatable = 0;
             for (size_t k = 0; k < len_of(tools); k++) {
-                cx_value *t = at(x->tools, (size_t)at(tools, k)->u.num);
+                cx_value *t = at(x->tools, as_index(at(tools, k)));
                 if (strcmp(cx_get_str(t, "name", ""), name) == 0)
                     repeatable = cx_get_bool(t, "repeatable", 0);
             }
@@ -3606,7 +3627,7 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
             const char *name = cx_get_str(call, "name", "?");
             const char *ckey = fmt(a, "%s.t%ld.c%zu", base, turn, i);
             for (size_t k = 0; k < len_of(tools); k++) {
-                cx_value *t = at(x->tools, (size_t)at(tools, k)->u.num);
+                cx_value *t = at(x->tools, as_index(at(tools, k)));
                 if (strcmp(cx_get_str(t, "name", ""), name) != 0) continue;
                 pthread_mutex_lock(&x->mu);
                 int known = ptab_get(x, ckey) != NULL;
@@ -3619,7 +3640,7 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
                 for (size_t p = 0; p < np; p++)
                     vals[p] = bound[k][p] ? bound[k][p]
                               : arguments && arguments->kind == CX_REC
-                                  ? cx_get(arguments, at(tparams, p)->u.str.s)
+                                  ? cx_get(arguments, str_at(tparams, p))
                                   : NULL;
                 const char *denied = policy_denies(c, t, vals, np, 1, ckey);
                 if (denied) {
@@ -3640,7 +3661,7 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
             cx_value *tool = NULL;
             size_t tk = 0;
             for (size_t k = 0; k < len_of(tools); k++) {
-                cx_value *t = at(x->tools, (size_t)at(tools, k)->u.num);
+                cx_value *t = at(x->tools, as_index(at(tools, k)));
                 if (strcmp(cx_get_str(t, "name", ""), name) == 0) {
                     tool = t;
                     tk = k;
@@ -3665,7 +3686,7 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
                         const char *fname = arguments->u.rec.keys[f];
                         int lent = 0;
                         for (size_t p = 0; p < np; p++)
-                            if (bound[tk][p] && strcmp(at(tparams, p)->u.str.s, fname) == 0) lent = 1;
+                            if (bound[tk][p] && strcmp(str_at(tparams, p), fname) == 0) lent = 1;
                         if (lent) continue;
                         if (any) cx_buf_putc(&req, ',');
                         any = 1;
@@ -3776,7 +3797,7 @@ static cx_value *eval(ctx *c, cx_value *e) {
         cx_value **vs = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *vs);
         const char **ks = cx_alloc(&c->w->arena, (n ? n : 1) * sizeof *ks);
         EVAL_ALL(c, values, vs);
-        for (size_t i = 0; i < n; i++) ks[i] = at(names, i)->u.str.s;
+        for (size_t i = 0; i < n; i++) ks[i] = str_at(names, i);
         return cx_rec(&c->w->arena, ks, vs, n);
     }
     if (strcmp(k, "interp") == 0) {
@@ -4054,9 +4075,9 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
     size_t np = len_of(params);
     cx_value **vals = cx_alloc(&x->arena, (np ? np : 1) * sizeof *vals);
     for (size_t i = 0; i < np; i++) {
-        vals[i] = cx_get(args, at(params, i)->u.str.s);
+        vals[i] = cx_get(args, str_at(params, i));
         if (!vals[i]) {
-            cx_buf_printf(&msg, "missing argument `%s` for graph `%s`", at(params, i)->u.str.s,
+            cx_buf_printf(&msg, "missing argument `%s` for graph `%s`", str_at(params, i),
                           graph);
             out = error_json(msg.data);
             goto done;
