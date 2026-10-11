@@ -254,6 +254,11 @@ graph approve(request: Text) -> Text:
         case Denied(reason): "denied ({reason}): {proposal}"
 ```
 
+Who may approve is checked, not trusted: with `[messages.Approval] senders
+= ["ana"]` in calyx.toml, only a delivery signed with ana's key (`calyx keys
+new ana`, then `calyx deliver ... --as ana`) is taken. One written into the
+inbox by hand is not.
+
 ### Agents == bounded loops
 
 An agent is a step like any other, and every loop has a limit the compiler

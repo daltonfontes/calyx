@@ -2842,20 +2842,74 @@ static int append_line(exec *x, const char *file, const char *data, size_t len) 
 }
 
 /* Records the value a `receive` got (a message, or its timeout value). */
-static cx_value *received(ctx *c, const char *key, cx_value *v, int timed_out) {
+static cx_value *received(ctx *c, const char *key, cx_value *v, int timed_out,
+                          const char *sender) {
     exec *x = c->x;
-    const char *keys[2] = {"value", "timed_out"};
-    cx_value *vals[2] = {v, cx_bool(&c->w->arena, timed_out)};
+    const char *keys[3] = {"value", "timed_out", "sender"};
+    cx_value *vals[3] = {v, cx_bool(&c->w->arena, timed_out),
+                         sender ? cx_cstr(&c->w->arena, sender) : cx_null(&c->w->arena)};
     job j;
     memset(&j, 0, sizeof j);
     j.key = key;
     cx_sha256_hex(key, strlen(key), j.req_hash);
-    if (!journal_record(x, &j, "read", cx_rec(&c->w->arena, keys, vals, 2)))
+    if (!journal_record(x, &j, "read", cx_rec(&c->w->arena, keys, vals, sender ? 3 : 2)))
         return fatalf(c, "cannot write the journal");
     pthread_mutex_lock(&x->mu);
     new_pending(x, &c->w->arena, fmt(&c->w->arena, "%s", key), P_DONE, v);
     pthread_mutex_unlock(&x->mu);
     return v;
+}
+
+char *calyx_delivery_check(const char *run, const char *line);
+
+/*
+ * The message delivered to the receive `key` that the run may take: the
+ * first line of the inbox for it that came before the deadline (`until`;
+ * -1 for none yet) and that `[senders]`/`[messages]` allow (signed by an
+ * allowed sender when its type is limited). NULL if none; `*sender` is who
+ * signed it, if anyone.
+ */
+static cx_value *delivered(ctx *c, const char *key, const char *msg, double until,
+                           const char **sender) {
+    exec *x = c->x;
+    *sender = NULL;
+    size_t len = 0;
+    char *text = run_file(c, "inbox.jsonl", &len);
+    for (char *line = text; line && *line;) {
+        char *end = strchr(line, '\n');
+        size_t l = end ? (size_t)(end - line) : strlen(line);
+        cx_value *v = cx_parse(&c->w->arena, line, l, NULL);
+        char *next = end ? end + 1 : line + l;
+        if (!v || strcmp(cx_get_str(v, "key", ""), key) != 0) {
+            line = next;
+            continue;
+        }
+        /* What counts is when the message arrived, not when the run is
+         * resumed: one that came after the deadline is not taken (`calyx
+         * deliver` refuses it already; this covers an inbox written by
+         * hand or by an older version, which have no time and are taken). */
+        cx_value *at = cx_get(v, "at");
+        if (until >= 0 && at && at->kind == CX_NUM && at->u.num >= until) {
+            trace(x, c->label, "recv  %s  delivered after the deadline: not taken", msg);
+            line = next;
+            continue;
+        }
+        char *one = cx_strndup(&c->w->arena, line, l);
+        char *verdict = calyx_delivery_check(x->run_id, one);
+        cx_value *r = verdict ? cx_parse(&c->w->arena, verdict, strlen(verdict), NULL) : NULL;
+        if (verdict) calyx_string_free(verdict);
+        cx_value *err = cx_get(r, "error");
+        if (!r || err) {
+            const char *why = err && err->kind == CX_STR ? err->u.str.s : "cannot be checked";
+            trace(x, c->label, "recv  %s  delivery refused: %s", msg, why);
+            line = next;
+            continue;
+        }
+        cx_value *who = cx_get(r, "ok");
+        if (who && who->kind == CX_STR) *sender = who->u.str.s;
+        return cx_get(v, "value");
+    }
+    return NULL;
 }
 
 /*
@@ -2905,19 +2959,14 @@ static cx_value *call_receive(ctx *c, cx_value *e) {
 
     cx_value *u = keyed_line(c, "waits.jsonl", key, "until");
     double until = u && u->kind == CX_NUM ? u->u.num : -1;
-    cx_value *delivered = keyed_line(c, "inbox.jsonl", key, "value");
-    if (delivered) {
-        /* What counts is when the message arrived, not when the run is
-         * resumed: one that came after the deadline is not taken (`calyx
-         * deliver` refuses it already; this covers an inbox written by hand
-         * or by an older version, which have no time and are taken). */
-        cx_value *at = keyed_line(c, "inbox.jsonl", key, "at");
-        if (until >= 0 && at && at->kind == CX_NUM && at->u.num >= until) {
-            trace(x, c->label, "recv  %s  delivered after the deadline: not taken", msg);
-        } else {
+    const char *sender = NULL;
+    cx_value *got = delivered(c, key, msg, until, &sender);
+    if (got) {
+        if (sender)
+            trace(x, c->label, "recv  %s  delivered, signed by %s", msg, sender);
+        else
             trace(x, c->label, "recv  %s  delivered", msg);
-            return received(c, key, delivered, 0);
-        }
+        return received(c, key, got, 0, sender);
     }
     double t = (double)time(NULL);
     if (until < 0) {
@@ -2941,7 +2990,7 @@ static cx_value *call_receive(ctx *c, cx_value *e) {
         cx_value *v = eval(c, cx_get(e, "on_timeout"));
         if (!v || v == PENDING) return v;
         trace(x, c->label, "recv  %s  timed out", msg);
-        return received(c, key, v, 1);
+        return received(c, key, v, 1, NULL);
     }
     time_t ut = (time_t)until;
     struct tm tmv;

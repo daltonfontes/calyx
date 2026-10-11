@@ -513,6 +513,16 @@ approval = receive Approval, timeout 3 days:
 - `calyx deliver <id> Approval '<json>'` confere a mensagem contra o tipo e a entrega ao `receive` mais antigo que espera por ela (`inbox.jsonl`, com a hora da entrega). Só para execuções que estão esperando, e só **antes do prazo**: o prazo é a hora em que a resposta tinha de chegar, não a hora em que a execução é retomada. Uma resposta que chega depois é recusada mesmo que ninguém tenha retomado a execução ainda, e o runtime confere a hora de novo ao tomar a mensagem.
 - `calyx resume <id>` continua; `calyx tick` continua toda execução que recebeu mensagem ou cujo prazo venceu, e foi feito para rodar num agendador (cron): **não há servidor**. Vencido o prazo, o valor é o de `on timeout`.
 - O que o `receive` recebeu (ou o valor de `on timeout`) vai para o diário: a retomada e o `replay` não precisam da mensagem de novo. Precisa de diário (não roda com `--no-journal`).
+- **Quem pode entregar.** Um tipo de mensagem pode ser limitado a algumas pessoas, no `calyx.toml`:
+
+  ```toml
+  [senders]                       # a chave pública de cada um
+  ana = "ed25519:9f0c...e1"       # de `calyx keys new ana`
+  [messages.Approval]
+  senders = ["ana"]               # só ela entrega uma Approval
+  ```
+
+  `calyx keys new ana` faz o par de chaves (Ed25519): a privada fica em `~/.calyx/keys/` (ou `$CALYX_KEYS_DIR`), legível só pelo dono; a pública vai para `[senders]`. `calyx deliver <id> Approval Approved --as ana` assina a entrega; a assinatura cobre a execução, o `receive`, o tipo, o valor e a hora, então não serve para outra execução, outra espera nem outra resposta. O `deliver` recusa de saída uma entrega sem assinatura, de quem não está na lista ou com a chave de outra pessoa; e o runtime confere de novo ao tomar a mensagem: uma linha escrita à mão no `inbox.jsonl` (ou no banco) sem assinatura válida de quem pode não é tomada, e a execução continua esperando. Quem assinou vai para o diário com o valor. Tipos que não aparecem em `[messages]` aceitam qualquer entrega, como antes.
 
 **Como está implementado (M6c):** `ask` e `send`.
 

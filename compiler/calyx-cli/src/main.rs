@@ -81,10 +81,17 @@ commands:
       Run again using only the journal: no model or tool is called.
   runs
       List the runs in .calyx/runs.
-  deliver <run> <Message> <json>
+  deliver <run> <Message> <json> [--as NAME [--key FILE]] [--config FILE]
       Deliver a message to a run waiting on `receive Message`: checked
       against the message's type, then given to the oldest such receive.
       Continue the run with `calyx resume <run>` or `calyx tick`.
+      --as signs it with NAME's key (`calyx keys new`); a message type
+      limited in calyx.toml (`[messages.M] senders = [...]`) is only taken
+      signed by one of its senders.
+  keys new <name>
+      Make a key pair to sign deliveries: the private key goes to
+      ~/.calyx/keys/ (or $CALYX_KEYS_DIR); the public key, printed, goes
+      to `[senders]` in calyx.toml.
   tick [--fake-models] [--quiet] [--config FILE]
       Resume every waiting run that got a message or whose deadline passed.
       Meant for a scheduler such as cron: no server is needed.
@@ -121,6 +128,7 @@ fn main() -> ExitCode {
         Some("replay") => rerun(&args[1..], Mode::Replay),
         Some("runs") => list_runs(),
         Some("deliver") => deliver(&args[1..]),
+        Some("keys") => keys(&args[1..]),
         Some("tick") => tick(&args[1..]),
         Some("serve") => serve::serve(&args[1..]),
         Some("worker") => worker(&args[1..]),
@@ -674,8 +682,28 @@ fn rerun(args: &[String], mode: Mode) -> ExitCode {
 
 /// `calyx deliver <run> <Message> <json>`.
 fn deliver(args: &[String]) -> ExitCode {
-    let [id, message, raw] = args else {
-        return usage_error("deliver takes a run, a message type and the message as JSON");
+    let mut plain = Vec::new();
+    let (mut signer, mut key_file, mut config_file) = (None, None, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let slot = match a.as_str() {
+            "--as" => &mut signer,
+            "--key" => &mut key_file,
+            "--config" => &mut config_file,
+            _ => {
+                plain.push(a);
+                continue;
+            }
+        };
+        match it.next() {
+            Some(v) => *slot = Some(v.clone()),
+            None => return usage_error(&format!("{a} needs a value")),
+        }
+    }
+    let [id, message, raw] = plain[..] else {
+        return usage_error(
+            "deliver takes a run, a message type and the message as JSON (and --as NAME to sign it)",
+        );
     };
     let header = match runs::header(id) {
         Ok(h) => h,
@@ -684,10 +712,35 @@ fn deliver(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let program = match compile(&Origin::open(&header.program)) {
+    let origin = Origin::open(&header.program);
+    let program = match compile(&origin) {
         Ok(p) => p,
         Err(code) => return code,
     };
+    let config = match load_config(&origin, config_file.as_deref().map(Path::new)) {
+        Ok(c) => c,
+        Err(code) => return code,
+    };
+    if let (Some(names), Some(name)) = (config.senders.limited(message), &signer)
+        && !names.contains(name)
+    {
+        eprintln!(
+            "{}: `{name}` may not send `{message}` (its senders: {})",
+            command(),
+            names.join(", ")
+        );
+        return ExitCode::from(2);
+    }
+    if let Some(names) = config.senders.limited(message)
+        && signer.is_none()
+    {
+        eprintln!(
+            "{}: `{message}` must be signed by one of: {} (`--as NAME`)",
+            command(),
+            names.join(", ")
+        );
+        return ExitCode::from(2);
+    }
     let Some((_, schema)) = program.messages.iter().find(|(n, _)| n == message) else {
         let known: Vec<&str> = program.messages.iter().map(|(n, _)| n.as_str()).collect();
         return usage_error(&format!(
@@ -704,12 +757,40 @@ fn deliver(args: &[String]) -> ExitCode {
         eprintln!("{}: not a `{message}`: {e}", command());
         return ExitCode::from(2);
     }
-    match runs::deliver(id, message, &value) {
+    let signer = signer.as_deref().map(|name| runs::Signer {
+        name,
+        key_file: key_file.as_deref().map(Path::new),
+        senders: &config.senders,
+    });
+    match runs::deliver(id, message, &value, signer.as_ref()) {
         Ok(key) => {
             println!(
                 "delivered `{message}` to `{key}`; continue the run with `{} resume {id}` or `{} tick`",
                 command(),
                 command()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{}: {e}", command());
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// `calyx keys new <name>`: a key pair to sign deliveries with.
+fn keys(args: &[String]) -> ExitCode {
+    let [cmd, name] = args else {
+        return usage_error("keys takes `new <name>`");
+    };
+    if cmd != "new" {
+        return usage_error("keys takes `new <name>`");
+    }
+    match calyx_runtime::senders::new_key(name) {
+        Ok((path, public)) => {
+            println!(
+                "private key written to {} (readable only by you; keep it there)\n\nadd to calyx.toml:\n\n[senders]\n{name} = \"{public}\"",
+                path.display()
             );
             ExitCode::SUCCESS
         }

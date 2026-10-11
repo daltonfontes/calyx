@@ -260,7 +260,19 @@ pub fn waits(id: &str) -> Vec<Wait> {
 /// even if the run has not taken its `on timeout` yet: the deadline is when
 /// the answer had to arrive, not when the run happens to be resumed. The
 /// time of delivery goes with the message, and the runtime checks it too.
-pub fn deliver(id: &str, message: &str, value: &Value) -> Result<String, String> {
+/// Who signs a delivery (`calyx deliver --as NAME [--key FILE]`).
+pub struct Signer<'a> {
+    pub name: &'a str,
+    pub key_file: Option<&'a Path>,
+    pub senders: &'a calyx_runtime::senders::Senders,
+}
+
+pub fn deliver(
+    id: &str,
+    message: &str,
+    value: &Value,
+    signer: Option<&Signer>,
+) -> Result<String, String> {
     let Some(w) = waits(id)
         .into_iter()
         .find(|w| w.message == message && !w.delivered)
@@ -277,8 +289,14 @@ pub fn deliver(id: &str, message: &str, value: &Value) -> Result<String, String>
             utc(w.until)
         ));
     }
-    let line =
-        serde_json::json!({"key": w.key, "message": message, "value": value, "at": at}).to_string();
+    let mut line = serde_json::json!({"key": w.key, "message": message, "value": value, "at": at});
+    if let Some(s) = signer {
+        let payload = calyx_runtime::senders::payload(id, &w.key, message, value, at);
+        let sig = calyx_runtime::senders::sign(s.senders, s.name, s.key_file, &payload)?;
+        line["sender"] = Value::String(s.name.to_owned());
+        line["sig"] = Value::String(sig);
+    }
+    let line = line.to_string();
     if calyx_runtime::pg::enabled() {
         // Two machines delivering to the same `receive` at once: one wins.
         return match calyx_runtime::pg::deliver_once(id, &w.key, &line) {

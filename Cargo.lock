@@ -99,6 +99,7 @@ dependencies = [
  "calyx-check",
  "cc",
  "postgres",
+ "ring",
  "rustls",
  "rustls-platform-verifier",
  "serde_json",

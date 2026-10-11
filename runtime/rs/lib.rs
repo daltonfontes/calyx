@@ -13,6 +13,7 @@ mod llm;
 mod mcp;
 pub mod pg;
 pub mod sandbox;
+pub mod senders;
 pub mod telemetry;
 pub mod verify;
 
