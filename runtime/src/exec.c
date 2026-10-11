@@ -4121,18 +4121,24 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
         cx_journal_mode mode = strcmp(mode_s, "resume") == 0   ? CX_JOURNAL_RESUME
                                : strcmp(mode_s, "replay") == 0 ? CX_JOURNAL_REPLAY
                                                                : CX_JOURNAL_NEW;
-        char ir_hash[65];
-        cx_sha256_hex(ir_json, strlen(ir_json), ir_hash);
+        /* The hash without the IR's null fields (from the I/O layer), so a
+         * newer Calyx that only added fields resumes the run; the hash of
+         * the whole text is what versions up to 0.3.6 recorded. */
+        char raw_hash[65];
+        cx_sha256_hex(ir_json, strlen(ir_json), raw_hash);
+        const char *ir_hash = cx_get_str(options, "program_hash", raw_hash);
         cx_buf header = {0};
-        cx_buf_printf(&header, "{\"type\":\"run\",\"version\":%d,\"ir_hash\":\"%s\",\"graph\":",
-                      CX_JOURNAL_VERSION, ir_hash);
+        cx_buf_printf(&header,
+                      "{\"type\":\"run\",\"version\":%d,\"calyx\":\"%s\",\"ir_hash\":\"%s\","
+                      "\"graph\":",
+                      CX_JOURNAL_VERSION, calyx_runtime_version(), ir_hash);
         cx_buf_json_str(&header, graph, strlen(graph));
         cx_buf_puts(&header, ",\"args\":");
         cx_write(&header, args);
         cx_buf_puts(&header, ",\"program\":");
         cx_write(&header, cx_get(options, "program"));
         cx_buf_printf(&header, ",\"started\":%lld}", (long long)time(NULL));
-        x->journal = cx_journal_open(&x->arena, dir, mode, ir_hash, header.data, &msg);
+        x->journal = cx_journal_open(&x->arena, dir, mode, ir_hash, raw_hash, header.data, &msg);
         cx_buf_free(&header);
         if (!x->journal) {
             out = error_json(msg.data ? msg.data : "cannot open the journal");

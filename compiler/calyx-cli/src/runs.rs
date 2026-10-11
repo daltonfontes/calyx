@@ -68,8 +68,38 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
+/// Where the binary of another version of Calyx is kept, if it is: a run
+/// finishes on the version that started it (D23). Looked for in
+/// $CALYX_VERSIONS_DIR, next to this binary's installation
+/// (`<install>/bin/calyx` and `<install>/versions/`, as install.sh lays
+/// them out) and in ~/.calyx/versions.
+pub fn version_binary(version: &str) -> Option<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(d) = std::env::var_os("CALYX_VERSIONS_DIR") {
+        dirs.push(PathBuf::from(d));
+    }
+    if let Some(install) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.canonicalize().ok())
+        .and_then(|e| e.parent()?.parent().map(Path::to_path_buf))
+    {
+        dirs.push(install.join("versions"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(PathBuf::from(home).join(".calyx").join("versions"));
+    }
+    let me = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.canonicalize().ok());
+    dirs.into_iter()
+        .map(|d| d.join(version).join("calyx"))
+        .find(|b| b.is_file() && b.canonicalize().ok() != me)
+}
+
 /// What the first line of a journal says about its run.
 pub struct Header {
+    /// The version of Calyx that started the run (none before 0.3.7).
+    pub calyx: Option<String>,
     pub program: PathBuf,
     pub graph: String,
     pub args: Value,
@@ -108,6 +138,7 @@ pub fn header(id: &str) -> Result<Header, String> {
         .filter(|h| h["type"] == "run")
         .ok_or_else(|| format!("run `{id}` has no valid journal"))?;
     Ok(Header {
+        calyx: h["calyx"].as_str().map(str::to_owned),
         program: PathBuf::from(h["program"].as_str().unwrap_or_default()),
         graph: h["graph"].as_str().unwrap_or_default().to_owned(),
         args: h["args"].clone(),
@@ -120,6 +151,8 @@ pub struct Summary {
     pub status: String,
     pub calls: usize,
     pub resumes: usize,
+    /// The version of Calyx that started it (none before 0.3.7).
+    pub calyx: Option<String>,
 }
 
 /// All runs, oldest first. Fails only when the journal database does.
@@ -162,6 +195,10 @@ pub fn list() -> Result<Vec<Summary>, String> {
                 status,
                 calls: count("call"),
                 resumes: count("resume"),
+                calyx: lines
+                    .first()
+                    .and_then(|h| h["calyx"].as_str())
+                    .map(str::to_owned),
             }
         })
         .collect())
@@ -189,6 +226,7 @@ fn list_pg() -> Result<Vec<Summary>, String> {
                 status,
                 calls: usize::try_from(r.calls).unwrap_or(0),
                 resumes: usize::try_from(r.resumes).unwrap_or(0),
+                calyx: header["calyx"].as_str().map(str::to_owned),
             }
         })
         .collect())

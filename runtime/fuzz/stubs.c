@@ -41,6 +41,7 @@ char *calyx_io_tool_call(const char *req) {
 }
 
 void calyx_string_free(char *s) { free(s); }
+const char *calyx_runtime_version(void) { return "fuzz"; }
 
 int calyx_pg_enabled(void) { return 0; }
 int calyx_pg_create(const char *run) {

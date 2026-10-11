@@ -81,6 +81,10 @@ commands:
       it, each tool's `on_uncertain` decides. For a tool that returns
       something, `done=ANSWER` gives its answer (what you found it made):
       JSON, or else taken as text, e.g. `done=post-123`.
+      A run started by another version of Calyx goes to that version's
+      binary when it is kept (~/.calyx/versions/<version>/calyx, as
+      install.sh leaves it; or $CALYX_VERSIONS_DIR); without it, this
+      version resumes it only if it compiles the program the same way.
   replay <run> [--quiet]
       Run again using only the journal: no model or tool is called.
   runs
@@ -654,8 +658,38 @@ fn rerun(args: &[String], mode: Mode) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    // The run finishes on the program it started with (D23): the runtime
-    // compares the hash of the compiled program with the journal's.
+    // The run finishes on the version and the program it started with
+    // (D23). A run another version started goes to that version's binary,
+    // when it is kept (`~/.calyx/versions/<version>/calyx`); without it,
+    // this version takes it if it compiles the program to the same thing
+    // (the runtime compares the program's hash with the journal's).
+    if let Some(v) = header.calyx.as_deref()
+        && v != env!("CARGO_PKG_VERSION")
+        && bundle::current().is_none()
+        && let Some(bin) = runs::version_binary(v)
+    {
+        eprintln!(
+            "{}: run {id} was started by Calyx {v}: resuming it with {}",
+            command(),
+            bin.display()
+        );
+        let verb = if mode == Mode::Replay {
+            "replay"
+        } else {
+            "resume"
+        };
+        return match std::process::Command::new(&bin)
+            .arg(verb)
+            .args(args)
+            .status()
+        {
+            Ok(s) => ExitCode::from(s.code().and_then(|c| u8::try_from(c).ok()).unwrap_or(3)),
+            Err(e) => {
+                eprintln!("{}: cannot start {}: {e}", command(), bin.display());
+                ExitCode::from(2)
+            }
+        };
+    }
     let origin = Origin::open(&header.program);
     let program = match compile(&origin) {
         Ok(p) => p,
@@ -1039,13 +1073,18 @@ fn list_runs() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     println!(
-        "{:<22} {:<16} {:<12} {:>6}  resumed",
-        "run", "graph", "status", "calls"
+        "{:<22} {:<16} {:<12} {:>6}  {:<7}  calyx",
+        "run", "graph", "status", "calls", "resumed"
     );
     for r in all {
         println!(
-            "{:<22} {:<16} {:<12} {:>6}  {}",
-            r.id, r.graph, r.status, r.calls, r.resumes
+            "{:<22} {:<16} {:<12} {:>6}  {:<7}  {}",
+            r.id,
+            r.graph,
+            r.status,
+            r.calls,
+            r.resumes,
+            r.calyx.as_deref().unwrap_or("<=0.3.6")
         );
     }
     ExitCode::SUCCESS

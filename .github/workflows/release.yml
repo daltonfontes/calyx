@@ -147,6 +147,8 @@ jobs:
           sleep 1
           CALYX_BASE_URL=http://127.0.0.1:8765 CALYX_INSTALL="$RUNNER_TEMP/calyx" sh install.sh
           "$RUNNER_TEMP/calyx/bin/calyx" --version
+          # The copy that finishes this version's runs after an upgrade.
+          "$RUNNER_TEMP/calyx/versions/${TAG#v}/calyx" --version
 
       - name: Publish the release
         env:

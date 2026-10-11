@@ -9,7 +9,7 @@
  * Layout of a run directory:
  *
  *   journal.jsonl   one JSON object per line:
- *     {"type":"run", "version":1, "ir_hash", "graph", "args", "program", "started"}
+ *     {"type":"run", "version":1, "calyx", "ir_hash", "graph", "args", "program", "started"}
  *     {"type":"call", "key", "effect", "req", "ok": answer}   (or "blob": hash)
  *     {"type":"begin", "key", "req"}         before a `write once` call
  *     {"type":"resume", "at"}
@@ -43,11 +43,13 @@ typedef struct cx_journal cx_journal;
  * Opens the journal in `dir`. NEW creates the directory and writes the
  * header (`header_json`, a complete JSON object, written as the first
  * line). RESUME and REPLAY load the entries and
- * check that the program is the same (`ir_hash`). On failure returns NULL
- * and writes the reason to `err`.
+ * check that the program is the same: the journal's `ir_hash` is `ir_hash`
+ * or, for runs started by Calyx 0.3.6 or earlier, `legacy_hash` (NULL: no
+ * such check). On failure returns NULL and writes the reason to `err`.
  */
 cx_journal *cx_journal_open(cx_arena *a, const char *dir, cx_journal_mode mode,
-                            const char *ir_hash, const char *header_json, cx_buf *err);
+                            const char *ir_hash, const char *legacy_hash,
+                            const char *header_json, cx_buf *err);
 
 cx_journal_mode cx_journal_get_mode(const cx_journal *j);
 

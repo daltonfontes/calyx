@@ -28,7 +28,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     cx_arena a = {0};
     cx_buf err = {0};
     for (int mode = CX_JOURNAL_RESUME; mode <= CX_JOURNAL_REPLAY; mode++) {
-        cx_journal *j = cx_journal_open(&a, dir, (cx_journal_mode)mode, "h", NULL, &err);
+        cx_journal *j = cx_journal_open(&a, dir, (cx_journal_mode)mode, "h", NULL, NULL, &err);
         if (!j) continue;
         int mismatch = 0;
         (void)cx_journal_lookup(j, "g/a#0", "x", &mismatch);

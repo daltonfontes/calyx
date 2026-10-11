@@ -7,7 +7,10 @@
 # compiler, no libraries). Variables:
 #   CALYX_VERSION   a release tag, e.g. v0.1.0 (default: the latest)
 #   CALYX_INSTALL   where to install (default: ~/.calyx); the binary goes
-#                   in $CALYX_INSTALL/bin
+#                   in $CALYX_INSTALL/bin, and a copy of it stays in
+#                   $CALYX_INSTALL/versions/<version>/, so that runs this
+#                   version starts finish on it after an upgrade (D23;
+#                   docs/operacao.md)
 #   CALYX_BASE_URL  where releases are downloaded from (for mirrors and tests)
 
 set -eu
@@ -74,6 +77,14 @@ mkdir -p "$install_dir/bin"
 cp "$tmp/calyx" "$install_dir/bin/calyx.new"
 chmod 755 "$install_dir/bin/calyx.new"
 mv "$install_dir/bin/calyx.new" "$install_dir/bin/calyx"
+
+# Each version stays: `calyx resume` hands a run to the version that
+# started it, if a newer one compiles its program differently.
+installed="$("$install_dir/bin/calyx" --version | cut -d' ' -f2)"
+mkdir -p "$install_dir/versions/$installed"
+cp "$tmp/calyx" "$install_dir/versions/$installed/calyx.new"
+chmod 755 "$install_dir/versions/$installed/calyx.new"
+mv "$install_dir/versions/$installed/calyx.new" "$install_dir/versions/$installed/calyx"
 
 echo "installed $("$install_dir/bin/calyx" --version) in $install_dir/bin/calyx"
 case ":$PATH:" in
