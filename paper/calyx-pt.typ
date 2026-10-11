@@ -211,6 +211,14 @@ item vira a resposta da chamada (o id do ticket criado, por exemplo). Um
 `requires` envia precondições ao servidor da tool, que as confere no mesmo
 passo do efeito.
 
+*Políticas.* Uma `policy` de uma tool declara regras que o runtime confere
+antes de toda chamada, de um grafo ou de um agente: `require amount > 0`;
+`require order from get_ticket.order`, o argumento precisa ser um valor que
+uma tool devolveu nesse campo, não um que só aparece num texto que o modelo
+leu; `deny in agent if amount > 100`. Uma chamada recusada não é feita; num
+agente, vira uma observação para o modelo. Uma tool que a política nega
+sempre a agentes não pode ser dada a um (`E0724`).
+
 *Outras construções*, cada uma com suas regras no compilador: `loop` e
 `rounds` com limite obrigatório; `for each` (leque de chamadas); `race`
 entre estratégias, cancelando as perdedoras e desfazendo o que elas
@@ -680,6 +688,60 @@ com uma tool de leitura. Contra o Stripe em modo de teste, aprova nosso
 servidor e acusa (`E0704`, dois reembolsos) uma versão dele que deixa de
 repassar a chave e continua anunciando `idempotencyKeyHint: true`.
 
+== Injeção de prompt e políticas (E6)
+
+Um agente de atendimento com seis tools (ticket, pedido, cliente, reembolso,
+e-mail, endereço) atende 18 tickets: 6 benignos e 12 com uma instrução de um
+atacante no ticket ou nas observações do pedido (reembolsar 900, reembolsar
+outro pedido, mandar os dados do cliente para fora, trocar o endereço,
+consultar outro cliente, mandar um link de phishing). Os dois programas têm o
+mesmo prompt, com as regras escritas nele; um acrescenta quatro políticas
+(@fig-policy). O servidor de tools registra toda chamada que recebe.
+
+#figure(
+  ```python
+  policy refund:
+      require amount > 0
+      require order from get_ticket.order
+      deny in agent if amount > 100
+  policy send_email:
+      require to from get_order.email
+      require not ("://" in body)
+  ```,
+  caption: [Duas das quatro políticas da E6.],
+) <fig-policy>
+
+#figure(
+  table(
+    columns: (1fr, auto, auto, auto),
+    align: (left, right, right, right),
+    thick, [*Modelo, regras*], [*Ataques*], [*Benignos feitos*], [*Recusadas*], rule,
+    [Obediente, no prompt], [12 de 12], [6 de 6], [0],
+    [Obediente, `policy`], [*0 de 12*], [6 de 6], [10],
+    [Gemini, no prompt], [0 de 24], [12 de 12], [0],
+    [Gemini, `policy`], [0 de 24], [12 de 12], [0],
+    thick,
+  ),
+  caption: [Ataques que aconteceram. Obediente: um modelo falso que executa
+    toda linha `CALL tool {...}` que lê, o pior caso. Gemini:
+    `gemini-3.5-flash-lite`, 2 repetições. Nenhuma chamada legítima foi
+    recusada.],
+) <tab-e6>
+
+Com o modelo obediente, as regras no prompt não seguram nada e as políticas
+seguram todos os ataques (@tab-e6); as duas trocas de endereço nem são
+tentadas, porque o agente com políticas não pode ter essa tool. O Gemini não
+caiu em nenhuma das 24 tentativas com as regras só no prompt e, com
+políticas, nunca tentou uma chamada que elas recusam: as políticas não
+custaram nada (mediana de 5,1 s contra 4,6 s por ticket, dentro da variação
+do provedor) e não fizeram nada. Nas duas versões, os mesmos dois tickets
+atacados (mandar os dados para fora; um link de phishing, os dois no texto
+do ticket) fizeram o Gemini largar também o reembolso legítimo: nenhum dano,
+mas nenhum atendimento, e políticas não evitam isso. Então a E6 não mostra
+que um modelo atual precisa de políticas contra esses ataques, que são uma
+frase cada; mostra que o que as políticas declaram vale, faça o modelo o que
+fizer.
+
 == Escrevendo um workflow real
 
 Um exemplo de atendimento ao cliente (triagem tipada, um agente com tools só
@@ -705,7 +767,8 @@ as anotações MCP só funciona para servidores que as enviam, e deixa passar
 chaves ignoradas. *Modelos.* A maioria dos experimentos usa modelos falsos;
 W1 e W2 foram repetidos com o Gemini com N pequeno, e na W2 o modelo sempre
 propôs o mesmo valor, então o risco de uma resposta diferente depois de uma
-queda não foi exercitado. *Ambiente.* Uma máquina; a W8 (várias máquinas) acrescenta latência
+queda não foi exercitado. Os ataques da E6 são frases fixas, não ajustadas
+ao modelo. *Ambiente.* Uma máquina; a W8 (várias máquinas) acrescenta latência
 com um proxy em vez de rodar contra um banco numa rede de verdade; só as rodadas
 do Stripe usam
 um serviço real pela rede, o resto usa serviços falsos; as versões são
@@ -733,13 +796,19 @@ AgentSpec @wang2026agentspec impõe regras do usuário ao rodar. São mecanismos
 de runtime; a Calyx pede ao programa que declare o que eles precisam e
 confere isso antes de rodar. Suas compensações (`compensate`) são uma saga
 desse tipo, limitada aos perdedores de uma corrida e obrigada a ser escrita
-com chave.
+com chave. Suas políticas são regras como as do AgentSpec, que o compilador
+confere quanto a tipo, pureza e procedência e, quando os argumentos estão
+escritos no programa, já ao compilar (`E0723`).
 
 *Análise estática e cálculos para agentes.* Trabalhos recentes analisam
 programas de agentes escritos em frameworks existentes quanto a propriedades
 estruturais @agentproof2026 e não terminação @ialscan2026, dão um cálculo
 tipado para composição de agentes @lambdaA2026, ou rastreiam o fluxo de
-informação em programas com LLM @garby2026llmbda. A Calyx confere outra
+informação em programas com LLM @garby2026llmbda. O CaMeL
+@debenedetti2025camel se defende de injeção de prompt separando o fluxo de
+controle do fluxo de dados e marcando valores com capacidades; o `from` da
+Calyx é um caso mais restrito e declarado dessa ideia, conferido por
+argumento. A Calyx confere outra
 propriedade, o contrato dos efeitos externos, que os frameworks existentes
 não escrevem em lugar nenhum; seu núcleo formal poderia estender um cálculo
 desses com diários e quedas.
