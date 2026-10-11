@@ -139,6 +139,31 @@ pub struct Config {
     pub telemetry: crate::telemetry::TelemetryConfig,
     /// `[senders]` and `[messages]`: who may deliver which message.
     pub senders: crate::senders::Senders,
+    /// `[serve]`: who may call the program's graphs over HTTP.
+    pub serve: ServeConfig,
+}
+
+/// `calyx serve --http`: the callers and what each may call.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServeConfig {
+    pub callers: Vec<Caller>,
+    /// `Origin` headers accepted (browsers send one; other clients do not).
+    pub allowed_origins: Vec<String>,
+}
+
+/// `[serve.callers.NAME]`: a caller's token (from the environment) and the
+/// graphs it may call (`"*"`: all).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Caller {
+    pub name: String,
+    pub token_env: String,
+    pub graphs: Vec<String>,
+}
+
+impl Caller {
+    pub fn may_call(&self, graph: &str) -> bool {
+        self.graphs.iter().any(|g| g == "*" || g == graph)
+    }
 }
 
 /// Providers known without configuration. A `calyx.toml` entry with the
@@ -350,6 +375,27 @@ impl Config {
                         headers_env,
                         file: text("file")?.map(|f| dir.join(f)),
                     };
+                }
+                "serve" => {
+                    let t = section(value, "serve")?;
+                    for k in t.keys() {
+                        if !["callers", "allowed_origins"].contains(&k.as_str()) {
+                            return Err(format!("unknown key `serve.{k}`"));
+                        }
+                    }
+                    if let Some(c) = t.get("callers") {
+                        for (name, v) in section(c, "serve.callers")? {
+                            let owner = format!("serve.callers.{name}");
+                            cfg.serve.callers.push(Caller {
+                                name: name.clone(),
+                                token_env: string(v, "token_env", &owner)?,
+                                graphs: strings(v, "graphs", &owner)?,
+                            });
+                        }
+                    }
+                    if t.contains_key("allowed_origins") {
+                        cfg.serve.allowed_origins = strings(value, "allowed_origins", "serve")?;
+                    }
                 }
                 "senders" => {
                     for (name, v) in section(value, "senders")? {
