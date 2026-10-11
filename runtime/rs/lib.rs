@@ -13,6 +13,7 @@ mod llm;
 mod mcp;
 pub mod pg;
 pub mod sandbox;
+pub mod telemetry;
 pub mod verify;
 
 use std::ffi::{CStr, CString, c_char};
@@ -93,6 +94,7 @@ pub fn run(
         "uncertain": opts.uncertain,
         "uncertain_value": opts.uncertain_value,
     });
+    telemetry::configure(&opts.config.telemetry);
     io::configure(opts.config, opts.fake_models);
     io::declare(annotations::declared(ir_json));
     let c = |s: &str| CString::new(s).map_err(|_| "text contains NUL".to_owned());
@@ -105,6 +107,7 @@ pub fn run(
     // SAFETY: valid NUL-terminated strings; the result is released below.
     let out = unsafe { calyx_run(ir.as_ptr(), g.as_ptr(), a.as_ptr(), o.as_ptr()) };
     io::shutdown();
+    telemetry::shutdown();
     for (name, path) in &sandboxes {
         eprintln!("calyx: sandbox `{name}` is at {}", path.display());
     }

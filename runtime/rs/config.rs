@@ -102,6 +102,8 @@ pub struct Config {
     pub prices: HashMap<String, (f64, f64)>,
     /// Where the configuration came from, for messages.
     pub path: Option<PathBuf>,
+    /// `[telemetry]`: where traces and metrics go (see `telemetry`).
+    pub telemetry: crate::telemetry::TelemetryConfig,
 }
 
 /// Providers known without configuration. A `calyx.toml` entry with the
@@ -226,6 +228,43 @@ impl Config {
                         cfg.prices
                             .insert(model.clone(), (price("input")?, price("output")?));
                     }
+                }
+                "telemetry" => {
+                    let t = section(value, "telemetry")?;
+                    let text = |k: &str| -> Result<Option<String>, String> {
+                        match t.get(k) {
+                            None => Ok(None),
+                            Some(v) => v
+                                .as_str()
+                                .map(|s| Some(s.to_owned()))
+                                .ok_or(format!("telemetry.{k} must be text")),
+                        }
+                    };
+                    let mut headers_env = Vec::new();
+                    if let Some(h) = t.get("headers_env") {
+                        let h = h.as_table().ok_or(
+                            "telemetry.headers_env must be a table of header = \"VARIABLE\"",
+                        )?;
+                        for (name, var) in h {
+                            let var = var.as_str().ok_or(format!(
+                                "telemetry.headers_env.{name} must name an environment variable"
+                            ))?;
+                            headers_env.push((name.clone(), var.to_owned()));
+                        }
+                    }
+                    for k in t.keys() {
+                        if !["endpoint", "service_name", "headers_env", "file"]
+                            .contains(&k.as_str())
+                        {
+                            return Err(format!("unknown key `telemetry.{k}`"));
+                        }
+                    }
+                    cfg.telemetry = crate::telemetry::TelemetryConfig {
+                        endpoint: text("endpoint")?,
+                        service_name: text("service_name")?,
+                        headers_env,
+                        file: text("file")?.map(|f| dir.join(f)),
+                    };
                 }
                 other => return Err(format!("unknown section `{other}`")),
             }

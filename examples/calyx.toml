@@ -13,6 +13,13 @@
 [tools.web_search]
 command = ["python3", "tools/fake_search.py"]
 
+# Traces e métricas (OpenTelemetry), desligados sem configuração. Também
+# pelas variáveis padrão: OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME...
+#
+#   [telemetry]
+#   endpoint = "http://localhost:4318"
+#   service_name = "exemplos"
+
 # Preços por modelo, em USD por milhão de tokens, para `limits budget`.
 # Confira os valores do seu provedor; sem preço, o orçamento não conta o modelo.
 #

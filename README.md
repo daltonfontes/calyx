@@ -146,6 +146,20 @@ run's answer, or resumes it if it died, and never runs it twice.
     "command": "calyx", "args": ["serve", "/path/to/refund.clyx"] } } }
 ```
 
+## Calyx is OBSERVABLE
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` (or `[telemetry]` in `calyx.toml`) and
+every run sends OpenTelemetry traces and metrics to your collector (Jaeger,
+Tempo, Honeycomb, Datadog...): a span per model and tool call with tokens,
+cost, retries and errors, policy refusals as events, and one trace per run,
+continued when the run resumes on another process. Prompts, arguments and
+answers never leave the run.
+
+```sh
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+calyx run refund.clyx --request R1 --order A100 --message "chegou quebrado"
+```
+
 ## Calyx checks FAST
 
 **Target:** check any program in under 1 second, so an agent can check after
