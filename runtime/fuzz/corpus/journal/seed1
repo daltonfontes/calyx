@@ -1,0 +1,2 @@
+{"type": "call", "key": "g/a#0", "effect": "read", "req": "x", "ok": {"text": "hi", "json": null, "truncated": false, "ms": 1}}
+{"type":"call","key":"g/a#0"

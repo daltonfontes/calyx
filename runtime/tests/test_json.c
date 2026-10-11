@@ -57,6 +57,11 @@ int main(void) {
     rejects("\"sem fim");
     rejects("1 2");
     rejects("tru");
+    /* Found by fuzz_json: infinity would be written back as null. */
+    rejects("123490023455e23456891");
+    rejects("-1e400");
+    /* Found by fuzz_json: a name given twice; the last value counts. */
+    round_trip("{\"a\":1,\"b\":2,\"a\":3}", "{\"a\":3,\"b\":2}");
 
     cx_arena a = {0};
     const char *text = "{\"n\":3,\"s\":\"x\",\"b\":true}";

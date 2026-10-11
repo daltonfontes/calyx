@@ -1,0 +1,52 @@
+# The program fuzz_answers runs: what it does with the answers of models
+# and tools is what is fuzzed (decoding into types, keeping the declared
+# fields, cutting at max_output, an agent's tool calls, policies, retries).
+model m = "fuzz-model"
+
+type Item:
+    name: Text
+    price: Float
+
+type Order:
+    id: Text
+    items: List[Item] max 5
+    note: Text
+
+type Verdict = Approve | Reject(reason: Text)
+
+tool get_order(id: Text) -> Order:
+    effect read
+    max_output 60 tokens
+
+tool search(q: Text) -> Text:
+    effect read
+    max_output 20 tokens
+    retry_on [Timeout]
+
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    max_output 10 tokens
+
+policy refund:
+    require amount <= 100
+    require order from get_order.id
+
+prompt judge(o: Order) -> Verdict:
+    """Julgue {o}."""
+
+prompt help(q: Text) -> Text:
+    """Ajude com {q}."""
+
+graph main(q: Text) -> Text:
+    o = get_order(q)
+    v = try m(judge(o))
+    a = agent m:
+        tools [get_order, search, refund]
+        max_turns 3
+        task help(q)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return match v:
+        case Ok(value): a
+        case Failed(error): error
