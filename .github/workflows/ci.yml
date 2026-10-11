@@ -113,6 +113,32 @@ jobs:
           ./target/release/calyx build examples/agent.clyx -o "$RUNNER_TEMP/agent"
           cd "$RUNNER_TEMP" && ./agent --fake-models --quiet --question "baterias de sódio"
 
+  # The C runtime under libFuzzer, AddressSanitizer and UBSan: the parser,
+  # the journal, the answers of models and tools, and the IR (runtime/fuzz/).
+  # A minute per target on the corpus, which keeps every input that once
+  # crashed it.
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: clang with libFuzzer
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q clang-18 libclang-rt-18-dev
+
+      - name: Fuzz each target for 60 s
+        run: make -C runtime fuzz-run FUZZ_CC=clang-18 FUZZ_SECONDS=60
+
+      - name: Keep the inputs that crashed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: runtime/build/crash-*
+
   lean:
     runs-on: ubuntu-latest
     steps:

@@ -428,6 +428,9 @@ static cx_value *parse_number(parser *ps) {
     char *endp;
     double d = strtod(tmp, &endp);
     if (*endp) return fail(ps, "invalid number");
+    /* JSON has no infinity: a number too large for a double would be
+     * written back as null, and a resumed run would see another value. */
+    if (!isfinite(d)) return fail(ps, "number out of range");
     return cx_num(ps->a, d);
 }
 

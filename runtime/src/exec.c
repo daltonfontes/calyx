@@ -277,11 +277,29 @@ typedef struct {
     const char *node;  /* node name, for errors */
     const char *label; /* `node` or `node[j]`, for the trace */
     cx_value **locals; /* loop values and `case` fields */
+    size_t nlocals;    /* how many: a slot the IR names past it is invalid */
     cx_value *estate;  /* in an entity's handler: the state */
     const char *failure; /* a failure not reported yet; `try` may catch it */
 } ctx;
 
 /* ----- small helpers ----------------------------------------------------- */
+
+/* The most local slots a node, `def` or handler may ask for: an IR asking
+ * for more is invalid (the compiler gives a few per node). */
+#define MAX_LOCALS 4096
+
+/* Local slot `i`, or NULL when the IR names one this evaluation does not
+ * have (the IR is checked before it runs, but the interpreter does not
+ * trust it with memory). */
+static cx_value **slot_of(ctx *c, size_t i) {
+    return c->locals && i < c->nlocals ? &c->locals[i] : NULL;
+}
+
+/* A count of local slots from the IR, or (size_t)-1 if it is not one. */
+static size_t nslots(const cx_value *spec, double dflt) {
+    double d = cx_get_num(spec, "nlocals", dflt);
+    return d >= 0 && d <= MAX_LOCALS ? (size_t)d : (size_t)-1;
+}
 
 static double now(void) {
     struct timespec ts;
@@ -290,6 +308,10 @@ static double now(void) {
 }
 
 static void sleep_s(double s) {
+#ifdef CALYX_FUZZ
+    /* Fuzzing: retries and rate limits do not wait. */
+    s = 0;
+#endif
     if (s <= 0) return;
     struct timespec ts = {(time_t)s, (long)((s - (double)(time_t)s) * 1e9)};
     while (nanosleep(&ts, &ts) != 0) {
@@ -1889,15 +1911,18 @@ static int found_at(const cx_value *v, const cx_value *path, size_t i, const cx_
 
 /* A condition of a policy with the arguments in local slots: 1 if it
  * holds, 0 if not, -1 if it has no value (a failure, or not a Bool). */
-static int policy_holds(ctx *c, cx_value *e, cx_value **locals) {
+static int policy_holds(ctx *c, cx_value *e, cx_value **locals, size_t nl) {
     cx_value **outer = c->locals;
+    size_t outer_n = c->nlocals;
     cx_value *outer_state = c->estate;
     const char *outer_failure = c->failure;
     c->locals = locals;
+    c->nlocals = nl;
     c->estate = NULL;
     c->failure = NULL;
     cx_value *v = eval(c, e);
     c->locals = outer;
+    c->nlocals = outer_n;
     c->estate = outer_state;
     c->failure = outer_failure;
     if (!v || v == PENDING || v->kind != CX_BOOL) return -1;
@@ -1920,7 +1945,8 @@ static const char *policy_denies(ctx *c, cx_value *tool, cx_value **vals, size_t
     const char *name = cx_get_str(tool, "name", "?");
     cx_value *params = cx_get(tool, "params");
     size_t np = len_of(params);
-    size_t nl = (size_t)cx_get_num(policy, "nlocals", 0);
+    size_t nl = nslots(policy, 0);
+    if (nl == (size_t)-1) return fmt(a, "refused by the policy of `%s`: invalid IR", name);
     if (nl < np) nl = np;
     cx_value **locals = cx_alloc(a, (nl ? nl : 1) * sizeof *locals);
     for (size_t i = 0; i < nl; i++) locals[i] = i < n && i < np ? vals[i] : NULL;
@@ -1934,7 +1960,7 @@ static const char *policy_denies(ctx *c, cx_value *tool, cx_value **vals, size_t
         const char *k = cx_get_str(rule, "k", "");
         const char *why = NULL;
         if (strcmp(k, "require") == 0) {
-            int h = policy_holds(c, cx_get(rule, "e"), locals);
+            int h = policy_holds(c, cx_get(rule, "e"), locals, nl);
             if (h < 0) why = "cannot be checked with these arguments";
             else if (!h) why = "does not hold";
         } else if (strcmp(k, "deny_agent") == 0) {
@@ -1943,7 +1969,7 @@ static const char *policy_denies(ctx *c, cx_value *tool, cx_value **vals, size_t
             if (!e || e->kind == CX_NULL) {
                 why = "a model may not choose this call";
             } else {
-                int h = policy_holds(c, e, locals);
+                int h = policy_holds(c, e, locals, nl);
                 if (h != 0) why = "holds: a model may not choose this call";
             }
         } else if (strcmp(k, "from") == 0) {
@@ -2163,16 +2189,20 @@ static cx_value *binary(ctx *c, cx_value *e) {
 
 /* A `def` applied to `n` values: its own local slots, parameters first. */
 static cx_value *apply_def(ctx *c, cx_value *def, cx_value **args, size_t n) {
-    size_t nl = (size_t)cx_get_num(def, "nlocals", 0);
+    size_t nl = nslots(def, 0);
+    if (nl == (size_t)-1) return fatalf(c, "invalid IR: a `def` with too many local slots");
     if (nl < n) nl = n;
     cx_value **locals = cx_alloc(&c->w->arena, (nl ? nl : 1) * sizeof *locals);
     for (size_t i = 0; i < nl; i++) locals[i] = i < n ? args[i] : NULL;
     cx_value **outer = c->locals;
+    size_t outer_n = c->nlocals;
     cx_value *outer_state = c->estate;
     c->locals = locals;
+    c->nlocals = nl;
     c->estate = NULL;
     cx_value *v = eval(c, cx_get(def, "body"));
     c->locals = outer;
+    c->nlocals = outer_n;
     c->estate = outer_state;
     return v;
 }
@@ -2298,6 +2328,7 @@ static cx_value *comprehension(ctx *c, cx_value *e) {
     if (!over || over == PENDING) return over;
     if (over->kind != CX_LIST) return failf(c, "`for` over a value that is not a list");
     size_t slot = index_of(e, "slot");
+    if (!slot_of(c, slot)) return fatalf(c, "invalid IR: local slot out of range");
     cx_value *cond_e = cx_get(e, "cond");
     cx_value **items = cx_alloc(&c->w->arena, (over->u.list.len ? over->u.list.len : 1) * sizeof *items);
     size_t n = 0;
@@ -2414,9 +2445,16 @@ static cx_value *pick_case(ctx *c, cx_value *e, cx_value *v) {
         cx_value *binds = cx_get(cs, "binds");
         for (size_t k = 0; k < len_of(binds); k++) {
             cx_value *b = at(binds, k);
-            size_t slot = (size_t)at(b, 1)->u.num;
-            cx_value *field = cx_get(v, at(b, 0)->u.str.s);
-            c->locals[slot] = field ? field : cx_null(&c->w->arena);
+            cx_value *fname = at(b, 0), *fslot = at(b, 1);
+            cx_value **slot = fslot && fslot->kind == CX_NUM && fslot->u.num >= 0
+                                  ? slot_of(c, (size_t)fslot->u.num)
+                                  : NULL;
+            if (!slot || !fname || fname->kind != CX_STR) {
+                fatalf(c, "invalid IR: a `case` binding");
+                return NULL;
+            }
+            cx_value *field = cx_get(v, fname->u.str.s);
+            *slot = field ? field : cx_null(&c->w->arena);
         }
         return cs;
     }
@@ -2448,7 +2486,9 @@ static cx_value *eval_tail(ctx *c, cx_value *e, int *sig) {
     if (strcmp(k, "let") == 0) {
         cx_value *v = eval(c, cx_get(e, "v"));
         if (!v || v == PENDING) return v;
-        c->locals[index_of(e, "slot")] = v;
+        cx_value **slot = slot_of(c, index_of(e, "slot"));
+        if (!slot) return fatalf(c, "invalid IR: local slot out of range");
+        *slot = v;
         return eval_tail(c, cx_get(e, "body"), sig);
     }
     return fatalf(c, "invalid IR: a loop body without `done` or `next`");
@@ -2459,6 +2499,7 @@ static cx_value *eval_loop(ctx *c, cx_value *e) {
     cx_value *v = eval(c, cx_get(e, "init"));
     if (!v || v == PENDING) return v;
     size_t slot = index_of(e, "slot");
+    if (!slot_of(c, slot)) return fatalf(c, "invalid IR: local slot out of range");
     size_t id = index_of(e, "id");
     double max = cx_get_num(e, "max", 1);
     const char *outer = c->scope;
@@ -2603,8 +2644,10 @@ static char *entity_step(emsg *m, const char *text, size_t len) {
     hc.w = &w;
     hc.g = &none;
     hc.node = j->node;
-    size_t nl = (size_t)cx_get_num(m->handler, "nlocals", 1);
-    hc.locals = cx_alloc(&w.arena, (nl ? nl : 1) * sizeof *hc.locals);
+    size_t nl = nslots(m->handler, 1);
+    if (nl == (size_t)-1 || nl == 0) nl = 1; /* the key's slot; others are checked when used */
+    hc.locals = cx_alloc(&w.arena, nl * sizeof *hc.locals);
+    hc.nlocals = nl;
     hc.locals[0] = m->key;
     for (size_t i = 0; i < len_of(m->args) && i + 1 < nl; i++) hc.locals[i + 1] = at(m->args, i);
 
@@ -3015,6 +3058,7 @@ static cx_value *eval_each(ctx *c, cx_value *e) {
     if (!over || over == PENDING) return over;
     if (over->kind != CX_LIST) return failf(c, "`for each` over a value that is not a list");
     size_t slot = index_of(e, "slot");
+    if (!slot_of(c, slot)) return fatalf(c, "invalid IR: local slot out of range");
     size_t id = index_of(e, "id");
     size_t m = over->u.list.len;
     cx_value **items = cx_alloc(&c->w->arena, (m ? m : 1) * sizeof *items);
@@ -3254,6 +3298,7 @@ static cx_value *eval_race(ctx *c, cx_value *e) {
     cx_value *cond = cx_get(e, "cond");
     size_t n = len_of(branches);
     size_t slot = index_of(e, "slot");
+    if (!slot_of(c, slot)) return fatalf(c, "invalid IR: local slot out of range");
     const char *outer_scope = c->scope;
     const char *outer_failure = c->failure;
     const char *outer_label = c->label;
@@ -3686,7 +3731,12 @@ static cx_value *eval(ctx *c, cx_value *e) {
     const char *k = cx_get_str(e, "k", "");
     if (strcmp(k, "text") == 0 || strcmp(k, "int") == 0 || strcmp(k, "float") == 0)
         return cx_get(e, "v");
-    if (strcmp(k, "param") == 0) return c->g->params[index_of(e, "i")];
+    if (strcmp(k, "param") == 0) {
+        size_t i = index_of(e, "i");
+        if (!c->g->params || i >= len_of(cx_get(c->g->graph, "params")))
+            return fatalf(c, "invalid IR: no parameter %zu", i);
+        return c->g->params[i];
+    }
     if (strcmp(k, "node") == 0) {
         size_t i = index_of(e, "i");
         cx_value *v = i < c->g->n ? c->g->values[i] : NULL;
@@ -3694,7 +3744,8 @@ static cx_value *eval(ctx *c, cx_value *e) {
     }
     if (strcmp(k, "item") == 0) return c->item;
     if (strcmp(k, "local") == 0) {
-        cx_value *v = c->locals[index_of(e, "i")];
+        cx_value **slot = slot_of(c, index_of(e, "i"));
+        cx_value *v = slot ? *slot : NULL;
         return v ? v : fatalf(c, "invalid IR: local used before it was bound");
     }
     if (strcmp(k, "field") == 0) {
@@ -3779,7 +3830,9 @@ static cx_value *eval(ctx *c, cx_value *e) {
     if (strcmp(k, "let") == 0) {
         cx_value *v = eval(c, cx_get(e, "v"));
         if (!v || v == PENDING) return v;
-        c->locals[index_of(e, "slot")] = v;
+        cx_value **slot = slot_of(c, index_of(e, "slot"));
+        if (!slot) return fatalf(c, "invalid IR: local slot out of range");
+        *slot = v;
         return eval(c, cx_get(e, "body"));
     }
     if (strcmp(k, "def") == 0) return call_def(c, e);
@@ -3813,7 +3866,7 @@ static void run_task(worker *w, task *t) {
     gexec *g = t->g;
     cx_value *node = at(g->nodes_ir, t->node);
     const char *name = cx_get_str(node, "name", "?");
-    ctx c = {x, w, t, g, NULL, NULL, NULL, name, name, NULL, NULL, NULL};
+    ctx c = {.x = x, .w = w, .t = t, .g = g, .node = name, .label = name};
     if (t->item < 0) {
         c.instance = fmt(&w->arena, "%s/%s", g->path, name);
     } else {
@@ -3822,9 +3875,11 @@ static void run_task(worker *w, task *t) {
         c.item = at(g->lists[t->node], (size_t)t->item);
     }
     c.scope = c.instance;
-    size_t nlocals = (size_t)cx_get_num(node, "nlocals", 0);
+    size_t nlocals = nslots(node, 0);
+    if (nlocals == (size_t)-1) nlocals = 0; /* any slot it names is then invalid */
     c.locals = cx_alloc(&w->arena, (nlocals ? nlocals : 1) * sizeof *c.locals);
     memset(c.locals, 0, (nlocals ? nlocals : 1) * sizeof *c.locals);
+    c.nlocals = nlocals;
 
     cx_value *over_e = cx_get(node, "over");
     int fan_out = over_e && over_e->kind != CX_NULL;
