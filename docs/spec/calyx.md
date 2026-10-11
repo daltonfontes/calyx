@@ -718,6 +718,14 @@ graph solve(issue: Text, repo: Sandbox) -> Text:
 
 Cada versão é um binário. Execuções terminam na versão em que começaram e só migram se o compilador provar que os grafos são compatíveis.
 
+**Como está implementado:**
+
+- O cabeçalho do diário grava a versão da Calyx que começou a execução (`"calyx"`) e o hash do programa compilado (`ir_hash`).
+- **O hash é o SHA-256 da IR em JSON sem os campos `null`** (`calyx_runtime::program_hash`). Um campo que uma versão acrescenta à IR é `null` nos programas que não o usam, então uma versão nova compila o programa de uma execução antiga para o mesmo hash e a retoma. É a prova de compatibilidade de hoje: o mesmo programa compilado, campo a campo. Até a 0.3.6, o hash era do texto inteiro, e a 0.3.7 também aceita esse hash, para retomar as execuções da 0.3.6.
+- **Uma execução vai para a versão que a começou.** Se essa versão não é a atual e o binário dela está guardado (`$CALYX_VERSIONS_DIR/<versão>/calyx`, `versions/` ao lado da instalação ou `~/.calyx/versions/`), `calyx resume` (e com ele `tick` e `worker`) passa a execução a esse binário. Sem o binário, a versão atual retoma se o hash for o mesmo e, se não for, recusa e diz qual versão é preciso. O `install.sh` guarda cada versão instalada em `versions/`.
+- `compiler/calyx-cli/tests/versions.rs` fixa o hash de cada exemplo e de cada programa de teste: uma mudança no compilador que impediria uma versão de retomar as execuções da anterior aparece na CI.
+- O procedimento de atualização está no [guia de operação](../operacao.md#4-atualizar-a-versão-da-calyx).
+
 ---
 
 ## 10. Verificações do compilador
