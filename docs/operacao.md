@@ -150,7 +150,26 @@ Uma chave privada vazada sai do `[senders]` na hora: as entregas assinadas com e
   - `calyx.cost` por modelo, contra o orçamento.
 - **Sem coletor:** `calyx runs` lista cada execução, com a situação e a versão; `calyx replay <id>` refaz uma execução só com o diário, sem chamar nada, para entender o que ela fez.
 
-## 7. Antes de ir para produção
+## 7. Ensaio de produção
+
+`bench/ensaio/run_ensaio.sh` encena a seção 3 com serviços de verdade, para rodar antes de pôr um programa em produção e depois de cada atualização:
+
+1. a máquina A começa um atendimento: consulta um pedido no Stripe (modo de teste), o Gemini propõe o reembolso, e a execução espera a aprovação;
+2. uma aprovação sem assinatura é recusada;
+3. o gerente aprova, assinado; o `calyx worker` da máquina B retoma e paga;
+4. a máquina B morre (`kill -9`) depois de o Stripe aplicar o reembolso e antes de a resposta chegar;
+5. o worker toma a execução de novo e a termina.
+
+No fim, ele confere no Stripe que há um reembolso e um crédito, nem mais nem menos.
+
+```sh
+CALYX=~/.calyx/bin/calyx CALYX_DATABASE_URL=postgres://... \
+STRIPE_API_KEY=sk_test_... GEMINI_API_KEY=... sh bench/ensaio/run_ensaio.sh
+```
+
+O primeiro ensaio, com a 0.3.8, passou (1 reembolso, 1 crédito) e achou três coisas, corrigidas depois dele: o worker tentava a cada passada, para sempre, uma execução que não podia retomar; `timeout 1 day` não era aceito (só `1 days`); e `after` dentro de um bloco dava um erro que não dizia que, num bloco, a ordem é a do texto.
+
+## 8. Antes de ir para produção
 
 - [ ] Versão fixada no `install.sh`, e `versions/` preservado entre deploys
 - [ ] `calyx check --tools` sem avisos contra os servidores MCP de produção (efeitos declarados conferem com as anotações)
@@ -162,3 +181,4 @@ Uma chave privada vazada sai do `[senders]` na hora: as entregas assinadas com e
 - [ ] `calyx serve --http` só em `127.0.0.1`, atrás de um proxy com TLS, com um chamador por cliente
 - [ ] Telemetria ligada, com os alertas da seção 6
 - [ ] Backup de `.calyx/` ou do banco
+- [ ] O ensaio (seção 7) rodado com a versão e o banco de produção, contra o ambiente de teste dos serviços
