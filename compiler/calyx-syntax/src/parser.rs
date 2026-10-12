@@ -32,7 +32,7 @@ pub fn parse(text: &str) -> (Program, Vec<Diagnostic>) {
 
 /// Units accepted after a number literal.
 const UNITS: &[&str] = &[
-    "tokens", "USD", "BRL", "EUR", "ms", "s", "min", "h", "days", "KB", "MB", "GB",
+    "tokens", "USD", "BRL", "EUR", "ms", "s", "min", "h", "days", "day", "KB", "MB", "GB",
 ];
 /// Units accepted after `/` in a rate, as in `50/s`.
 const RATE_UNITS: &[&str] = &["s", "min", "h"];
@@ -1540,6 +1540,15 @@ impl Parser<'_> {
             self.eat(TokenKind::Newline);
         }
         if self.kind() != TokenKind::Dedent {
+            // `b after a` in a block: its steps already run in the order
+            // of the text.
+            if self.word() == "after" {
+                return Err(self.error_here(
+                    "E0108",
+                    "in a block, steps run in the order they are written: `after` is not needed",
+                    "the steps in the order they must run, without `after`",
+                ));
+            }
             return Err(self.error_here(
                 "E0108",
                 "a block is its steps (`name = value`), then the value it gives",
@@ -2153,7 +2162,9 @@ impl Parser<'_> {
     fn unit(&mut self) -> Option<String> {
         if UNITS.contains(&self.word()) {
             let t = self.advance();
-            return Some(self.text_of(t).to_owned());
+            // `1 day` reads better than `1 days`; both are a day.
+            let unit = self.text_of(t);
+            return Some(if unit == "day" { "days" } else { unit }.to_owned());
         }
         if self.kind() == TokenKind::Slash
             && self.nth_kind(1) == TokenKind::Ident
@@ -2274,6 +2285,27 @@ graph research(topic: Text) -> List[Text]:
     #[test]
     fn calls_may_span_lines() {
         parse_ok("graph g() -> Text:\n    a = f(\n        x,\n    y=z,\n    )\n    return a\n");
+    }
+
+    #[test]
+    fn one_day_is_a_day() {
+        let p = parse_ok("graph g() -> Text:\n    limits timeout 1 day\n    return \"x\"\n");
+        let text = format!("{p:?}");
+        assert!(text.contains("\"days\""), "{text}");
+        assert!(!text.contains("\"day\""), "{text}");
+    }
+
+    #[test]
+    fn after_in_a_block_says_the_order_is_the_text() {
+        let (_, diags) = parse(
+            "graph g() -> Text:\n    return match x:\n        case A:\n            a = f()\n            b = h()\n            b after a\n            \"y\"\n",
+        );
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("`after` is not needed")),
+            "{diags:#?}"
+        );
     }
 
     #[test]

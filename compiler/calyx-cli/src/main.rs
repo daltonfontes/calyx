@@ -1010,8 +1010,12 @@ fn worker(args: &[String]) -> ExitCode {
     // pass does not wait for them, so a long run (an agent, a slow model)
     // does not hold up the runs that die or get their message meanwhile.
     let mut running: Vec<(String, std::process::Child)> = Vec::new();
+    // Runs whose resume failed (their program is gone or changed, say):
+    // tried again later, waiting twice as long each time, up to an hour,
+    // not on every pass.
+    let mut later = Later::default();
     loop {
-        reap(&mut running, false);
+        reap(&mut running, &mut later, false);
         let now = runs::now();
         // Runs whose process died, and waiting runs that can go on.
         let all = match runs::list() {
@@ -1028,7 +1032,7 @@ fn worker(args: &[String]) -> ExitCode {
         };
         let todo: Vec<(String, &str)> = all
             .into_iter()
-            .filter(|r| !running.iter().any(|(id, _)| *id == r.id))
+            .filter(|r| !running.iter().any(|(id, _)| *id == r.id) && !later.waits(&r.id))
             .filter_map(|r| match r.status.as_str() {
                 "interrupted" => Some((r.id, "taking over")),
                 "waiting"
@@ -1058,16 +1062,46 @@ fn worker(args: &[String]) -> ExitCode {
             }
         }
         if once {
-            reap(&mut running, true);
+            reap(&mut running, &mut later, true);
             return ExitCode::SUCCESS;
         }
         std::thread::sleep(std::time::Duration::from_secs_f64(every));
     }
 }
 
+/// When the worker tries again the runs it could not resume.
+#[derive(Default)]
+struct Later(std::collections::HashMap<String, (std::time::Instant, std::time::Duration)>);
+
+impl Later {
+    const FIRST: std::time::Duration = std::time::Duration::from_secs(30);
+    const MOST: std::time::Duration = std::time::Duration::from_secs(3600);
+
+    fn waits(&self, id: &str) -> bool {
+        self.0
+            .get(id)
+            .is_some_and(|(at, _)| std::time::Instant::now() < *at)
+    }
+
+    /// The run failed again: the next try, twice as far.
+    fn failed(&mut self, id: &str) -> std::time::Duration {
+        let wait = self
+            .0
+            .get(id)
+            .map_or(Self::FIRST, |(_, w)| (*w * 2).min(Self::MOST));
+        self.0
+            .insert(id.to_owned(), (std::time::Instant::now() + wait, wait));
+        wait
+    }
+
+    fn done(&mut self, id: &str) {
+        self.0.remove(id);
+    }
+}
+
 /// Says how the worker's runs that ended went, and forgets them; with
 /// `wait`, waits for all of them.
-fn reap(running: &mut Vec<(String, std::process::Child)>, wait: bool) {
+fn reap(running: &mut Vec<(String, std::process::Child)>, later: &mut Later, wait: bool) {
     running.retain_mut(|(id, c)| {
         let status = if wait {
             c.wait().map(Some)
@@ -1077,12 +1111,25 @@ fn reap(running: &mut Vec<(String, std::process::Child)>, wait: bool) {
         match status.map(|s| s.map(|s| s.code())) {
             // Still running.
             Ok(None) => return true,
-            Ok(Some(Some(0))) => eprintln!("{}: run {id} finished", command()),
+            Ok(Some(Some(0))) => {
+                later.done(id);
+                eprintln!("{}: run {id} finished", command());
+            }
             // It waits again (for another message).
-            Ok(Some(Some(4))) => eprintln!("{}: run {id} is waiting", command()),
+            Ok(Some(Some(4))) => {
+                later.done(id);
+                eprintln!("{}: run {id} is waiting", command());
+            }
             // Another worker took it first.
             Ok(Some(Some(5))) => {}
-            other => eprintln!("{}: run {id} stopped ({other:?})", command()),
+            other => {
+                let wait = later.failed(id);
+                eprintln!(
+                    "{}: run {id} stopped ({other:?}); trying it again in {} s",
+                    command(),
+                    wait.as_secs()
+                );
+            }
         }
         false
     });

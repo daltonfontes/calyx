@@ -253,6 +253,34 @@ fn a_long_run_does_not_hold_up_the_worker() {
     assert_eq!(quick.store("payments"), 2);
 }
 
+#[test]
+fn a_run_that_cannot_be_resumed_is_not_tried_on_every_pass() {
+    let Some(_one) = url() else { return };
+    let url = database();
+    let c = Cluster::new("gone", url, "examples/refund.clyx");
+    let p = c.program();
+    let mut args = vec!["run", p.as_str()];
+    args.extend(REFUND);
+    let a = c.calyx("a", &args, &[("CALYX_CRASH_AFTER", "1")]);
+    let id = run_id(&text(&a.stderr));
+    assert_eq!(c.status("b", &id), "interrupted");
+    // Its program is gone: no worker can resume it.
+    std::fs::remove_file(&p).unwrap();
+    let mut worker = c
+        .cmd("b", &["worker", "--every", "0.2", "--quiet"], &[])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    let _ = worker.kill();
+    let out = worker.wait_with_output().unwrap();
+    let err = text(&out.stderr);
+    let tries = err.matches(&format!("taking over run {id}")).count();
+    assert_eq!(tries, 1, "about 15 passes, one try: {err}");
+    assert!(err.contains("trying it again in 30 s"), "{err}");
+}
+
 /// A key no earlier test run used: the database outlives the tests.
 fn fresh(name: &str) -> String {
     let t = std::time::SystemTime::now()

@@ -1,0 +1,65 @@
+# Ensaio de produção: um reembolso de verdade (Stripe em modo de teste),
+# proposto por um modelo de verdade (Gemini), aprovado por uma pessoa com
+# entrega assinada, e terminado por um `calyx worker` em outra "máquina"
+# depois que a primeira morre no meio do pagamento. Roteiro: run_ensaio.sh.
+model gemini = "gemini-3.5-flash-lite"
+
+type Order:
+    id: Text
+    customer: Text
+    total: Float
+    refunded: Float
+
+type Proposal:
+    amount: Float
+    reason: Text
+
+message Approval = Approved | Denied(reason: Text)
+
+tool get_order(id: Text) -> Order:
+    effect read
+    retry_on [Timeout, Unavailable, Network, RateLimit]
+
+# O Stripe aplica a chave (Idempotency-Key): repetir não paga duas vezes.
+tool refund(request: Text, order: Text, amount: Float) -> Unit:
+    effect write
+    idempotency_key request
+    timeout 60 s
+
+tool credit_given(order: Text, request: Text) -> Bool:
+    effect read
+    retry_on [Timeout, Unavailable, Network, RateLimit]
+
+# Um crédito na conta do cliente: o Stripe aplica toda chamada, então
+# depois de um resultado incerto a Calyx pergunta se ele existe.
+tool credit(order: Text, request: Text, amount: Float) -> Unit:
+    effect write once
+    timeout 60 s
+    on_uncertain verify(credit_given(order, request))
+
+# Valem para toda chamada, seja qual for o valor que o modelo propôs.
+policy refund:
+    require amount > 0 else "um reembolso tem valor positivo"
+    require amount <= 10 else "acima de 10 dólares, só pelo financeiro"
+    require order from get_order.id else "só o pedido que foi consultado"
+
+prompt decide(order: Order, message: Text) -> Proposal:
+    """
+    O cliente do pedido {order} escreveu: {message}
+    Proponha um reembolso em dólares (no máximo o total menos o já
+    reembolsado) e o motivo, em uma frase.
+    """
+
+graph atender(request: Text, order: Text, message: Text) -> Text:
+    limits budget 0.05 USD
+    found = get_order(order)
+    proposal = gemini(decide(found, message))
+    approval = receive Approval about proposal, timeout 1 day:
+        on timeout: Denied(reason="ninguém aprovou em 1 dia")
+    return match approval:
+        case Approved:
+            paid = refund(request, order, proposal.amount)
+            gift = credit(order, request, 1.0)    # depois do reembolso: num bloco, a ordem do texto
+            "reembolso de {proposal.amount} feito, mais 1 de crédito"
+        case Denied(reason):
+            "recusado: {reason}"
