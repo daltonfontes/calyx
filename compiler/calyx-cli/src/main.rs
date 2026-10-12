@@ -61,14 +61,18 @@ commands:
       callers in calyx.toml (`[serve.callers.NAME]`, with `token_env` and
       `graphs`): each sees and calls only its graphs, with its own keys.
       No TLS: use 127.0.0.1 and a proxy with TLS for other machines.
-  worker [--fake-models] [--quiet] [--config FILE] [--every SECONDS] [--once]
+  worker [--fake-models] [--quiet] [--config FILE] [--every SECONDS] [--max N]
+         [--once]
       With the journal in PostgreSQL (CALYX_DATABASE_URL), several machines
       share the runs: any of them lists, resumes or replays any run, and a
       run is run by one process at a time. The worker takes over every run
       whose process died (no end in its journal, no process holding it)
       and finishes it, and resumes every waiting run whose message arrived
       or whose deadline passed (as `tick` does), checking again every few
-      seconds (5 by default). Entities and the waits and messages of
+      seconds (5 by default). Each run it takes is a process of its own; a
+      long one does not hold up the others, and at most N run at once
+      (--max, 16 by default). --once takes what there is to take now and
+      waits for it to end. Entities and the waits and messages of
       `receive` are in the database too; programs with sandboxes (a
       directory on one machine) are refused with the journal in PostgreSQL.
   resume <run> [--fake-models] [--quiet] [--config FILE] [--budget USD]
@@ -972,6 +976,7 @@ fn worker(args: &[String]) -> ExitCode {
     let mut pass = Vec::new();
     let mut once = false;
     let mut every = 5.0;
+    let mut max = 16;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -979,6 +984,10 @@ fn worker(args: &[String]) -> ExitCode {
             "--every" => match it.next().and_then(|s| s.parse::<f64>().ok()) {
                 Some(s) if s > 0.0 => every = s,
                 _ => return usage_error("--every expects a number of seconds"),
+            },
+            "--max" => match it.next().and_then(|s| s.parse::<usize>().ok()) {
+                Some(n) if n > 0 => max = n,
+                _ => return usage_error("--max expects how many runs at once (1 or more)"),
             },
             "--fake-models" | "--quiet" => pass.push(arg.clone()),
             "--config" => match it.next() {
@@ -997,7 +1006,12 @@ fn worker(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("calyx"));
+    // The runs this worker is running, each in a process of its own: a
+    // pass does not wait for them, so a long run (an agent, a slow model)
+    // does not hold up the runs that die or get their message meanwhile.
+    let mut running: Vec<(String, std::process::Child)> = Vec::new();
     loop {
+        reap(&mut running, false);
         let now = runs::now();
         // Runs whose process died, and waiting runs that can go on.
         let all = match runs::list() {
@@ -1014,6 +1028,7 @@ fn worker(args: &[String]) -> ExitCode {
         };
         let todo: Vec<(String, &str)> = all
             .into_iter()
+            .filter(|r| !running.iter().any(|(id, _)| *id == r.id))
             .filter_map(|r| match r.status.as_str() {
                 "interrupted" => Some((r.id, "taking over")),
                 "waiting"
@@ -1026,34 +1041,51 @@ fn worker(args: &[String]) -> ExitCode {
                 _ => None,
             })
             .collect();
-        let children: Vec<_> = todo
-            .iter()
-            .filter_map(|(id, what)| {
-                eprintln!("{}: {what} run {id}", command());
-                std::process::Command::new(&exe)
-                    .arg("resume")
-                    .arg(id)
-                    .args(&pass)
-                    .spawn()
-                    .ok()
-                    .map(|c| (id, c))
-            })
-            .collect();
-        for (id, mut c) in children {
-            match c.wait().map(|s| s.code()) {
-                Ok(Some(0)) => eprintln!("{}: run {id} finished", command()),
-                // It waits again (for another message).
-                Ok(Some(4)) => eprintln!("{}: run {id} is waiting", command()),
-                // Another worker took it first.
-                Ok(Some(5)) => {}
-                other => eprintln!("{}: run {id} stopped ({other:?})", command()),
+        for (id, what) in todo {
+            if running.len() >= max {
+                // The rest waits for the next pass.
+                break;
+            }
+            eprintln!("{}: {what} run {id}", command());
+            match std::process::Command::new(&exe)
+                .arg("resume")
+                .arg(&id)
+                .args(&pass)
+                .spawn()
+            {
+                Ok(c) => running.push((id, c)),
+                Err(e) => eprintln!("{}: cannot start {}: {e}", command(), exe.display()),
             }
         }
         if once {
+            reap(&mut running, true);
             return ExitCode::SUCCESS;
         }
         std::thread::sleep(std::time::Duration::from_secs_f64(every));
     }
+}
+
+/// Says how the worker's runs that ended went, and forgets them; with
+/// `wait`, waits for all of them.
+fn reap(running: &mut Vec<(String, std::process::Child)>, wait: bool) {
+    running.retain_mut(|(id, c)| {
+        let status = if wait {
+            c.wait().map(Some)
+        } else {
+            c.try_wait()
+        };
+        match status.map(|s| s.map(|s| s.code())) {
+            // Still running.
+            Ok(None) => return true,
+            Ok(Some(Some(0))) => eprintln!("{}: run {id} finished", command()),
+            // It waits again (for another message).
+            Ok(Some(Some(4))) => eprintln!("{}: run {id} is waiting", command()),
+            // Another worker took it first.
+            Ok(Some(Some(5))) => {}
+            other => eprintln!("{}: run {id} stopped ({other:?})", command()),
+        }
+        false
+    });
 }
 
 fn list_runs() -> ExitCode {
