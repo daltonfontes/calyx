@@ -275,6 +275,19 @@ mod tests {
         // ana's name with eve's key.
         let eve_key = keys_dir().join("eve.ed25519");
         assert!(sign(&s, "ana", Some(&eve_key), &p).is_err());
+        // The delivery goes through the inbox as JSON text: every time,
+        // read back, must be the one signed (`float_roundtrip`; without it
+        // about 1 in 8 times did not).
+        for i in 0..2000u32 {
+            let at = 1_760_278_415.0 + f64::from(i) * 0.000_123_457;
+            let p = payload("run1", "g/approval#0", "Approval", &value, at);
+            let sig = sign(&s, "ana", None, &p).unwrap();
+            let text = json!({"key": "g/approval#0", "message": "Approval", "value": value,
+                              "at": at, "sender": "ana", "sig": sig})
+            .to_string();
+            let line: Value = serde_json::from_str(&text).unwrap();
+            assert!(check(&s, "run1", &line).is_ok(), "at = {at}");
+        }
         // A type nobody limited takes any delivery.
         let free = json!({"key": "k", "message": "Note", "value": "x", "at": 1.0});
         assert_eq!(check(&s, "run1", &free).unwrap(), None);
