@@ -189,6 +189,70 @@ fn a_run_is_run_by_one_process_at_a_time() {
     assert_eq!((c.store("payments"), c.store("outbox")), (1, 1));
 }
 
+impl Cluster {
+    /// Polls `calyx runs` until the run has `status`, or `secs` pass.
+    fn reaches(&self, id: &str, status: &str, secs: u64) -> bool {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+        while std::time::Instant::now() < until {
+            if self.status("b", id) == status {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        false
+    }
+}
+
+#[test]
+fn a_long_run_does_not_hold_up_the_worker() {
+    let Some(_one) = url() else { return };
+    let url = database();
+    let w2 = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/w2_recovery/refund.clyx"),
+    )
+    .unwrap();
+    // Two models a call: about 6 s to finish, and 20 ms.
+    let slow = Cluster::source(
+        "slow",
+        url.clone(),
+        &w2.replace("fake-slow-1000", "fake-slow-3000"),
+    );
+    let quick = Cluster::source("quick", url, &w2.replace("fake-slow-1000", "fake-slow-10"));
+    // The worker's calls go to its machine's store: one request each.
+    let interrupted = |c: &Cluster, request: &str| {
+        let p = c.program();
+        let mut args = vec!["run", p.as_str(), "--quiet"];
+        args.extend(&REFUND[1..]);
+        args[4] = request;
+        let out = c.calyx("a", &args, &[("CALYX_CRASH_AFTER", "1")]);
+        let id = run_id(&text(&out.stderr));
+        assert_eq!(c.status("b", &id), "interrupted");
+        id
+    };
+    let long = interrupted(&slow, "R-long");
+    let mut worker = quick
+        .cmd("b", &["worker", "--every", "0.2", "--quiet"], &[])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    assert!(
+        slow.reaches(&long, "running", 10),
+        "the worker took the long run"
+    );
+    // A run dies while the long one is going: the worker takes it at once.
+    let short = interrupted(&quick, "R-short");
+    let taken = quick.reaches(&short, "finished", 10);
+    let long_then = slow.status("b", &long);
+    let long_done = slow.reaches(&long, "finished", 30);
+    let _ = worker.kill();
+    let _ = worker.wait();
+    assert!(taken, "the short run was finished");
+    assert_eq!(long_then, "running", "while the long one was still going");
+    assert!(long_done);
+    assert_eq!(quick.store("payments"), 2);
+}
+
 /// A key no earlier test run used: the database outlives the tests.
 fn fresh(name: &str) -> String {
     let t = std::time::SystemTime::now()

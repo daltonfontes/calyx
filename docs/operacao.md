@@ -84,7 +84,7 @@ ExecStart=/opt/calyx/bin/calyx worker --quiet
 Restart=always
 ```
 
-O worker sobe um processo por execução que retoma, e cada um lê o ambiente quando começa. Para que o worker veja segredos novos, reinicie-o.
+O worker sobe um processo por execução que retoma, sem esperar uns pelos outros: uma execução longa não atrasa as demais. `--max N` limita quantas correm ao mesmo tempo em cada máquina (16 por padrão). Cada processo lê o ambiente quando começa. Para que o worker veja segredos novos, reinicie-o.
 
 **Sem PostgreSQL**, o `tick` no cron faz a parte das esperas:
 
