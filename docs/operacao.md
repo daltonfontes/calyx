@@ -5,7 +5,7 @@ Como pôr a Calyx em produção e mantê-la lá: instalar, rodar, guardar o esta
 ## 1. Instalar
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.3.7 sh
+curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.3.8 sh
 ```
 
 - **Fixe a versão** (`CALYX_VERSION`) em produção. Sem ela, o script instala a mais recente, e duas máquinas instaladas em dias diferentes podem ficar com versões diferentes.

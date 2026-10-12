@@ -578,6 +578,7 @@ static cx_value *parse_value(parser *ps) {
 }
 
 cx_value *cx_parse(cx_arena *a, const char *text, size_t len, const char **err) {
+    if (!text) text = "", len = 0;
     parser ps = {a, text, text + len, NULL, 0};
     cx_value *v = parse_value(&ps);
     if (v) {

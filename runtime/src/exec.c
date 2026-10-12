@@ -997,14 +997,14 @@ static int shrink(cx_arena *a, cx_value **v, size_t limit) {
  */
 static cx_value *decode_tool(cx_arena *a, cx_value *tool, cx_value *ok, cx_value **record) {
     if (record) *record = ok;
-    if (cx_get_bool(tool, "returns_text", 1)) return cx_get(ok, "text");
+    /* The server's text is a string, or the answer does not decode. */
+    cx_value *t = cx_get(ok, "text");
+    if (t && t->kind != CX_STR) t = NULL;
+    if (cx_get_bool(tool, "returns_text", 1)) return t;
     /* `Unit`: what the server says back is not a value of the program. */
     if (cx_get_bool(tool, "returns_unit", 0)) return cx_null(a);
     cx_value *v = cx_get(ok, "json");
-    if (!v || v->kind == CX_NULL) {
-        cx_value *t = cx_get(ok, "text");
-        v = t ? cx_parse(a, t->u.str.s, t->u.str.len, NULL) : NULL;
-    }
+    if (!v || v->kind == CX_NULL) v = t ? cx_parse(a, t->u.str.s, t->u.str.len, NULL) : NULL;
     cx_value *schema = cx_get(tool, "returns");
     if (!v || !schema || schema->kind != CX_REC) return v;
     v = project(a, v, schema);

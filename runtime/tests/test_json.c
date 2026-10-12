@@ -70,6 +70,8 @@ int main(void) {
     EXPECT(strcmp(cx_get_str(v, "s", ""), "x") == 0, "text field");
     EXPECT(cx_get_bool(v, "b", 0) == 1, "bool field");
     EXPECT(cx_get(v, "missing") == NULL, "missing field");
+    /* Found by fuzz_answers: no text at all is an error, not a crash. */
+    EXPECT(cx_parse(&a, NULL, 0, NULL) == NULL, "no text");
     cx_arena_free(&a);
 
     /* FIPS 180-4 test vectors, plus inputs around the padding boundary. */
