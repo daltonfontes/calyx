@@ -112,7 +112,8 @@ commands:
       copy of this binary with the program (and its calyx.toml) inside.
       It needs neither Calyx nor a C compiler where it runs; graph
       parameters become its options (`./research --topic ...`).
-      -o names the executable (default: the file's name without .clyx).
+      -o names the executable (default: the file's name without .clyx,
+      with .exe on Windows).
       --graph chooses the graph it runs (default: the only one, or `main`).
       --no-config leaves the calyx.toml out.
   version
@@ -566,7 +567,12 @@ fn build(args: &[String]) -> ExitCode {
         },
     };
     // `research.clyx` → `./research`.
-    let out = out.unwrap_or_else(|| PathBuf::from(file.file_stem().unwrap_or(file.as_os_str())));
+    // On Windows, an executable is a `.exe`.
+    let out = out.unwrap_or_else(|| {
+        let mut name = file.file_stem().unwrap_or(file.as_os_str()).to_owned();
+        name.push(std::env::consts::EXE_SUFFIX);
+        PathBuf::from(name)
+    });
     let runtime = match std::env::current_exe() {
         Ok(e) => e,
         Err(e) => {

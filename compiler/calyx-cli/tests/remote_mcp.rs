@@ -26,6 +26,7 @@ fn remote(log: &Path, flags: &[&str]) -> Remote {
         .arg(script)
         .args(flags)
         .env("CALYX_REMOTE_LOG", log)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();

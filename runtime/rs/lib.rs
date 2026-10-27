@@ -71,6 +71,14 @@ pub struct RunOptions {
     pub uncertain_value: Option<serde_json::Value>,
 }
 
+/// The user's home directory: `HOME`, or `USERPROFILE` on Windows.
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+}
+
 /// What identifies a compiled program in a run's journal (D23): the
 /// SHA-256 of its IR in JSON, without the object fields that are `null`.
 /// A field a later version adds to the IR is `null` in programs that do

@@ -13,6 +13,7 @@ fn main() {
         "src/json.h",
         "src/journal.h",
         "src/sha256.h",
+        "src/compat.h",
         "include/calyx_runtime.h",
         "include/calyx_io.h",
         "include/calyx_verify.h",

@@ -136,7 +136,13 @@ impl Server {
 
     fn spawn(cfg: &ToolServer) -> Result<Transport, IoError> {
         let (program, args) = cfg.command.split_first().expect("non-empty command");
-        let mut child = Command::new(program)
+        let mut command = Command::new(program);
+        // MCP over stdio is UTF-8; Python on Windows writes the console's
+        // code page to a pipe unless told otherwise.
+        if cfg!(windows) && std::env::var_os("PYTHONIOENCODING").is_none() {
+            command.env("PYTHONIOENCODING", "utf-8");
+        }
+        let mut child = command
             .args(args)
             .current_dir(&cfg.dir)
             .stdin(Stdio::piped())
@@ -153,9 +159,23 @@ impl Server {
         let stdout = child.stdout.take().expect("piped stdout");
         let waiting: Waiting = Arc::new(Mutex::new(Some(HashMap::new())));
         let readers = Arc::clone(&waiting);
+        let name = cfg.command.join(" ");
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
+            let mut warned = false;
+            for line in BufReader::new(stdout).split(b'\n') {
+                let Ok(bytes) = line else { break };
+                // A line that is not UTF-8 is still read (with U+FFFD for
+                // what is not), not taken as the server's end.
+                let line = match String::from_utf8(bytes) {
+                    Ok(line) => line,
+                    Err(e) => {
+                        if !warned {
+                            warned = true;
+                            eprintln!("calyx: MCP server `{name}` writes text that is not UTF-8");
+                        }
+                        String::from_utf8_lossy(e.as_bytes()).into_owned()
+                    }
+                };
                 // Not JSON-RPC: servers sometimes log to stdout. Ignore it.
                 let Ok(msg) = serde_json::from_str::<Value>(&line) else {
                     continue;

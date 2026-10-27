@@ -100,7 +100,7 @@ impl Dir {
             .join("../../examples/tools/fake_store.py")
             .canonicalize()
             .unwrap();
-        let cmd = format!("command = [\"python3\", \"{}\"]\n", store.display());
+        let cmd = format!("command = [\"python3\", '{}']\n", store.display());
         let toml: String = [
             "refund",
             "email",

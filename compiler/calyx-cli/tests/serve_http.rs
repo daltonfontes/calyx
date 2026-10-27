@@ -60,7 +60,7 @@ fn dir(name: &str, serve_toml: &str) -> PathBuf {
         .iter()
         .map(|t| {
             format!(
-                "[tools.{t}]\ncommand = [\"python3\", \"{}\"]\n",
+                "[tools.{t}]\ncommand = [\"python3\", '{}']\n",
                 store.display()
             )
         })

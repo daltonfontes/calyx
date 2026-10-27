@@ -210,7 +210,13 @@ and **100%, zero duplicates** when every write accepts a key.
 curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | sh
 ```
 
-One binary, no dependencies. Linux and macOS (x86_64 and ARM); on Windows, use WSL.
+On Windows (PowerShell, no WSL needed):
+
+```powershell
+irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
+```
+
+One binary, no dependencies. Linux and macOS (x86_64 and ARM), Windows (x86_64).
 
 ### 2. Tell your agent to use Calyx:
 
@@ -352,7 +358,7 @@ for code agents to per-user memory, debates and model routers, in
 - Most experiments use fake models; the parallelism and recovery ones were
   repeated with Gemini. The baselines and bug corpus were written by Calyx's
   author; LIMBO's tasks and grader were not.
-- No Windows (WSL works).
+- Windows binaries are x86_64 only (they also run, emulated, on Windows on ARM).
 ```
 
 **CALYX IS YOUNG. EXPECT BUGS AND [REPORT THEM](https://github.com/daltonfontes/calyx/issues).**

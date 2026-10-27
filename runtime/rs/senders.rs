@@ -88,8 +88,10 @@ pub fn keys_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("CALYX_KEYS_DIR") {
         return PathBuf::from(d);
     }
-    let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
-    home.join(".calyx").join("keys")
+    crate::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".calyx")
+        .join("keys")
 }
 
 /// Makes a key pair for `name`: the private key goes to `keys_dir()`

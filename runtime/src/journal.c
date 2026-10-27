@@ -16,6 +16,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "compat.h"
+
 /* Answers above this size go to blobs/ (decision D20). */
 #define BLOB_THRESHOLD 4096
 #define SYNC_INTERVAL 1.0
@@ -269,9 +271,9 @@ cx_journal *cx_journal_open(cx_arena *a, const char *dir, cx_journal_mode mode,
     j->mode = mode;
     char *path = path_join(a, dir, CX_JOURNAL_FILE);
     if (calyx_pg_enabled()) {
-        const char *slash = strrchr(dir, '/');
+        const char *id = cx_basename(dir);
         j->pg = 1;
-        j->run = cx_strndup(a, slash ? slash + 1 : dir, strlen(slash ? slash + 1 : dir));
+        j->run = cx_strndup(a, id, strlen(id));
     }
 
     if (mode == CX_JOURNAL_NEW && j->pg) {
@@ -291,7 +293,7 @@ cx_journal *cx_journal_open(cx_arena *a, const char *dir, cx_journal_mode mode,
             cx_buf_printf(err, "cannot create the run directory `%s`", dir);
             return NULL;
         }
-        j->f = fopen(path, "wbx"); /* never overwrite an existing run */
+        j->f = cx_create_new(path); /* never overwrite an existing run */
         if (!j->f) {
             cx_buf_printf(err, "cannot create the journal `%s`", path);
             return NULL;
