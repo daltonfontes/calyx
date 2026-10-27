@@ -143,7 +143,10 @@ jobs:
           python-version: "3.12"
 
       - name: python3, as the tests' fake MCP servers are started
-        run: cp "$(command -v python)" "$(dirname "$(command -v python)")/python3.exe"
+        run: |
+          dir=$(dirname "$(command -v python)")
+          [ -e "$dir/python3.exe" ] || cp "$dir/python.exe" "$dir/python3.exe"
+          python3 --version
 
       - name: Test
         run: cargo test
