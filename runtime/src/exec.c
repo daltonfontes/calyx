@@ -4236,6 +4236,7 @@ done:
             free(p);
         }
     free(x->cancelled);
+    free(x->owes);
     cx_buf_free(&msg);
     cx_buf_free(&x->err);
     cx_arena_free(&x->arena);
