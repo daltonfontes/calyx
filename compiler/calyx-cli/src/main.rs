@@ -265,7 +265,7 @@ fn check(args: &[String]) -> ExitCode {
     let Some(file) = file else {
         return usage_error("check needs a file");
     };
-    let text = match std::fs::read_to_string(&file) {
+    let text = match read_source(Path::new(&file)) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("calyx: cannot read `{file}`: {e}");
@@ -585,7 +585,7 @@ fn build(args: &[String]) -> ExitCode {
             || file.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         ),
-        source: std::fs::read_to_string(&file).unwrap_or_default(),
+        source: read_source(&file).unwrap_or_default(),
         graph: graph.clone(),
         config,
     };
@@ -1182,10 +1182,22 @@ fn dir_of(file: &Path) -> &Path {
 }
 
 /// Reads and checks a program. On errors, prints them.
+/// A program's source, with Windows line ends (`\r\n`) as `\n`: the same
+/// program compiles to the same thing whatever editor saved it, and no
+/// `\r` reaches a prompt.
+pub fn read_source(path: &Path) -> std::io::Result<String> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(if text.contains('\r') {
+        text.replace("\r\n", "\n")
+    } else {
+        text
+    })
+}
+
 fn compile(origin: &Origin) -> Result<calyx_ir::Program, ExitCode> {
     let (name, text) = match origin {
         Origin::File(file) => {
-            let text = std::fs::read_to_string(file).map_err(|e| {
+            let text = read_source(file).map_err(|e| {
                 eprintln!("{}: cannot read `{}`: {e}", command(), file.display());
                 ExitCode::from(2)
             })?;
