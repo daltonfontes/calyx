@@ -113,6 +113,79 @@ jobs:
           ./target/release/calyx build examples/agent.clyx -o "$RUNNER_TEMP/agent"
           cd "$RUNNER_TEMP" && ./agent --fake-models --quiet --question "baterias de sódio"
 
+  # Windows, natively (no WSL): the GNU toolchain (MinGW-w64), as the
+  # release builds it. The runtime's few POSIX calls go through
+  # runtime/src/compat.h. Postgres and sandbox-on-Postgres tests skip.
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-gnu
+
+      - name: MinGW-w64 gcc, for the C runtime
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+
+      - name: Put MinGW-w64 on the PATH
+        run: echo "$RUNNER_TEMP/msys64/mingw64/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: python3, as the tests' fake MCP servers are started
+        run: |
+          dir=$(dirname "$(command -v python)")
+          [ -e "$dir/python3.exe" ] || cp "$dir/python.exe" "$dir/python3.exe"
+          python3 --version
+
+      - name: Test
+        run: cargo test
+
+      - name: The CLI on Windows (fake models, fake MCP search)
+        run: |
+          cargo build --release
+          calyx=./target/release/calyx.exe
+          $calyx --version
+          $calyx run examples/research.clyx --fake-models --quiet --topic "energia solar"
+          $calyx run examples/refund.clyx --fake-models --quiet --request R1 --order A100 --message "chegou quebrado"
+          # A run that dies half-way resumes without redoing what finished.
+          set +e
+          CALYX_CRASH_AFTER=2 $calyx run examples/research.clyx --fake-models --quiet --topic baterias 2> crash.log
+          set -e
+          id=$(sed -n 's/^calyx: run //p' crash.log | tr -d '\r')
+          $calyx resume "$id" --fake-models --quiet 2>&1 | tee resume.log
+          # A standalone program.
+          $calyx build examples/agent.clyx -o "$RUNNER_TEMP/agent.exe"
+          "$RUNNER_TEMP/agent.exe" --fake-models --quiet --question "baterias de sódio"
+
+      - name: install.ps1 against an archive of this build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Force -Path target/release/calyx.exe -DestinationPath dist/calyx-x86_64-pc-windows-gnu.zip
+          $hash = (Get-FileHash dist/calyx-x86_64-pc-windows-gnu.zip -Algorithm SHA256).Hash.ToLower()
+          Set-Content dist/calyx-x86_64-pc-windows-gnu.zip.sha256 "$hash  calyx-x86_64-pc-windows-gnu.zip"
+          $server = Start-Process python -ArgumentList '-m','http.server','8765','--directory','dist' -PassThru
+          Start-Sleep 2
+          $env:CALYX_BASE_URL = 'http://127.0.0.1:8765'
+          $env:CALYX_INSTALL = "$env:RUNNER_TEMP\calyx"
+          $env:CALYX_NO_MODIFY_PATH = '1'
+          ./install.ps1
+          & "$env:RUNNER_TEMP\calyx\bin\calyx.exe" --version
+          $v = ((& "$env:RUNNER_TEMP\calyx\bin\calyx.exe" --version) -split ' ')[1]
+          & "$env:RUNNER_TEMP\calyx\versions\$v\calyx.exe" --version
+          Stop-Process $server
+
   # The C runtime under libFuzzer, AddressSanitizer and UBSan: the parser,
   # the journal, the answers of models and tools, and the IR (runtime/fuzz/).
   # A minute per target on the corpus, which keeps every input that once

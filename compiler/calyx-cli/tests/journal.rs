@@ -46,8 +46,8 @@ impl Dir {
         std::fs::write(
             dir.join("calyx.toml"),
             format!(
-                "[tools.web_search]\ncommand = [\"python3\", \"{search}\"]\n\n\
-                 [tools.notify]\ncommand = [\"python3\", \"{search}\"]\nname = \"web_search\"\n"
+                "[tools.web_search]\ncommand = [\"python3\", '{search}']\n\n\
+                 [tools.notify]\ncommand = [\"python3\", '{search}']\nname = \"web_search\"\n"
             ),
         )
         .unwrap();

@@ -18,6 +18,7 @@ on:
     paths:
       - ".github/workflows/release.yml"
       - "install.sh"
+      - "install.ps1"
       - "compiler/calyx-cli/src/bundle.rs"
   workflow_dispatch:
     inputs:
@@ -53,13 +54,36 @@ jobs:
           - target: x86_64-apple-darwin
             os: macos-latest
             run: arch -x86_64
+          # Windows: MinGW-w64 (runtime/src/compat.h), no DLLs beyond Windows'.
+          - target: x86_64-pc-windows-gnu
+            os: windows-latest
+            run: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.os != 'Windows'
         with:
           targets: ${{ matrix.target }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Windows'
+        with:
+          toolchain: stable-x86_64-pc-windows-gnu
+
+      - name: MinGW-w64 gcc (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+
+      - name: Put MinGW-w64 on the PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "$RUNNER_TEMP/msys64/mingw64/bin" >> "$GITHUB_PATH"
 
       - name: Install zig (Linux)
         if: runner.os == 'Linux'
@@ -97,30 +121,56 @@ jobs:
       - name: Smoke test (the binary and a program built with it)
         shell: bash
         run: |
-          bin=target/${{ matrix.target }}/release/calyx
-          file "$bin"
+          exe=""
+          [ "$RUNNER_OS" = Windows ] && exe=.exe
+          bin=target/${{ matrix.target }}/release/calyx$exe
           if [ "$RUNNER_OS" = Linux ]; then
+            file "$bin"
             file "$bin" | grep -q "statically linked"
-          else
+          elif [ "$RUNNER_OS" = macOS ]; then
+            file "$bin"
             otool -L "$bin"
             otool -l "$bin" | grep -m1 minos
+          else
+            # Only Windows' own DLLs (no MinGW runtime to ship).
+            objdump -p "$bin" | grep "DLL Name" | sort -u
+            ! objdump -p "$bin" | grep -qiE "DLL Name: (libgcc|libwinpthread|libstdc)"
           fi
           ${{ matrix.run }} "$bin" --version
-          ${{ matrix.run }} "$bin" build examples/research.clyx -o examples/research
-          ${{ matrix.run }} examples/research --fake-models --quiet --no-journal --topic "energia solar"
+          ${{ matrix.run }} "$bin" build examples/research.clyx -o examples/research$exe
+          ${{ matrix.run }} examples/research$exe --fake-models --quiet --no-journal --topic "energia solar"
 
       - name: Package
         shell: bash
         run: |
           mkdir -p dist
           name=calyx-${{ matrix.target }}
-          tar -czf dist/$name.tar.gz -C target/${{ matrix.target }}/release calyx
+          if [ "$RUNNER_OS" = Windows ]; then
+            archive=$name.zip
+            7z a -tzip dist/$archive ./target/${{ matrix.target }}/release/calyx.exe
+          else
+            archive=$name.tar.gz
+            tar -czf dist/$archive -C target/${{ matrix.target }}/release calyx
+          fi
           cd dist
           if command -v sha256sum >/dev/null; then
-            sha256sum $name.tar.gz > $name.tar.gz.sha256
+            sha256sum $archive > $archive.sha256
           else
-            shasum -a 256 $name.tar.gz > $name.tar.gz.sha256
+            shasum -a 256 $archive > $archive.sha256
           fi
+
+      - name: Test install.ps1 against the new archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $server = Start-Process python -ArgumentList '-m','http.server','8765','--directory','dist' -PassThru
+          Start-Sleep 2
+          $env:CALYX_BASE_URL = 'http://127.0.0.1:8765'
+          $env:CALYX_INSTALL = "$env:RUNNER_TEMP\calyx"
+          $env:CALYX_NO_MODIFY_PATH = '1'
+          ./install.ps1
+          & "$env:RUNNER_TEMP\calyx\bin\calyx.exe" --version
+          Stop-Process $server
 
       - uses: actions/upload-artifact@v4
         with:

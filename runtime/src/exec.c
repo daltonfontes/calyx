@@ -53,13 +53,17 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <pthread.h>
+#ifndef _WIN32
 #include <sys/file.h>
+#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+#include "compat.h"
 
 #define IR_VERSION 1
 #define MAX_GRAPH_DEPTH 64
@@ -871,7 +875,9 @@ static int conforms(const cx_value *v, const cx_value *schema, const char **why)
 
 /* A model's answer as a value of the prompt's type, or NULL. */
 static cx_value *decode_model(cx_arena *a, cx_value *prompt, cx_value *ok, const char **why) {
+    /* The model's text is a string, or the answer does not decode. */
     cx_value *t = cx_get(ok, "text");
+    if (t && t->kind != CX_STR) t = NULL;
     cx_value *schema = cx_get(prompt, "schema");
     if (!schema || schema->kind == CX_NULL) return t;
     const char *s = t ? t->u.str.s : "";
@@ -2615,7 +2621,7 @@ static char *slurp(cx_arena *a, const char *path, size_t *len) {
 static int write_durable(const char *path, const char *data, size_t len) {
     char tmp[4200];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | CX_O_BINARY, 0644);
     if (fd < 0) return -1;
     int ok = write(fd, data, len) == (ssize_t)len && fsync(fd) == 0;
     ok = close(fd) == 0 && ok;
@@ -2811,7 +2817,7 @@ static cx_value *entity_job(exec *x, cx_arena *a, job *j, char *why, size_t why_
         snprintf(path, sizeof path, "%s/key.json", dir);
         if (access(path, F_OK) != 0) write_durable(path, kb.data, kb.len);
         snprintf(path, sizeof path, "%s/lock", dir);
-        lockfd = open(path, O_RDWR | O_CREAT, 0644);
+        lockfd = open(path, O_RDWR | O_CREAT | CX_O_BINARY, 0644);
         if (lockfd < 0 || flock(lockfd, j->send ? LOCK_EX : LOCK_SH) != 0) {
             snprintf(why, why_len, "entity `%s`: cannot lock %.300s", ename, path);
             goto out;
@@ -2897,7 +2903,7 @@ static int append_line(exec *x, const char *file, const char *data, size_t len) 
     if (!line) return -1;
     memcpy(line, data, len);
     line[len] = '\n';
-    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | CX_O_BINARY, 0644);
     int ok = fd >= 0 && write(fd, line, len + 1) == (ssize_t)(len + 1) && fsync(fd) == 0;
     free(line);
     if (fd < 0) return -1;
@@ -4018,7 +4024,7 @@ static char *error_json(const char *msg) {
 }
 
 static int cpu_count(void) {
-    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    long n = cx_cpus();
     return n < 1 ? 1 : n > MAX_WORKERS ? MAX_WORKERS : (int)n;
 }
 
@@ -4110,8 +4116,7 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
     /* The run's id for entities: its directory's name (the same when
      * resumed); without a journal, unique to this process. */
     if (dir) {
-        const char *slash = strrchr(dir, '/');
-        x->run_id = slash ? slash + 1 : dir;
+        x->run_id = cx_basename(dir);
         x->run_dir = dir;
     } else {
         x->run_id = fmt(&x->arena, "pid%ld-%ld", (long)getpid(), (long)time(NULL));

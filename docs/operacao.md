@@ -5,13 +5,25 @@ Como pôr a Calyx em produção e mantê-la lá: instalar, rodar, guardar o esta
 ## 1. Instalar
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.3.9 sh
+curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.4.0 sh
 ```
 
 - **Fixe a versão** (`CALYX_VERSION`) em produção. Sem ela, o script instala a mais recente, e duas máquinas instaladas em dias diferentes podem ficar com versões diferentes.
-- O binário é estático: não precisa de Rust, de compilador C nem de bibliotecas. Há binários para Linux x86_64 e ARM (musl) e para macOS. O script confere o SHA-256 do arquivo baixado.
+- O binário é estático: não precisa de Rust, de compilador C nem de bibliotecas. Há binários para Linux x86_64 e ARM (musl), para macOS e para Windows x86_64. O script confere o SHA-256 do arquivo baixado.
 - O script põe o binário em `~/.calyx/bin/calyx` (ou `$CALYX_INSTALL/bin`) e guarda uma cópia em `~/.calyx/versions/<versão>/calyx`. A cópia serve para atualizar sem perder execuções em andamento (seção 4).
 - Em imagens de contêiner, rode o script no build, com `CALYX_INSTALL=/opt/calyx`, e mantenha `/opt/calyx/versions` na imagem.
+
+**No Windows** (PowerShell, sem WSL):
+
+```powershell
+$env:CALYX_VERSION = 'v0.4.0'; irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
+```
+
+- O `install.ps1` faz o mesmo que o `install.sh`: confere o SHA-256, instala em `~\.calyx\bin\calyx.exe` (ou `$env:CALYX_INSTALL\bin`), guarda a cópia em `versions\<versão>\calyx.exe` e acrescenta `bin` ao PATH do usuário (`CALYX_NO_MODIFY_PATH=1` evita).
+- O que muda no Windows:
+  - **Servidores MCP em Python:** a Calyx define `PYTHONIOENCODING=utf-8` para os servidores que inicia, porque o MCP é UTF-8 e o Python no Windows escreve na codificação local. Na configuração, use `python` ou `py` em vez de `python3`, conforme o que estiver instalado.
+  - **`calyx worker` como serviço:** o equivalente ao systemd é o Agendador de Tarefas ("ao iniciar o sistema", reiniciar se falhar) ou um wrapper de serviço como o NSSM. O `calyx tick` vai no Agendador, a cada minuto.
+  - **Chaves privadas de quem assina entregas** (`~\.calyx\keys`) ficam com as permissões da pasta do usuário: no Windows a Calyx não restringe o arquivo como faz no Unix (`0600`).
 
 ## 2. Onde fica o estado
 

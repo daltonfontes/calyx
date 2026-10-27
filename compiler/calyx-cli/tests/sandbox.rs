@@ -70,7 +70,7 @@ impl Dir {
             .join("tools/sandbox_tools.py")
             .canonicalize()
             .unwrap();
-        let cmd = format!("command = [\"python3\", \"{}\"]\n", tools.display());
+        let cmd = format!("command = [\"python3\", '{}']\n", tools.display());
         let toml: String = ["read_file", "edit_file", "run_tests"]
             .iter()
             .map(|t| format!("[tools.{t}]\n{cmd}\n"))

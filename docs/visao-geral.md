@@ -81,10 +81,16 @@ Na medida Q2, o compilador pega 30 de 45 bugs de estado antes de rodar, e 39 de 
 
 ## Como instalar
 
-Um binário só, sem dependências: não precisa de Rust, de compilador C nem de bibliotecas (decisão D35). Linux (x86_64 e ARM) e macOS (Intel e Apple Silicon); no Windows, use o WSL.
+Um binário só, sem dependências: não precisa de Rust, de compilador C nem de bibliotecas (decisão D35). Linux (x86_64 e ARM), macOS (Intel e Apple Silicon) e Windows (x86_64, sem WSL).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | sh
+```
+
+No Windows, no PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
 ```
 
 O script baixa o binário da última versão em [Releases](https://github.com/daltonfontes/calyx/releases), confere o SHA-256 e instala em `~/.calyx/bin`. `CALYX_VERSION=v0.1.0` escolhe uma versão; `CALYX_INSTALL` troca a pasta.

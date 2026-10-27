@@ -185,8 +185,14 @@ chave.
 curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | sh
 ```
 
-Um binário só, sem dependências. Linux e macOS (x86_64 e ARM); no Windows,
-use o WSL.
+No Windows (PowerShell, sem precisar do WSL):
+
+```powershell
+irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
+```
+
+Um binário só, sem dependências. Linux e macOS (x86_64 e ARM), Windows
+(x86_64).
 
 ### 2. Diga ao seu agente para usar a Calyx:
 
@@ -327,7 +333,7 @@ modelos, em [`examples/`](examples).
 - A maioria dos experimentos usa modelos falsos; os de paralelismo e
   recuperação foram repetidos com o Gemini. Os baselines e o corpus de bugs
   foram escritos pelo autor da Calyx; as tarefas e o avaliador do LIMBO não.
-- Sem Windows (o WSL funciona).
+- No Windows, só x86_64 (que também roda, emulado, no Windows em ARM).
 ```
 
 **A CALYX É JOVEM. ESPERE BUGS E [RELATE-OS](https://github.com/daltonfontes/calyx/issues).**

@@ -1,0 +1,11 @@
+# The same bytes on every system: Windows checkouts too keep LF, so test
+# fixtures (tests/programs/*.expected), program hashes and the journal's
+# examples match. (Calyx itself also reads `\r\n` sources as `\n`.)
+* text=auto eol=lf
+
+*.pdf binary
+*.png binary
+*.gif binary
+*.zip binary
+# Fuzz inputs are bytes, not text.
+runtime/fuzz/corpus/** -text

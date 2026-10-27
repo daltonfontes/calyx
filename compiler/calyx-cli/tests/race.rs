@@ -89,7 +89,7 @@ impl Dir {
         std::fs::write(
             dir.join("calyx.toml"),
             format!(
-                "[tools.web_search]\ncommand = [\"python3\", \"{}\"]\n",
+                "[tools.web_search]\ncommand = [\"python3\", '{}']\n",
                 tool.display()
             ),
         )

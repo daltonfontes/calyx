@@ -47,7 +47,12 @@ fn the_examples_compile_to_the_programs_older_versions_did() {
         if !out.status.success() {
             continue;
         }
-        let name = p.strip_prefix(root()).unwrap().display().to_string();
+        let name = p
+            .strip_prefix(root())
+            .unwrap()
+            .display()
+            .to_string()
+            .replace('\\', "/");
         let hash = calyx_runtime::program_hash(&text(&out.stdout)).unwrap();
         now += &format!("{name} {hash}\n");
     }

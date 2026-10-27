@@ -110,7 +110,7 @@ pub fn serve(args: &[String]) -> ExitCode {
     let file = path
         .file_name()
         .map_or(file, |n| n.to_string_lossy().into_owned());
-    let text = match std::fs::read_to_string(&file) {
+    let text = match crate::read_source(Path::new(&file)) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("calyx: cannot read `{file}`: {e}");

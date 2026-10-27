@@ -57,7 +57,7 @@ impl Dir {
             .iter()
             .map(|t| {
                 format!(
-                    "[tools.{t}]\ncommand = [\"python3\", \"{}\"]\nname = \"web_search\"\n",
+                    "[tools.{t}]\ncommand = [\"python3\", '{}']\nname = \"web_search\"\n",
                     search.display()
                 )
             })
@@ -215,7 +215,7 @@ fn calls_to_one_server_are_in_flight_together() {
         .iter()
         .map(|t| {
             format!(
-                "[tools.{t}]\ncommand = [\"python3\", \"{}\"]\n",
+                "[tools.{t}]\ncommand = [\"python3\", '{}']\n",
                 slow.display()
             )
         })
