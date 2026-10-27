@@ -875,7 +875,9 @@ static int conforms(const cx_value *v, const cx_value *schema, const char **why)
 
 /* A model's answer as a value of the prompt's type, or NULL. */
 static cx_value *decode_model(cx_arena *a, cx_value *prompt, cx_value *ok, const char **why) {
+    /* The model's text is a string, or the answer does not decode. */
     cx_value *t = cx_get(ok, "text");
+    if (t && t->kind != CX_STR) t = NULL;
     cx_value *schema = cx_get(prompt, "schema");
     if (!schema || schema->kind == CX_NULL) return t;
     const char *s = t ? t->u.str.s : "";
