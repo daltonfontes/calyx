@@ -5,7 +5,7 @@ Como pôr a Calyx em produção e mantê-la lá: instalar, rodar, guardar o esta
 ## 1. Instalar
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.3.8 sh
+curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.3.9 sh
 ```
 
 - **Fixe a versão** (`CALYX_VERSION`) em produção. Sem ela, o script instala a mais recente, e duas máquinas instaladas em dias diferentes podem ficar com versões diferentes.
@@ -167,7 +167,7 @@ CALYX=~/.calyx/bin/calyx CALYX_DATABASE_URL=postgres://... \
 STRIPE_API_KEY=sk_test_... GEMINI_API_KEY=... sh bench/ensaio/run_ensaio.sh
 ```
 
-O primeiro ensaio, com a 0.3.8, passou (1 reembolso, 1 crédito) e achou três coisas, corrigidas depois dele: o worker tentava a cada passada, para sempre, uma execução que não podia retomar; `timeout 1 day` não era aceito (só `1 days`); e `after` dentro de um bloco dava um erro que não dizia que, num bloco, a ordem é a do texto.
+O primeiro ensaio, com a 0.3.8, passou (1 reembolso, 1 crédito) e achou três coisas, corrigidas na 0.3.9: o worker tentava a cada passada, para sempre, uma execução que não podia retomar; `timeout 1 day` não era aceito (só `1 days`); e `after` dentro de um bloco dava um erro que não dizia que, num bloco, a ordem é a do texto.
 
 ## 8. Antes de ir para produção
 
