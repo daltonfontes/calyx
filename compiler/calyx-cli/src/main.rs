@@ -93,6 +93,14 @@ commands:
       Run again using only the journal: no model or tool is called.
   runs
       List the runs in .calyx/runs.
+  prune --older-than DAYS [--dry-run]
+      Delete the runs that ended (finished or failed) more than DAYS days
+      ago: their journal, their files and, with the journal in PostgreSQL,
+      the large answers no other run refers to. Runs that wait, were
+      interrupted or are running are kept, whatever their age, and so are
+      entities and the keys of `calyx serve` (a key keeps its answer).
+      A failed run that is deleted can no longer be resumed.
+      --dry-run lists what would be deleted, and deletes nothing.
   deliver <run> <Message> <json> [--as NAME [--key FILE]] [--config FILE]
       Deliver a message to a run waiting on `receive Message`: checked
       against the message's type, then given to the oldest such receive.
@@ -140,6 +148,7 @@ fn main() -> ExitCode {
         Some("resume") => rerun(&args[1..], Mode::Resume),
         Some("replay") => rerun(&args[1..], Mode::Replay),
         Some("runs") => list_runs(),
+        Some("prune") => prune(&args[1..]),
         Some("deliver") => deliver(&args[1..]),
         Some("keys") => keys(&args[1..]),
         Some("tick") => tick(&args[1..]),
@@ -1139,6 +1148,70 @@ fn reap(running: &mut Vec<(String, std::process::Child)>, later: &mut Later, wai
         }
         false
     });
+}
+
+/// `calyx prune --older-than DAYS [--dry-run]`.
+fn prune(args: &[String]) -> ExitCode {
+    let (mut days, mut dry) = (None, false);
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--older-than" => match it.next().and_then(|d| d.parse::<f64>().ok()) {
+                Some(d) if d >= 0.0 && d.is_finite() => days = Some(d),
+                _ => return usage_error("--older-than expects a number of days"),
+            },
+            "--dry-run" => dry = true,
+            a => return usage_error(&format!("unknown option `{a}`")),
+        }
+    }
+    // No default: deleting journals is a decision, not a habit.
+    let Some(days) = days else {
+        return usage_error("prune needs --older-than DAYS (e.g. --older-than 90)");
+    };
+    let old = match runs::ended_before(days * 86_400.0) {
+        Ok(old) => old,
+        Err(e) => {
+            eprintln!("{}: {e}", command());
+            return ExitCode::from(2);
+        }
+    };
+    for (id, status) in &old {
+        println!(
+            "{} {id} ({status})",
+            if dry { "would delete" } else { "delete" }
+        );
+    }
+    if dry {
+        println!("{} run(s) would be deleted", old.len());
+        return ExitCode::SUCCESS;
+    }
+    let ids: Vec<String> = old.into_iter().map(|(id, _)| id).collect();
+    let n = match runs::delete(&ids) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("{}: {e}", command());
+            return ExitCode::from(2);
+        }
+    };
+    let blobs = if calyx_runtime::pg::enabled() {
+        // A run writes a blob just before the journal line that refers to
+        // it: only blobs older than this are taken for unused.
+        let margin = std::env::var("CALYX_PRUNE_BLOB_MARGIN_S")
+            .ok()
+            .and_then(|m| m.parse().ok())
+            .unwrap_or(3600.0);
+        match calyx_runtime::pg::delete_unused_blobs(margin) {
+            Ok(b) => format!(", {b} unused blob(s)"),
+            Err(e) => {
+                eprintln!("{}: journal database: {e}", command());
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        String::new()
+    };
+    println!("deleted {n} run(s){blobs}");
+    ExitCode::SUCCESS
 }
 
 fn list_runs() -> ExitCode {

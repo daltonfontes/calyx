@@ -103,7 +103,8 @@ CREATE TABLE IF NOT EXISTS calyx_entities (
     key text NOT NULL,
     doc text NOT NULL DEFAULT '',
     PRIMARY KEY (entity, khash)
-);";
+);
+ALTER TABLE calyx_blobs ADD COLUMN IF NOT EXISTS created timestamptz NOT NULL DEFAULT now();";
 
 /// The journal is in PostgreSQL (the URL is set).
 pub fn enabled() -> bool {
@@ -243,6 +244,59 @@ pub fn summaries() -> Result<Vec<RunSummary>, String> {
             resumes: r.get(4),
         })
         .collect())
+    })
+}
+
+/// The runs that ended (`finished` or `failed`) more than `secs` seconds
+/// ago, oldest first: what `calyx prune` may delete.
+pub fn ended_before(secs: f64) -> Result<Vec<(String, String)>, String> {
+    with(|c| {
+        Ok(c.query(
+            "SELECT id, status FROM calyx_runs \
+                 WHERE status IN ('finished', 'failed') \
+                   AND updated < now() - make_interval(secs => $1) ORDER BY id",
+            &[&secs],
+        )?
+        .iter()
+        .map(|r| (r.get(0), r.get(1)))
+        .collect())
+    })
+}
+
+/// Deletes ended runs: their journal, their files (waits, inbox) and
+/// their row, in one transaction. A run that is no longer ended (resumed
+/// meanwhile) is left alone. Returns how many were deleted.
+pub fn delete_runs(ids: &[String]) -> Result<usize, String> {
+    with(|c| {
+        let mut tx = c.transaction()?;
+        let gone: Vec<String> = tx
+            .query(
+                "DELETE FROM calyx_runs WHERE id = ANY($1) AND status IN ('finished', 'failed') \
+                 RETURNING id",
+                &[&ids],
+            )?
+            .iter()
+            .map(|r| r.get(0))
+            .collect();
+        tx.execute("DELETE FROM calyx_journal WHERE run = ANY($1)", &[&gone])?;
+        tx.execute("DELETE FROM calyx_files WHERE run = ANY($1)", &[&gone])?;
+        tx.commit()?;
+        Ok(gone.len())
+    })
+}
+
+/// Deletes the blobs no journal line refers to any more. A run writes a
+/// blob just before the line that refers to it, so only blobs older than
+/// `margin_secs` are deleted: never one a run in progress is about to use.
+pub fn delete_unused_blobs(margin_secs: f64) -> Result<u64, String> {
+    with(|c| {
+        c.execute(
+            "DELETE FROM calyx_blobs b \
+             WHERE b.created < now() - make_interval(secs => $1) \
+               AND NOT EXISTS (SELECT 1 FROM calyx_journal j \
+                               WHERE j.line LIKE '%\"blob\":\"' || b.hash || '\"%')",
+            &[&margin_secs],
+        )
     })
 }
 

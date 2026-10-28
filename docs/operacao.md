@@ -5,7 +5,7 @@ Como pôr a Calyx em produção e mantê-la lá: instalar, rodar, guardar o esta
 ## 1. Instalar
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.4.1 sh
+curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.5.0 sh
 ```
 
 - **Fixe a versão** (`CALYX_VERSION`) em produção. Sem ela, o script instala a mais recente, e duas máquinas instaladas em dias diferentes podem ficar com versões diferentes.
@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh 
 **No Windows** (PowerShell, sem WSL):
 
 ```powershell
-$env:CALYX_VERSION = 'v0.4.1'; irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
+$env:CALYX_VERSION = 'v0.5.0'; irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
 ```
 
 - O `install.ps1` faz o mesmo que o `install.sh`: confere o SHA-256, instala em `~\.calyx\bin\calyx.exe` (ou `$env:CALYX_INSTALL\bin`), guarda a cópia em `versions\<versão>\calyx.exe` e acrescenta `bin` ao PATH do usuário (`CALYX_NO_MODIFY_PATH=1` evita).
@@ -50,20 +50,17 @@ A Calyx não tem servidor próprio. O estado fica em arquivos ou no PostgreSQL.
 
 ### Limpeza
 
-Nada é apagado sozinho: um diário é o registro do que a execução fez. Apague só execuções terminadas (`finished` ou `failed` em `calyx runs`) que não vão mais ser consultadas:
+Nada é apagado sozinho: um diário é o registro do que a execução fez. O `calyx prune` apaga as execuções que terminaram há mais de N dias:
 
 ```sh
-rm -rf .calyx/runs/<id>                     # em arquivo
+calyx prune --older-than 90 --dry-run   # o que sairia
+calyx prune --older-than 90             # apaga
 ```
 
-```sql
--- PostgreSQL: execuções terminadas há mais de 90 dias
-DELETE FROM calyx_journal WHERE run IN (SELECT id FROM calyx_runs WHERE status IN ('finished', 'failed') AND updated < now() - interval '90 days');
-DELETE FROM calyx_files   WHERE run IN (SELECT id FROM calyx_runs WHERE status IN ('finished', 'failed') AND updated < now() - interval '90 days');
-DELETE FROM calyx_runs    WHERE status IN ('finished', 'failed') AND updated < now() - interval '90 days';
-```
-
-`calyx_blobs` é compartilhada (o mesmo conteúdo, de execuções diferentes, é guardado uma vez), então não apague blobs por execução.
+- **Só sai o que terminou:** `finished` ou `failed`. Uma execução que espera, foi interrompida ou está rodando fica, qualquer que seja a idade. Uma `failed` apagada não pode mais ser retomada.
+- **Em arquivo,** sai o diretório da execução (diário, blobs, esperas). **No PostgreSQL,** saem as linhas dela, numa transação, e depois os blobs que nenhuma outra execução usa. Um blob que acabou de ser gravado nunca é apagado (margem de uma hora): a execução o grava logo antes da linha do diário que aponta para ele.
+- **Ficam** as entidades e as chaves do `calyx serve`: uma chave guarda a resposta, e repetir a chamada continua devolvendo essa resposta, sem rodar de novo.
+- **Sem padrão de idade:** `--older-than` é obrigatório. Num cron, uma vez por dia basta: `calyx prune --older-than 90`.
 
 ## 3. Rodar
 
@@ -193,4 +190,5 @@ O primeiro ensaio, com a 0.3.8, passou (1 reembolso, 1 crédito) e achou três c
 - [ ] `calyx serve --http` só em `127.0.0.1`, atrás de um proxy com TLS, com um chamador por cliente
 - [ ] Telemetria ligada, com os alertas da seção 6
 - [ ] Backup de `.calyx/` ou do banco
+- [ ] `calyx prune --older-than N` no cron, com o N que a retenção pede
 - [ ] O ensaio (seção 7) rodado com a versão e o banco de produção, contra o ambiente de teste dos serviços

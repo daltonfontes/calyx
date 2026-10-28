@@ -250,6 +250,23 @@ fn parallel_receives_take_deliveries_oldest_first() {
     );
 }
 
+/// Many receives start at once and each records its wait: none is lost.
+/// (On Windows, the C library's O_APPEND is a seek and then a write: two
+/// threads could write the same place; the runtime appends under a lock.)
+#[test]
+fn many_parallel_receives_record_every_wait() {
+    let d = Dir::new("many");
+    let people: Vec<String> = (0..24).map(|i| format!("\"p{i}\"")).collect();
+    let id = d.start("survey", &["--people", &format!("[{}]", people.join(","))]);
+    let waits =
+        std::fs::read_to_string(d.0.join(".calyx/runs").join(&id).join("waits.jsonl")).unwrap();
+    let keys: std::collections::BTreeSet<String> = waits
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()["key"].to_string())
+        .collect();
+    assert_eq!(keys.len(), 24, "{waits}");
+}
+
 #[test]
 fn receive_needs_a_journal() {
     let d = Dir::new("nojournal");
