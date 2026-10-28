@@ -2894,7 +2894,11 @@ static cx_value *keyed_line(ctx *c, const char *file, const char *key, const cha
 
 /* Appends a line to one of the run's files. One write per line: receives
  * running in parallel append to the same file, and two writes (line, then
- * newline) could interleave with theirs. */
+ * newline) could interleave with theirs. Under a lock too: on Windows,
+ * O_APPEND is the C library's seek-then-write, not one step, so two
+ * threads could write the same place and a wait would be lost. */
+static pthread_mutex_t append_mu = PTHREAD_MUTEX_INITIALIZER;
+
 static int append_line(exec *x, const char *file, const char *data, size_t len) {
     if (calyx_pg_enabled()) return calyx_pg_file_append(x->run_id, file, data, len) ? 0 : -1;
     char path[2200];
@@ -2903,11 +2907,13 @@ static int append_line(exec *x, const char *file, const char *data, size_t len) 
     if (!line) return -1;
     memcpy(line, data, len);
     line[len] = '\n';
+    pthread_mutex_lock(&append_mu);
     int fd = open(path, O_WRONLY | O_CREAT | O_APPEND | CX_O_BINARY, 0644);
     int ok = fd >= 0 && write(fd, line, len + 1) == (ssize_t)(len + 1) && fsync(fd) == 0;
+    if (fd >= 0) ok = close(fd) == 0 && ok;
+    pthread_mutex_unlock(&append_mu);
     free(line);
-    if (fd < 0) return -1;
-    return close(fd) == 0 && ok ? 0 : -1;
+    return fd >= 0 && ok ? 0 : -1;
 }
 
 /* Records the value a `receive` got (a message, or its timeout value). */
