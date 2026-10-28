@@ -3,6 +3,9 @@ name: CI
 on:
   push:
   pull_request:
+  # New advisories come out while the code stays the same (cargo audit).
+  schedule:
+    - cron: "17 6 * * 1"
 
 jobs:
   build-and-test:
@@ -112,6 +115,19 @@ jobs:
         run: |
           ./target/release/calyx build examples/agent.clyx -o "$RUNNER_TEMP/agent"
           cd "$RUNNER_TEMP" && ./agent --fake-models --quiet --question "baterias de sódio"
+
+  # Known vulnerabilities in the dependencies (RustSec), as Dependabot.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit
+        run: cargo audit
 
   # Windows, natively (no WSL): the GNU toolchain (MinGW-w64), as the
   # release builds it. The runtime's few POSIX calls go through
