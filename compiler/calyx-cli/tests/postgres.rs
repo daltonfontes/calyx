@@ -281,6 +281,70 @@ fn a_run_that_cannot_be_resumed_is_not_tried_on_every_pass() {
     assert!(err.contains("trying it again in 30 s"), "{err}");
 }
 
+/// A tool server whose answer is over 4 KB: the journal keeps it as a blob.
+const BIG: &str = r#"
+import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    if msg["method"] == "initialize":
+        r = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
+             "serverInfo": {"name": "big", "version": "0"}}
+    elif msg["method"] == "tools/list":
+        r = {"tools": [{"name": "big", "inputSchema": {"type": "object"},
+                        "annotations": {"readOnlyHint": True}}]}
+    else:
+        r = {"content": [{"type": "text", "text": msg["params"]["arguments"]["x"] * 600}]}
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": r}), flush=True)
+"#;
+
+#[test]
+fn prune_deletes_ended_runs_and_the_blobs_only_they_used() {
+    let Some(_one) = url() else { return };
+    let url = database();
+    let program = "tool big(x: Text) -> Text:\n    effect read\n\ngraph g(x: Text) -> Text:\n    a = big(x)\n    return \"ok\"\n";
+    let c = Cluster::source("prune", url, program);
+    std::fs::write(c.root.join("prog/big.py"), BIG).unwrap();
+    let toml = c.root.join("prog/calyx.toml");
+    let mut cfg = std::fs::read_to_string(&toml).unwrap();
+    cfg += "[tools.big]\ncommand = [\"python3\", \"big.py\"]\n";
+    std::fs::write(&toml, cfg).unwrap();
+    let p = c.program();
+    // A text no earlier run used: a blob of its own.
+    let x = fresh("blob");
+    let out = c.calyx("a", &["run", p.as_str(), "--quiet", "--x", x.as_str()], &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let id = run_id(&text(&out.stderr));
+    assert_eq!(c.status("b", &id), "finished");
+
+    let out = c.calyx(
+        "b",
+        &["prune", "--older-than", "0"],
+        &[("CALYX_PRUNE_BLOB_MARGIN_S", "0")],
+    );
+    let said = text(&out.stdout);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(said.contains(&format!("delete {id} (finished)")), "{said}");
+    let blobs: u64 = said
+        .rsplit(", ")
+        .next()
+        .and_then(|b| b.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    assert!(blobs >= 1, "the run's blob goes too: {said}");
+    assert_eq!(c.status("b", &id), "?", "the run is gone");
+
+    // A blob just written may belong to a run whose journal line is still
+    // on its way: with the default margin (an hour) it stays.
+    let x = fresh("young");
+    let out = c.calyx("a", &["run", p.as_str(), "--quiet", "--x", x.as_str()], &[]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let out = c.calyx("b", &["prune", "--older-than", "0"], &[]);
+    let said = text(&out.stdout);
+    assert!(said.trim_end().ends_with(", 0 unused blob(s)"), "{said}");
+}
+
 /// A key no earlier test run used: the database outlives the tests.
 fn fresh(name: &str) -> String {
     let t = std::time::SystemTime::now()

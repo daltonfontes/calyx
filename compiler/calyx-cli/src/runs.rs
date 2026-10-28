@@ -207,6 +207,42 @@ pub fn list() -> Result<Vec<Summary>, String> {
         .collect())
 }
 
+/// The runs that ended (`finished` or `failed`) more than `secs` seconds
+/// ago: what `calyx prune` deletes. A run that waits, is interrupted or is
+/// running is never one of them.
+pub fn ended_before(secs: f64) -> Result<Vec<(String, String)>, String> {
+    if calyx_runtime::pg::enabled() {
+        return calyx_runtime::pg::ended_before(secs).map_err(|e| format!("journal database: {e}"));
+    }
+    let now = std::time::SystemTime::now();
+    Ok(list()?
+        .into_iter()
+        .filter(|r| r.status == "finished" || r.status == "failed")
+        .filter(|r| {
+            std::fs::metadata(dir(&r.id).join(JOURNAL))
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| now.duration_since(t).ok())
+                .is_some_and(|age| age.as_secs_f64() > secs)
+        })
+        .map(|r| (r.id, r.status))
+        .collect())
+}
+
+/// Deletes ended runs (their directory, or their rows in the database);
+/// how many were deleted.
+pub fn delete(ids: &[String]) -> Result<usize, String> {
+    if calyx_runtime::pg::enabled() {
+        return calyx_runtime::pg::delete_runs(ids).map_err(|e| format!("journal database: {e}"));
+    }
+    let mut n = 0;
+    for id in ids {
+        std::fs::remove_dir_all(dir(id)).map_err(|e| format!("{}: {e}", dir(id).display()))?;
+        n += 1;
+    }
+    Ok(n)
+}
+
 /// With the journal in PostgreSQL: the server counts, and the journals stay
 /// there (a database shared by many machines holds many runs). A run whose
 /// row says `running` is running if some process holds it, on any machine,

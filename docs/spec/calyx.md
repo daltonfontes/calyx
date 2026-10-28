@@ -768,6 +768,7 @@ Mensagens de erro estruturadas, com **esperado**, **observado** e **local**, par
 | `calyx resume` | Continua uma execução interrompida ou que falhou: `calyx resume <id>`. Chamadas já no diário não são feitas (nem pagas) de novo. `--budget` aumenta um orçamento esgotado; `--uncertain done\|done=<resposta>\|retry\|failed` diz o que aconteceu com chamadas `write once` de resultado incerto |
 | `calyx replay` | Reexecuta a partir de um diário, sem chamar modelos nem tools: `calyx replay <id>` |
 | `calyx runs` | Lista as execuções, com estado (`finished`, `failed`, `interrupted`, `waiting`), chamadas e retomadas |
+| `calyx prune --older-than DIAS` | Apaga as execuções terminadas (`finished`, `failed`) há mais de DIAS dias e, no PostgreSQL, os blobs que só elas usavam; as que esperam, foram interrompidas ou rodam ficam. `--dry-run` só lista |
 | `calyx deliver` | Entrega uma mensagem a uma execução que espera num `receive`: `calyx deliver <id> Approval Approved` |
 | `calyx tick` | Retoma as execuções que receberam mensagem ou cujo prazo venceu; para rodar num agendador (cron) |
 | `calyx trace` | Mostra o grafo realizado, custos e latências por nó |
