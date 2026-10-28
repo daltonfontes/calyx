@@ -5,7 +5,7 @@ Como pôr a Calyx em produção e mantê-la lá: instalar, rodar, guardar o esta
 ## 1. Instalar
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.4.0 sh
+curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.4.1 sh
 ```
 
 - **Fixe a versão** (`CALYX_VERSION`) em produção. Sem ela, o script instala a mais recente, e duas máquinas instaladas em dias diferentes podem ficar com versões diferentes.
@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh 
 **No Windows** (PowerShell, sem WSL):
 
 ```powershell
-$env:CALYX_VERSION = 'v0.4.0'; irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
+$env:CALYX_VERSION = 'v0.4.1'; irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
 ```
 
 - O `install.ps1` faz o mesmo que o `install.sh`: confere o SHA-256, instala em `~\.calyx\bin\calyx.exe` (ou `$env:CALYX_INSTALL\bin`), guarda a cópia em `versions\<versão>\calyx.exe` e acrescenta `bin` ao PATH do usuário (`CALYX_NO_MODIFY_PATH=1` evita).
