@@ -225,11 +225,10 @@ fn a_long_run_does_not_hold_up_the_worker() {
         args.extend(&REFUND[1..]);
         args[4] = request;
         let out = c.calyx("a", &args, &[("CALYX_CRASH_AFTER", "1")]);
-        let id = run_id(&text(&out.stderr));
-        assert_eq!(c.status("b", &id), "interrupted");
-        id
+        run_id(&text(&out.stderr))
     };
     let long = interrupted(&slow, "R-long");
+    assert_eq!(slow.status("b", &long), "interrupted");
     let mut worker = quick
         .cmd("b", &["worker", "--every", "0.2", "--quiet"], &[])
         .stdout(Stdio::null())
@@ -240,7 +239,8 @@ fn a_long_run_does_not_hold_up_the_worker() {
         slow.reaches(&long, "running", 10),
         "the worker took the long run"
     );
-    // A run dies while the long one is going: the worker takes it at once.
+    // A run dies while the long one is going: the worker takes it at once
+    // (so fast it may be `running` already when we look).
     let short = interrupted(&quick, "R-short");
     let taken = quick.reaches(&short, "finished", 10);
     let long_then = slow.status("b", &long);
