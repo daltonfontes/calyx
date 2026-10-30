@@ -1,0 +1,99 @@
+# revisor.clyx: um agente que revisa um repositório sem poder mudá-lo.
+#
+# - O agente lê arquivos e roda testes. As tools recebem a sandbox como
+#   `reads`, então o compilador recusa qualquer edição: ele só lê, e
+#   trabalha numa cópia do diretório.
+# - Ele termina com um relatório tipado (Report), conferido pelo runtime.
+# - Um segundo passo do modelo confere o relatório; se faltar algo, o
+#   agente refaz a revisão (até 2 vezes).
+# - Cada passo vai para o diário: um kill -9 no meio retoma de onde parou.
+#
+#   calyx run examples/revisor.clyx --fake-models --repo examples/sample_repo --focus "erros de cálculo"
+#   GEMINI_API_KEY=... calyx run examples/revisor.clyx --repo . --focus "bugs e segurança"
+#
+# Como tool de outro agente (Claude Desktop, uma IDE): calyx serve examples/revisor.clyx
+
+model gemini = "gemini-3.5-flash-lite":
+    max_output 2000 tokens
+
+tool list_files(box: reads Sandbox) -> Text:
+    effect read
+    max_output 1000 tokens
+    description "Lista os arquivos do repositório."
+
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+    max_output 4000 tokens
+    description "Lê um arquivo do repositório."
+
+tool run_tests(box: reads Sandbox) -> Text:
+    effect read
+    max_output 3000 tokens
+    timeout 60 s
+    description "Roda os testes do repositório e devolve o resultado."
+
+type Severity = Alta | Media | Baixa
+
+type Finding:
+    file: Text
+    problem: Text
+    severity: Severity
+    fix: Text
+
+type Report:
+    summary: Text
+    tests_pass: Bool
+    findings: List[Finding]
+
+type Check = Ok | Falta(what: Text)
+
+prompt inspect(focus: Text) -> Text:
+    """
+    Você revisa um repositório de código. Liste os arquivos, leia o código,
+    rode os testes e procure bugs. Foco da revisão: {focus}
+    Termine com suas conclusões: cada problema com arquivo, gravidade e correção sugerida.
+    """
+
+prompt to_report(notes: Text) -> Report:
+    """
+    Transforme as notas de revisão abaixo num relatório estruturado.
+
+    {notes}
+    """
+
+prompt check(report: Report) -> Check:
+    """
+    Avalie este relatório de revisão de código. Ele é Ok se cada problema
+    aponta o arquivo e uma correção concreta. Senão, diga o que falta.
+
+    {report}
+    """
+
+prompt redo(focus: Text, report: Report, what: Text) -> Text:
+    """
+    Refaça a revisão (foco: {focus}). O revisor disse que falta: {what}
+    Relatório anterior:
+    {report}
+    """
+
+graph review(focus: Text, repo: Sandbox) -> Report:
+    limits threads 4, budget 1 USD
+
+    notes = agent gemini:
+        tools [list_files(reads repo), read_file(reads repo), run_tests(reads repo)]
+        max_turns 10
+        task inspect(focus)
+        on turn_limit: final_answer
+        on stuck: final_answer
+
+    first = gemini(to_report(notes))
+
+    final = loop r = first, max 2:
+        match gemini(check(r)):
+            case Ok:
+                done r
+            case Falta(what):
+                next gemini(to_report(gemini(redo(focus, r, what))))
+        on limit: last
+
+    return final
