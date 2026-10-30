@@ -49,7 +49,7 @@ command = ["python3", "tools/fake_store.py"]
 [tools.email_sent]
 command = ["python3", "tools/fake_store.py"]
 
-# Tools de sandbox do examples/fix.clyx: trabalham na cópia do repositório.
+# Tools de sandbox do examples/fix.clyx e do examples/revisor.clyx: trabalham na cópia do repositório.
 [tools.list_files]
 command = ["python3", "tools/sandbox_tools.py"]
 
