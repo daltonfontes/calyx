@@ -2,6 +2,11 @@
 
 *In English: [README.md](README.md).*
 
+> **Beta pública (v0.5).** A Calyx funciona de ponta a ponta e é testada em
+> Linux, macOS e Windows, mas é jovem: espere bugs e mudanças incompatíveis
+> antes da 1.0. Leia as [limitações](#limitações) antes de confiar nela com
+> dinheiro de verdade ou código desconhecido, e [relate o que quebrar](https://github.com/daltonfontes/calyx/issues).
+
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="media/check_dark.gif"><img src="media/check.gif" width="640" alt="calyx check recusa um workflow de reembolso que pode pagar duas vezes; três linhas corrigem"></picture></p>
 
 Agentes de IA já enviam e-mails, movem dinheiro e editam código. Quando uma
@@ -194,7 +199,38 @@ irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
 Um binário só, sem dependências. Linux e macOS (x86_64 e ARM), Windows
 (x86_64).
 
-### 2. Diga ao seu agente para usar a Calyx:
+### 2. Escreva um primeiro programa (sem clonar nada):
+
+Salve como `hello.clyx`:
+
+```python
+model gemini = "gemini-3.5-flash-lite"
+
+type Summary:
+    title: Text
+    points: List[Text]
+
+prompt summarize(text: Text) -> Summary:
+    """
+    Resuma o texto abaixo: um título curto e até 3 pontos principais.
+
+    {text}
+    """
+
+graph main(text: Text) -> Summary:
+    return gemini(summarize(text))
+```
+
+```bash
+calyx check hello.clyx                                      # tipos, efeitos, prompts
+calyx run hello.clyx --fake-models --text "qualquer texto"  # sem rede, sem chave
+GEMINI_API_KEY=... calyx run hello.clyx --text "qualquer texto"  # um modelo de verdade
+```
+
+A resposta é conferida contra `Summary` antes de chegar a você. Outros
+provedores (OpenAI, OpenRouter, Groq, Ollama, NVIDIA...) vão num `calyx.toml`.
+
+### 3. Diga ao seu agente para usar a Calyx:
 
 Acrescente ao seu `AGENTS.md`:
 
@@ -207,7 +243,7 @@ Ao escrever workflows de agentes:
 - teste com `calyx run <arquivo> --fake-models` antes de usar modelos reais
 ```
 
-### 3. Rode (de um clone deste repositório, para os exemplos):
+### 4. Rode os exemplos (de um clone deste repositório):
 
 ```bash
 calyx run examples/refund.clyx --fake-models --request R1 --order A100 --message "chegou quebrado"
@@ -310,7 +346,7 @@ modelos, em [`examples/`](examples).
 # Limitações
 
 ```
-- A Calyx é nova (v0.3). Espere bugs e mudanças incompatíveis.
+- A Calyx é uma beta pública (v0.5). Espere bugs e mudanças incompatíveis antes da 1.0.
 - As mensagens do compilador e os nomes da linguagem são em inglês.
 - As garantias dependem de hipóteses declaradas: o serviço respeita a chave
   de idempotência, e o `verify` lê o estado atual. A Calyx não tem como
@@ -326,8 +362,14 @@ modelos, em [`examples/`](examples).
 - Agentes não podem chamar tools `write once`.
 - Várias máquinas compartilham execuções só pelo diário no PostgreSQL;
   programas com sandboxes (um diretório) ainda rodam numa máquina.
-- Tools só como servidores MCP via stdio; modelos só por APIs compatíveis com
-  a da OpenAI.
+- Tools só como servidores MCP (stdio, ou Streamable HTTP com token fixo:
+  ainda sem OAuth); modelos só por APIs compatíveis com a da OpenAI.
+- Uma sandbox é uma cópia de um diretório, não um isolamento: as tools rodam
+  com as permissões de quem roda a Calyx. Uma tool como `run_tests` executa
+  o código que recebe, então rode agentes sobre código desconhecido num
+  contêiner.
+- O `calyx serve --http` não tem TLS próprio: use 127.0.0.1 e um proxy com
+  TLS na frente.
 - A camada pura não tem recursão, de propósito (todo programa termina).
 - Sem language server, depurador ou REPL.
 - A maioria dos experimentos usa modelos falsos; os de paralelismo e

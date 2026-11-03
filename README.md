@@ -2,6 +2,11 @@
 
 *Em português: [README.pt.md](README.pt.md).*
 
+> **Public beta (v0.5).** Calyx works end to end and is tested on Linux, macOS
+> and Windows, but it is young: expect bugs and breaking changes before 1.0.
+> Read the [limitations](#limitations) before trusting it with real money or
+> untrusted code, and [report what breaks](https://github.com/daltonfontes/calyx/issues).
+
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="media/check_dark.gif"><img src="media/check.gif" width="640" alt="calyx check refuses a refund workflow that could pay twice; three lines fix it"></picture></p>
 
 AI agents now send e-mails, move money and edit code. When one of those calls
@@ -218,7 +223,38 @@ irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
 
 One binary, no dependencies. Linux and macOS (x86_64 and ARM), Windows (x86_64).
 
-### 2. Tell your agent to use Calyx:
+### 2. Write a first program (no clone needed):
+
+Save this as `hello.clyx`:
+
+```python
+model gemini = "gemini-3.5-flash-lite"
+
+type Summary:
+    title: Text
+    points: List[Text]
+
+prompt summarize(text: Text) -> Summary:
+    """
+    Summarize the text below: a short title and up to 3 key points.
+
+    {text}
+    """
+
+graph main(text: Text) -> Summary:
+    return gemini(summarize(text))
+```
+
+```bash
+calyx check hello.clyx                                    # types, effects, prompts
+calyx run hello.clyx --fake-models --text "any text"      # no network, no key
+GEMINI_API_KEY=... calyx run hello.clyx --text "any text" # a real model
+```
+
+The answer is checked against `Summary` before you get it. Other providers
+(OpenAI, OpenRouter, Groq, Ollama, NVIDIA...) are set in a `calyx.toml`.
+
+### 3. Tell your agent to use Calyx:
 
 Add this to your `AGENTS.md`:
 
@@ -231,7 +267,7 @@ When writing agent workflows:
 - try it with `calyx run <file> --fake-models` before using real models
 ```
 
-### 3. Run it (from a clone of this repo, for the examples):
+### 4. Run the examples (from a clone of this repo):
 
 ```bash
 calyx run examples/refund.clyx --fake-models --request R1 --order A100 --message "arrived broken"
@@ -338,7 +374,7 @@ for code agents to per-user memory, debates and model routers, in
 # Limitations
 
 ```
-- Calyx is new (v0.3). Expect bugs and breaking changes.
+- Calyx is a public beta (v0.5). Expect bugs and breaking changes before 1.0.
 - The spec, docs and examples are mostly in Portuguese; the paper is in English.
 - The guarantees rest on stated hypotheses: the service honours the idempotency
   key, and `verify` reads fresh state. Calyx cannot check a service that ignores
@@ -352,7 +388,13 @@ for code agents to per-user memory, debates and model routers, in
 - Agents cannot call `write once` tools.
 - Several machines share runs only through the journal in PostgreSQL;
   programs with sandboxes (a directory) still run on one machine.
-- Tools only as MCP servers over stdio; models only via OpenAI-compatible APIs.
+- Tools only as MCP servers (stdio, or Streamable HTTP with a static token:
+  no OAuth yet); models only via OpenAI-compatible APIs.
+- A sandbox is a copy of a directory, not an isolation boundary: tools run
+  with the permissions of whoever runs Calyx. A tool like `run_tests` runs
+  the code it is given, so run agents over untrusted code in a container.
+- `calyx serve --http` has no TLS of its own: bind it to 127.0.0.1 and put
+  a TLS proxy in front.
 - The pure layer has no recursion, by design (every program must terminate).
 - No language server, debugger or REPL.
 - Most experiments use fake models; the parallelism and recovery ones were
