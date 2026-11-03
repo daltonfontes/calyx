@@ -81,7 +81,11 @@ graphs = ["consulta"]
 "#;
 
 fn serve(name: &str) -> Served {
-    let d = dir(name, CALLERS);
+    start(dir(name, CALLERS))
+}
+
+/// Serves `p.clyx` in `d`, with the tokens of both callers set.
+fn start(d: PathBuf) -> Served {
     let mut child = Command::new(env!("CARGO_BIN_EXE_calyx"))
         .args(["serve", "p.clyx", "--http", "127.0.0.1:0"])
         .current_dir(&d)
@@ -395,4 +399,117 @@ fn http_needs_callers_with_tokens() {
     );
     let _ = std::fs::remove_dir_all(&d);
     let _ = std::fs::remove_dir_all(&d2);
+}
+
+/// What a caller sends cannot reach the server's own files: a `Sandbox` is
+/// lent only from the directories its `sandboxes` lists, and a text is never
+/// read as `@file`.
+#[test]
+fn a_caller_cannot_reach_the_servers_files() {
+    let d = std::env::temp_dir().join(format!("calyx-serve-http-files-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("repos/app")).unwrap();
+    std::fs::create_dir_all(d.join("private")).unwrap();
+    std::fs::write(d.join("repos/app/README"), "hello from app").unwrap();
+    std::fs::write(d.join("private/secret.json"), r#"["the secret"]"#).unwrap();
+    std::fs::write(
+        d.join("p.clyx"),
+        r#"
+tool read_file(box: reads Sandbox, path: Text) -> Text:
+    effect read
+
+graph ler(repo: Sandbox, path: Text) -> Text:
+    return read_file(reads repo, path)
+
+graph juntar(xs: List[Text]) -> Text:
+    return join(xs, ",")
+"#,
+    )
+    .unwrap();
+    let tools = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/tools/sandbox_tools.py")
+        .canonicalize()
+        .unwrap();
+    std::fs::write(
+        d.join("calyx.toml"),
+        format!(
+            r#"
+[tools.read_file]
+command = ["python3", '{}']
+
+[serve.callers.suporte]
+token_env = "TOKEN_SUPORTE"
+graphs = ["*"]
+sandboxes = ["repos"]
+
+[serve.callers.leitura]
+token_env = "TOKEN_OPS"
+graphs = ["*"]
+"#,
+            tools.display()
+        ),
+    )
+    .unwrap();
+    let s = start(d.clone());
+    let mut suporte = Client::open(s.port, SUPORTE);
+    let mut leitura = Client::open(s.port, OPS);
+
+    let (_, r) = suporte.rpc("tools/list", json!({}));
+    let ler = r["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "ler")
+        .unwrap();
+    assert_eq!(
+        ler["inputSchema"]["properties"]["repo"]["type"], "string",
+        "{ler}"
+    );
+
+    let call = |c: &mut Client, repo: &str, path: &str| {
+        c.rpc(
+            "tools/call",
+            json!({"name": "ler", "arguments": {"repo": repo, "path": path}}),
+        )
+        .1
+    };
+    let app = d.join("repos/app").display().to_string();
+    let r = call(&mut suporte, &app, "README");
+    assert_eq!(text_of(&r), "hello from app", "{r}");
+    // Outside its directories, or through `..`: refused before any run.
+    let private = d.join("private").display().to_string();
+    for (repo, path) in [
+        (private.clone(), "secret.json".to_owned()),
+        (
+            d.join("repos/../private").display().to_string(),
+            "secret.json".to_owned(),
+        ),
+        (
+            "/".to_owned(),
+            private.trim_start_matches('/').to_owned() + "/secret.json",
+        ),
+    ] {
+        let r = call(&mut suporte, &repo, &path);
+        assert!(!text_of(&r).contains("the secret"), "{repo}: {r}");
+        assert!(text_of(&r).contains("may not lend"), "{r}");
+    }
+    // A caller with no `sandboxes` lends none.
+    let r = call(&mut leitura, &app, "README");
+    assert!(
+        text_of(&r).contains("Forbidden: `leitura` may not lend"),
+        "{r}"
+    );
+
+    // `@path` is a text, never the server's file read as the list.
+    let at = format!("@{}", d.join("private/secret.json").display());
+    let (_, r) = suporte.rpc(
+        "tools/call",
+        json!({"name": "juntar", "arguments": {"xs": at}}),
+    );
+    assert!(!text_of(&r).contains("the secret"), "{r}");
+    let (_, r) = suporte.rpc(
+        "tools/call",
+        json!({"name": "juntar", "arguments": {"xs": ["a", "b"]}}),
+    );
+    assert_eq!(text_of(&r), "a,b", "{r}");
 }

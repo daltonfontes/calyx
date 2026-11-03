@@ -7,6 +7,19 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.5.2 (2026-11-03): security
+
+- `calyx serve --http`: a caller could reach the server's own files. It
+  could pass any directory of the server (`/root`, `/etc`) as a `Sandbox`,
+  and its agent would read it; and a text like `"@/path/file.json"` given
+  for a list or record parameter was read from the server's disk. Now a
+  caller lends only directories inside the `sandboxes` its
+  `[serve.callers.NAME]` lists (none by default), and arguments go to the
+  run as JSON, never as `@file`. Over stdio nothing changes. Upgrade if you
+  run `serve --http`.
+- `calyx serve` gives `Sandbox`, `Nat`, `Date`, `Duration`, `Money` and the
+  items of lists their JSON Schema types.
+
 ## 0.5.1 (2026-11-03): public beta
 
 - The README says what state Calyx is in, adds a first program that needs no
