@@ -1,0 +1,15 @@
+model gemini = "gemini-3.5-flash-lite"
+
+type Summary:
+    title: Text
+    points: List[Text]
+
+prompt summarize(text: Text) -> Summary:
+    """
+    Summarize the text below: a short title and up to 3 key points.
+
+    {text}
+    """
+
+graph main(text: Text) -> Summary:
+    return gemini(summarize(text))

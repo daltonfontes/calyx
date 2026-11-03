@@ -1,0 +1,14 @@
+name: Idea or question
+description: Something Calyx should do, or something you could not figure out
+body:
+  - type: textarea
+    id: want
+    attributes:
+      label: What you want to do
+      description: The workflow you are writing, and where Calyx gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you tried

@@ -1,0 +1,34 @@
+name: Bug report
+description: Calyx did something wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: program
+    attributes:
+      label: The program
+      description: The smallest .clyx program that shows the problem (and its calyx.toml, if it matters).
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: What you ran
+      description: The command, e.g. `calyx run x.clyx --fake-models --topic "..."`.
+      render: bash
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What you expected, and what happened
+      description: Paste the output, errors and trace.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version and system
+      placeholder: "calyx 0.5.1, Windows 11"
+    validations:
+      required: true
