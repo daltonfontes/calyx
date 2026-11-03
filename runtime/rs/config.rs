@@ -151,13 +151,16 @@ pub struct ServeConfig {
     pub allowed_origins: Vec<String>,
 }
 
-/// `[serve.callers.NAME]`: a caller's token (from the environment) and the
-/// graphs it may call (`"*"`: all).
+/// `[serve.callers.NAME]`: a caller's token (from the environment), the
+/// graphs it may call (`"*"`: all), and the directories it may lend as a
+/// `Sandbox` (none unless listed: a caller must not choose any directory of
+/// the server).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller {
     pub name: String,
     pub token_env: String,
     pub graphs: Vec<String>,
+    pub sandboxes: Vec<PathBuf>,
 }
 
 impl Caller {
@@ -386,10 +389,19 @@ impl Config {
                     if let Some(c) = t.get("callers") {
                         for (name, v) in section(c, "serve.callers")? {
                             let owner = format!("serve.callers.{name}");
+                            let sandboxes = if v.get("sandboxes").is_some() {
+                                strings(v, "sandboxes", &owner)?
+                                    .iter()
+                                    .map(|d| dir.join(d))
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
                             cfg.serve.callers.push(Caller {
                                 name: name.clone(),
                                 token_env: string(v, "token_env", &owner)?,
                                 graphs: strings(v, "graphs", &owner)?,
+                                sandboxes,
                             });
                         }
                     }

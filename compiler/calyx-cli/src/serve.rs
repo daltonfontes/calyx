@@ -27,11 +27,15 @@
 //! [serve.callers.suporte]
 //! token_env = "CALYX_TOKEN_SUPORTE"   # Authorization: Bearer <token>
 //! graphs = ["support"]                # or ["*"]
+//! sandboxes = ["repos"]               # directories it may lend (none by default)
 //! ```
 //!
 //! A request without a known token gets 401; `tools/list` shows a caller
 //! only its graphs, and a call of another is refused. Idempotency keys are
 //! per caller: one caller cannot get another's answer by sending its key.
+//! A caller lends as a `Sandbox` only a directory inside its `sandboxes`,
+//! and its other arguments go to `calyx run` as JSON, so a text is never
+//! read as `@file`: a caller cannot reach the server's own files.
 //! A request with an `Origin` not in `[serve] allowed_origins` gets 403
 //! (a web page cannot drive the server from someone's browser). There is no
 //! TLS: bind to 127.0.0.1 (the default) and put a proxy with TLS in front
@@ -492,12 +496,49 @@ fn graphs(ir: &Value) -> Vec<Graph> {
 /// A JSON Schema for a Calyx type, as far as the name tells.
 fn schema(ty: &str) -> Value {
     match ty {
-        "Text" => json!({"type": "string"}),
+        "Text" | "Date" | "Duration" => json!({"type": "string"}),
+        "Nat" => json!({"type": "integer", "minimum": 0}),
         "Int" => json!({"type": "integer"}),
-        "Float" => json!({"type": "number"}),
+        "Float" | "Money" => json!({"type": "number"}),
         "Bool" => json!({"type": "boolean"}),
-        t if t.starts_with("List[") => json!({"type": "array"}),
+        "Sandbox" => json!({
+            "type": "string",
+            "description": "The path of a directory; the run works on a copy of it."
+        }),
+        t if t.starts_with("List[") => {
+            let item = t["List[".len()..].strip_suffix(']').unwrap_or_default();
+            match schema(item) {
+                s if s == json!({}) => json!({"type": "array"}),
+                s => json!({"type": "array", "items": s}),
+            }
+        }
         _ => json!({}),
+    }
+}
+
+/// The directory a caller lends as a `Sandbox`. Over stdio the caller is
+/// whoever started the server, and may lend any directory. Over HTTP only
+/// one inside a directory its `sandboxes` lists: otherwise a caller could
+/// have an agent read any directory of the server (`/root`, `/etc`).
+fn lendable(raw: &str, caller: Option<&Caller>) -> Result<String, String> {
+    let Some(c) = caller else {
+        return Ok(raw.to_owned());
+    };
+    let refuse = || {
+        format!(
+            "Forbidden: `{}` may not lend `{raw}` as a sandbox (see `sandboxes` in [serve.callers.{}])",
+            c.name, c.name
+        )
+    };
+    let dir = std::fs::canonicalize(raw).map_err(|_| refuse())?;
+    let inside = c
+        .sandboxes
+        .iter()
+        .any(|root| std::fs::canonicalize(root).is_ok_and(|r| dir.starts_with(&r)));
+    if inside && dir.is_dir() {
+        Ok(dir.display().to_string())
+    } else {
+        Err(refuse())
     }
 }
 
@@ -611,15 +652,25 @@ impl Server {
             "--quiet".to_owned(),
         ];
         cmd.extend(self.flags.iter().cloned());
-        for (p, _) in &graph.params {
+        for (p, ty) in &graph.params {
             let Some(v) = args.get(p) else {
                 return text(format!("missing argument `{p}`"), true);
             };
+            let value = match (ty.as_str(), v) {
+                ("Text", Value::String(s)) => s.clone(),
+                ("Sandbox", Value::String(s)) => match lendable(s, caller) {
+                    Ok(dir) => dir,
+                    Err(e) => return text(e, true),
+                },
+                ("Sandbox", _) => {
+                    return text(format!("argument `{p}` must be a directory path"), true);
+                }
+                // Everything else goes as JSON, so a text is never read as
+                // `@file` (a file of this server) by `calyx run`.
+                (_, other) => other.to_string(),
+            };
             cmd.push(format!("--{p}"));
-            cmd.push(match v {
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
-            });
+            cmd.push(value);
         }
         if let Some(e) = &entry {
             // Two calls with the same key at once: the second waits for

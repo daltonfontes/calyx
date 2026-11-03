@@ -58,8 +58,10 @@ commands:
       `_meta`) is tied to one run; the same key returns its answer, or
       resumes it if it did not finish, instead of running it again.
       --http ADDR serves it over HTTP (Streamable HTTP, at /mcp) to the
-      callers in calyx.toml (`[serve.callers.NAME]`, with `token_env` and
-      `graphs`): each sees and calls only its graphs, with its own keys.
+      callers in calyx.toml (`[serve.callers.NAME]`, with `token_env`,
+      `graphs` and `sandboxes`): each sees and calls only its graphs, with
+      its own keys, and lends as a `Sandbox` only the directories inside its
+      `sandboxes`.
       No TLS: use 127.0.0.1 and a proxy with TLS for other machines.
   worker [--fake-models] [--quiet] [--config FILE] [--every SECONDS] [--max N]
          [--once]
