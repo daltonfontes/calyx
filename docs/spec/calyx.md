@@ -305,7 +305,7 @@ Os limites que valem são os do grafo executado; os de subgrafos ainda são igno
 | Forma | Significado |
 |---|---|
 | `x = expr` | Um passo do grafo. Se tem efeito, vai para o diário; se é puro, o compilador sabe que pode recalcular (D27) |
-| `xs = for each i in lista: expr` | Fan-out: um passo por item; `xs` é uma lista **na ordem de `lista`** (D7). O corpo pode vir na linha seguinte, indentado |
+| `xs = for each i in lista: expr` | Fan-out: um passo por item; `xs` é uma lista **na ordem de `lista`** (D7). O corpo pode vir na linha seguinte, indentado, e ter **passos** (`nome = valor`, cada um vendo os anteriores e `i`) antes da última linha, que é o valor do item: os itens rodam ao mesmo tempo, os passos de cada item em ordem, e cada passo vai para o diário com a sua chave (uma execução retoma no passo do item em que parou) |
 | `return expr` | Resultado do grafo |
 | `respond expr` | Entrega o resultado antes do fim; o resto do grafo continua em segundo plano. Grafo com `respond` não tem `return` de valor; no máximo um `respond` por caminho (D19) |
 

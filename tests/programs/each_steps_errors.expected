@@ -1,0 +1,9 @@
+warning[W0607]: the items of a `for each` write the same resource at once
+- expected : a key that depends on `x` (one Doc per item), or the write after the `for each`
+- observed : every item writes the same Doc
+Location: each_steps_errors.clyx:21:9
+
+error[E0644]: items of a `for each` cannot edit the same sandbox
+- expected : `reads repo` in the items, or the edits in a step of their own
+- observed : `edits repo` in every item, all at the same time
+Location: each_steps_errors.clyx:31:20

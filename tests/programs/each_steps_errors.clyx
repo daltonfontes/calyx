@@ -1,0 +1,34 @@
+# The checks on the items of a `for each` see the steps of its body.
+
+model m = "gemini-3.5-flash-lite"
+
+prompt p(q: Text) -> Text:
+    """
+    {q}
+    """
+
+tool save(key: Text, text: Text) -> Unit:
+    effect write
+    idempotency_key key
+    resource Doc(key)
+
+tool edit(box: edits Sandbox, text: Text) -> Text:
+    effect sandbox
+
+graph same_key(xs: List[Text]) -> List[Unit]:
+    out = for each x in xs:
+        a = m(p(x))
+        save("fixed", a)
+    return out
+
+graph by_item(xs: List[Text]) -> List[Unit]:
+    out = for each x in xs:
+        a = m(p(x))
+        save(x, a)
+    return out
+
+graph boxes(xs: List[Text], repo: Sandbox) -> List[Text]:
+    out = for each x in xs:
+        a = m(p(x))
+        edit(edits repo, a)
+    return out

@@ -1,0 +1,7 @@
+graph notes(topics: List[Text]) -> List[Note] [llm]
+  %0 out[t]: List[Note] = steps [llm]
+  return %0
+
+graph nested(groups: List[List[Text]]) -> List[List[Text]] [llm]
+  %0 out[g]: List[List[Text]] = steps [llm]
+  return %0

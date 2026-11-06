@@ -244,3 +244,58 @@ fn runs_lists_status() {
     assert!(out.contains("interrupted"), "{out}");
     assert!(out.contains("      3"), "{out}");
 }
+
+/// A `for each` with steps: each item's steps go to the journal under
+/// their own keys, so a crash between two steps of an item resumes there.
+#[test]
+fn the_steps_of_a_for_each_item_resume_where_they_stopped() {
+    const STEPS: &str = r#"
+model m = "fake-model"
+
+tool web_search(query: Text) -> Text:
+    effect read
+
+prompt summarize(q: Text, found: Text) -> Text:
+    """{q}: {found}"""
+
+graph g(topics: List[Text]) -> List[Text]:
+    answers = for each q in topics:
+        found = web_search(q)
+        short = m(summarize(q, found))
+        short
+    return answers
+"#;
+    let reference = Dir::new("steps-reference");
+    std::fs::write(reference.0.join("p.clyx"), STEPS).unwrap();
+    let full = reference.run(TOPICS, None);
+    assert!(full.status.success(), "{}", text(&full.stderr));
+
+    let d = Dir::new("steps-resume");
+    std::fs::write(d.0.join("p.clyx"), STEPS).unwrap();
+    let crashed = d.calyx(
+        &[
+            "run",
+            "p.clyx",
+            "--fake-models",
+            "--deterministic",
+            "--topics",
+            TOPICS,
+        ],
+        Some(3),
+    );
+    assert_eq!(
+        crashed.status.code(),
+        Some(137),
+        "{}",
+        text(&crashed.stderr)
+    );
+    let id = d.only_run();
+    assert_eq!(d.count(&id, "call"), 3);
+
+    let resumed = d.calyx(&["resume", &id, "--fake-models"], None);
+    assert!(resumed.status.success(), "{}", text(&resumed.stderr));
+    assert_eq!(text(&resumed.stdout), text(&full.stdout));
+    assert!(text(&resumed.stderr).contains("3 taken from the journal"));
+    // 3 searches + 3 summaries, each recorded once.
+    assert_eq!(d.count(&id, "call"), 6);
+}

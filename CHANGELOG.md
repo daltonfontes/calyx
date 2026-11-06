@@ -7,6 +7,22 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.8.0 (2026-11-06)
+
+- `for each` bodies take steps: `name = value` lines, each seeing the ones
+  before and the item, then a last line with the item's value. The items
+  run at once, the steps of each in order; each step has its own key in
+  the journal, so a run resumes at the step of the item where it stopped.
+  The checks on the items (`W0607`, `E0644`) see the steps too. Before, a
+  body with more than one line was refused, and a subgraph was needed.
+
+  ```python
+  notes = for each t in topics:
+      found = m(research(t))
+      short = m(summarize(t, found))
+      Note(topic = t, summary = short)
+  ```
+
 ## 0.7.0 (2026-11-06)
 
 - OAuth for remote MCP servers, as the MCP authorization spec asks of a
