@@ -1,0 +1,34 @@
+# `for each` with steps: each item runs its steps in order, the items at
+# once, and the last line is the item's value.
+
+model m = "gemini-3.5-flash-lite"
+
+type Note:
+    topic: Text
+    summary: Text
+
+prompt research(topic: Text) -> Text:
+    """
+    Research {topic}.
+    """
+
+prompt summarize(topic: Text, text: Text) -> Text:
+    """
+    Summarize, about {topic}: {text}
+    """
+
+graph notes(topics: List[Text]) -> List[Note]:
+    out = for each t in topics:
+        found = m(research(t))
+        short = m(summarize(t, found))
+        Note(topic = t, summary = short)
+    return out
+
+# A `for each` inside the steps of another.
+graph nested(groups: List[List[Text]]) -> List[List[Text]]:
+    out = for each g in groups:
+        intro = m(research("the group"))
+        each = for each q in g:
+            m(summarize(q, intro))
+        each
+    return out

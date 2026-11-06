@@ -1,0 +1,13 @@
+# A `for each` body with steps needs a last line: the item's value.
+
+model m = "gemini-3.5-flash-lite"
+
+prompt p(q: Text) -> Text:
+    """
+    {q}
+    """
+
+graph main(xs: List[Text]) -> List[Text]:
+    out = for each x in xs:
+        a = m(p(x))
+    return out

@@ -1190,10 +1190,15 @@ impl Parser<'_> {
         self.expect(TokenKind::Colon, "`:` and what to do with each item")?;
         let body = if self.eat(TokenKind::Newline) {
             self.expect(TokenKind::Indent, "what to do with each item, indented")?;
-            let value = self.expr()?;
+            // Steps for each item (`name = value`), then what it gives.
+            let value = self.turn_body()?;
             self.eat(TokenKind::Newline);
             if self.kind() != TokenKind::Dedent {
-                return Err(self.unsupported("multi-line `for each` bodies", "a later milestone"));
+                return Err(self.error_here(
+                    "E0104",
+                    "expected the end of the `for each` body",
+                    "the item's value is the body's last line",
+                ));
             }
             self.advance();
             value
@@ -1235,6 +1240,15 @@ impl Parser<'_> {
                 self.end_of_line()?;
             }
             steps.push((name, value));
+        }
+        if let Some((last, _)) = steps.last()
+            && matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof)
+        {
+            let expected = format!(
+                "after the steps, a last line with what the body gives (for example `{}`)",
+                last.name
+            );
+            return Err(self.error_here("E0102", "expected an expression", &expected));
         }
         let tail = self.expr()?;
         if steps.is_empty() {
