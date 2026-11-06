@@ -7,6 +7,14 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.6.0 (2026-11-06)
+
+- `calyx serve --http` speaks HTTPS: with `tls_cert` and `tls_key` (PEM
+  files) in `[serve]`, it needs no proxy in front. A client that fails the
+  handshake is closed before anything is read. Without them it is plain
+  HTTP as before, and on an address other than 127.0.0.1 it now warns when
+  it starts.
+
 ## 0.5.2 (2026-11-03): security
 
 - `calyx serve --http`: a caller could reach the server's own files. It

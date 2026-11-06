@@ -62,7 +62,8 @@ commands:
       `graphs` and `sandboxes`): each sees and calls only its graphs, with
       its own keys, and lends as a `Sandbox` only the directories inside its
       `sandboxes`.
-      No TLS: use 127.0.0.1 and a proxy with TLS for other machines.
+      With `tls_cert` and `tls_key` (PEM files) in [serve], over HTTPS;
+      without them, plain HTTP: use 127.0.0.1, or a proxy with TLS.
   worker [--fake-models] [--quiet] [--config FILE] [--every SECONDS] [--max N]
          [--once]
       With the journal in PostgreSQL (CALYX_DATABASE_URL), several machines

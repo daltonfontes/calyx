@@ -34,7 +34,9 @@ These are documented limits, not vulnerabilities:
   with the permissions of whoever runs Calyx, so a tool that runs code
   (tests, scripts) runs it with those permissions. Run agents over
   untrusted code inside a container or a VM.
-- `calyx serve --http` has no TLS of its own; put a TLS proxy in front.
+- `calyx serve --http` without `tls_cert` and `tls_key` is plain HTTP: on
+  an address other than 127.0.0.1 it warns when it starts, and tokens cross
+  the network in clear text.
 - A service that ignores idempotency keys can apply a write twice; Calyx
   cannot see inside the service (`calyx check --tools --probe` tests it).
 - What a model decides to do with the tools it is given is bounded by the

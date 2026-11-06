@@ -102,6 +102,10 @@ fn start(d: PathBuf) -> Served {
         if let Some(rest) = line
             .trim()
             .strip_prefix("calyx serve: listening on http://127.0.0.1:")
+            .or_else(|| {
+                line.trim()
+                    .strip_prefix("calyx serve: listening on https://127.0.0.1:")
+            })
         {
             break rest.split('/').next().unwrap().parse().unwrap();
         }
@@ -512,4 +516,62 @@ graphs = ["*"]
         json!({"name": "juntar", "arguments": {"xs": ["a", "b"]}}),
     );
     assert_eq!(text_of(&r), "a,b", "{r}");
+}
+
+/// With `tls_cert` and `tls_key` in [serve], the same server speaks HTTPS:
+/// a client that trusts the certificate gets in, and plain HTTP gets
+/// nothing (no token ever crosses the network in clear text).
+#[test]
+fn with_a_certificate_it_speaks_https() {
+    use std::sync::Arc;
+    let certs = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/tls");
+    let tls_toml = format!(
+        "{CALLERS}\n[serve]\ntls_cert = '{}'\ntls_key = '{}'\n",
+        certs.join("cert.pem").display(),
+        certs.join("key.pem").display()
+    );
+    let s = start(dir("tls", &tls_toml));
+
+    // A client that trusts the test CA, as a real one trusts a public CA.
+    use rustls::pki_types::pem::PemObject;
+    let mut roots = rustls::RootCertStore::empty();
+    for c in rustls::pki_types::CertificateDer::pem_file_iter(certs.join("ca.pem")).unwrap() {
+        roots.add(c.unwrap()).unwrap();
+    }
+    let config = Arc::new(
+        rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth(),
+    );
+    let body = json!({"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                      "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                                 "clientInfo": {"name": "t", "version": "0"}}})
+    .to_string();
+    let request = format!(
+        "POST /mcp HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAuthorization: Bearer {SUPORTE}\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let conn = rustls::ClientConnection::new(config, name).unwrap();
+    let mut tls =
+        rustls::StreamOwned::new(conn, TcpStream::connect(("127.0.0.1", s.port)).unwrap());
+    tls.write_all(request.as_bytes()).unwrap();
+    let mut out = String::new();
+    tls.read_to_string(&mut out).unwrap();
+    assert!(out.starts_with("HTTP/1.1 200"), "{out}");
+    assert!(out.contains("\"serverInfo\""), "{out}");
+
+    // Plain HTTP to the same port: no answer, and the token is not read.
+    let mut plain = TcpStream::connect(("127.0.0.1", s.port)).unwrap();
+    plain
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    plain.write_all(request.as_bytes()).unwrap();
+    let mut got = Vec::new();
+    let _ = plain.read_to_end(&mut got);
+    assert!(!String::from_utf8_lossy(&got).contains("HTTP/1.1 200"));
 }

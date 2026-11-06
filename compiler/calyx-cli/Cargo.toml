@@ -15,3 +15,4 @@ calyx-check = { path = "../calyx-check" }
 calyx-ir = { path = "../calyx-ir" }
 calyx-runtime = { path = "../../runtime" }
 serde_json = "1.0.151"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

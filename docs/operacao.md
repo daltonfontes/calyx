@@ -5,7 +5,7 @@ Como pôr a Calyx em produção e mantê-la lá: instalar, rodar, guardar o esta
 ## 1. Instalar
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.5.2 sh
+curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.6.0 sh
 ```
 
 - **Fixe a versão** (`CALYX_VERSION`) em produção. Sem ela, o script instala a mais recente, e duas máquinas instaladas em dias diferentes podem ficar com versões diferentes.
@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh 
 **No Windows** (PowerShell, sem WSL):
 
 ```powershell
-$env:CALYX_VERSION = 'v0.5.2'; irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
+$env:CALYX_VERSION = 'v0.6.0'; irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
 ```
 
 - O `install.ps1` faz o mesmo que o `install.sh`: confere o SHA-256, instala em `~\.calyx\bin\calyx.exe` (ou `$env:CALYX_INSTALL\bin`), guarda a cópia em `versions\<versão>\calyx.exe` e acrescenta `bin` ao PATH do usuário (`CALYX_NO_MODIFY_PATH=1` evita).
@@ -67,7 +67,7 @@ calyx prune --older-than 90             # apaga
 | Peça | Como roda em produção |
 |---|---|
 | Execuções iniciadas por outro sistema | `calyx run programa.clyx --quiet --PARAM valor`, ou um executável de `calyx build` |
-| Programa como tool de agentes | `calyx serve programa.clyx --http 127.0.0.1:8080`, atrás de um proxy com TLS ([spec, 11.2](spec/calyx.md#112-como-o-runtime-chama-modelos-e-tools)) |
+| Programa como tool de agentes | `calyx serve programa.clyx --http 0.0.0.0:8443`, com `tls_cert` e `tls_key` no `[serve]`; ou em `127.0.0.1`, atrás de um proxy com TLS ([spec, 11.2](spec/calyx.md#112-como-o-runtime-chama-modelos-e-tools)) |
 | Retomar quem caiu e quem recebeu resposta | com PostgreSQL: `calyx worker`, como serviço em cada máquina; em arquivo: `calyx tick` no cron, a cada minuto |
 | Respostas de pessoas (`receive`) | `calyx deliver <id> <Mensagem> '<json>' --as <nome>` |
 
@@ -138,6 +138,7 @@ Nenhum segredo fica no `calyx.toml`: o arquivo diz o nome da variável de ambien
 | Chaves dos provedores de modelos (`GEMINI_API_KEY`...) | em cada chamada, do ambiente do processo | mude o ambiente e reinicie o `worker` e o `serve`; um `run` novo já usa a nova |
 | Tokens de servidores MCP remotos (`token_env`) | na conexão com o servidor | o mesmo |
 | Tokens de quem chama o `calyx serve --http` (`[serve.callers]`) | quando o servidor sobe | ponha o token novo, reinicie o `serve` e depois tire o antigo do cliente |
+| Certificado e chave do `calyx serve --http` (`tls_cert`, `tls_key`) | quando o servidor sobe | troque os arquivos e reinicie o `serve` (um `certbot renew` precisa de um `--deploy-hook` que o reinicie) |
 | Chave de quem assina entregas (`[senders]`) | quando a execução toma a mensagem | abaixo |
 
 **Trocar a chave de quem assina entregas.** Uma entrega é conferida quando a execução a toma, não quando é feita. Por isso, uma entrega assinada com a chave antiga e ainda não tomada é recusada se a chave sair do `[senders]` antes. A ordem:
@@ -187,7 +188,7 @@ O primeiro ensaio, com a 0.3.8, passou (1 reembolso, 1 crédito) e achou três c
 - [ ] PostgreSQL com `sslmode=verify-full`, se mais de uma máquina
 - [ ] `calyx worker` como serviço em cada máquina (PostgreSQL) ou `calyx tick` no cron (arquivo)
 - [ ] `[messages.X] senders` em todo tipo de mensagem que aprova algo, e as chaves privadas só com cada pessoa
-- [ ] `calyx serve --http` só em `127.0.0.1`, atrás de um proxy com TLS, com um chamador por cliente
+- [ ] `calyx serve --http` com TLS (`tls_cert` e `tls_key` no `[serve]`), ou só em `127.0.0.1` atrás de um proxy com TLS; um chamador por cliente
 - [ ] Telemetria ligada, com os alertas da seção 6
 - [ ] Backup de `.calyx/` ou do banco
 - [ ] `calyx prune --older-than N` no cron, com o N que a retenção pede
