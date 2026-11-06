@@ -2,7 +2,7 @@
 
 *Em português: [README.pt.md](README.pt.md).*
 
-> **Public beta (v0.5).** Calyx works end to end and is tested on Linux, macOS
+> **Public beta (v0.6).** Calyx works end to end and is tested on Linux, macOS
 > and Windows, but it is young: expect bugs and breaking changes before 1.0.
 > Read the [limitations](#limitations) before trusting it with real money or
 > untrusted code, and [report what breaks](https://github.com/daltonfontes/calyx/issues).
@@ -158,6 +158,10 @@ callers calyx.toml names, each with its token and the graphs it may call:
 [serve.callers.support]
 token_env = "CALYX_TOKEN_SUPPORT"
 graphs = ["handle_refund"]
+
+[serve]                      # optional: HTTPS, with no proxy in front
+tls_cert = "tls/fullchain.pem"
+tls_key = "tls/privkey.pem"
 ```
 
 ## Calyx calls LOCAL and REMOTE tools
@@ -374,7 +378,7 @@ for code agents to per-user memory, debates and model routers, in
 # Limitations
 
 ```
-- Calyx is a public beta (v0.5). Expect bugs and breaking changes before 1.0.
+- Calyx is a public beta (v0.6). Expect bugs and breaking changes before 1.0.
 - The spec, docs and examples are mostly in Portuguese; the paper is in English.
 - The guarantees rest on stated hypotheses: the service honours the idempotency
   key, and `verify` reads fresh state. Calyx cannot check a service that ignores
@@ -393,8 +397,6 @@ for code agents to per-user memory, debates and model routers, in
 - A sandbox is a copy of a directory, not an isolation boundary: tools run
   with the permissions of whoever runs Calyx. A tool like `run_tests` runs
   the code it is given, so run agents over untrusted code in a container.
-- `calyx serve --http` has no TLS of its own: bind it to 127.0.0.1 and put
-  a TLS proxy in front.
 - The pure layer has no recursion, by design (every program must terminate).
 - No language server, debugger or REPL.
 - Most experiments use fake models; the parallelism and recovery ones were

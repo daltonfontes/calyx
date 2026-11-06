@@ -149,6 +149,9 @@ pub struct ServeConfig {
     pub callers: Vec<Caller>,
     /// `Origin` headers accepted (browsers send one; other clients do not).
     pub allowed_origins: Vec<String>,
+    /// `tls_cert` and `tls_key`: PEM files (relative to calyx.toml); with
+    /// them, `serve --http` speaks HTTPS.
+    pub tls: Option<(PathBuf, PathBuf)>,
 }
 
 /// `[serve.callers.NAME]`: a caller's token (from the environment), the
@@ -382,7 +385,9 @@ impl Config {
                 "serve" => {
                     let t = section(value, "serve")?;
                     for k in t.keys() {
-                        if !["callers", "allowed_origins"].contains(&k.as_str()) {
+                        if !["callers", "allowed_origins", "tls_cert", "tls_key"]
+                            .contains(&k.as_str())
+                        {
                             return Err(format!("unknown key `serve.{k}`"));
                         }
                     }
@@ -408,6 +413,18 @@ impl Config {
                     if t.contains_key("allowed_origins") {
                         cfg.serve.allowed_origins = strings(value, "allowed_origins", "serve")?;
                     }
+                    cfg.serve.tls = match (t.get("tls_cert"), t.get("tls_key")) {
+                        (None, None) => None,
+                        (Some(_), Some(_)) => Some((
+                            dir.join(string(value, "tls_cert", "serve")?),
+                            dir.join(string(value, "tls_key", "serve")?),
+                        )),
+                        _ => {
+                            return Err(
+                                "`serve` needs both `tls_cert` and `tls_key`, or neither".into()
+                            );
+                        }
+                    };
                 }
                 "senders" => {
                     for (name, v) in section(value, "senders")? {
@@ -523,5 +540,24 @@ mod tests {
     #[test]
     fn rejects_unknown_sections() {
         assert!(Config::parse("[model]\n", Path::new(".")).is_err());
+    }
+
+    #[test]
+    fn serve_tls_needs_both_files_relative_to_the_config() {
+        let cfg = Config::parse(
+            "[serve]\ntls_cert = \"tls/cert.pem\"\ntls_key = \"tls/key.pem\"\n",
+            Path::new("/srv/app"),
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.serve.tls,
+            Some((
+                PathBuf::from("/srv/app/tls/cert.pem"),
+                PathBuf::from("/srv/app/tls/key.pem")
+            ))
+        );
+        let one = Config::parse("[serve]\ntls_cert = \"cert.pem\"\n", Path::new("."));
+        assert!(one.unwrap_err().contains("both `tls_cert` and `tls_key`"));
+        assert_eq!(Config::parse("", Path::new(".")).unwrap().serve.tls, None);
     }
 }

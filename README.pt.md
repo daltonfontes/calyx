@@ -2,7 +2,7 @@
 
 *In English: [README.md](README.md).*
 
-> **Beta pública (v0.5).** A Calyx funciona de ponta a ponta e é testada em
+> **Beta pública (v0.6).** A Calyx funciona de ponta a ponta e é testada em
 > Linux, macOS e Windows, mas é jovem: espere bugs e mudanças incompatíveis
 > antes da 1.0. Leia as [limitações](#limitações) antes de confiar nela com
 > dinheiro de verdade ou código desconhecido, e [relate o que quebrar](https://github.com/daltonfontes/calyx/issues).
@@ -346,7 +346,7 @@ modelos, em [`examples/`](examples).
 # Limitações
 
 ```
-- A Calyx é uma beta pública (v0.5). Espere bugs e mudanças incompatíveis antes da 1.0.
+- A Calyx é uma beta pública (v0.6). Espere bugs e mudanças incompatíveis antes da 1.0.
 - As mensagens do compilador e os nomes da linguagem são em inglês.
 - As garantias dependem de hipóteses declaradas: o serviço respeita a chave
   de idempotência, e o `verify` lê o estado atual. A Calyx não tem como
@@ -368,8 +368,6 @@ modelos, em [`examples/`](examples).
   com as permissões de quem roda a Calyx. Uma tool como `run_tests` executa
   o código que recebe, então rode agentes sobre código desconhecido num
   contêiner.
-- O `calyx serve --http` não tem TLS próprio: use 127.0.0.1 e um proxy com
-  TLS na frente.
 - A camada pura não tem recursão, de propósito (todo programa termina).
 - Sem language server, depurador ou REPL.
 - A maioria dos experimentos usa modelos falsos; os de paralelismo e

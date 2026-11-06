@@ -37,13 +37,15 @@
 //! and its other arguments go to `calyx run` as JSON, so a text is never
 //! read as `@file`: a caller cannot reach the server's own files.
 //! A request with an `Origin` not in `[serve] allowed_origins` gets 403
-//! (a web page cannot drive the server from someone's browser). There is no
-//! TLS: bind to 127.0.0.1 (the default) and put a proxy with TLS in front
-//! for other machines.
+//! (a web page cannot drive the server from someone's browser). With
+//! `tls_cert` and `tls_key` in `[serve]` (PEM files) it speaks HTTPS, and a
+//! client that fails the handshake is closed before anything is read;
+//! without them it is plain HTTP, for 127.0.0.1 (the default) or behind a
+//! proxy with TLS, and on any other address it says so when it starts.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::{Arc, Mutex};
@@ -242,8 +244,25 @@ fn serve_http(server: Server, addr: &str, cfg: calyx_runtime::config::ServeConfi
     let bound = listener
         .local_addr()
         .map_or(addr.to_owned(), |a| a.to_string());
+    let tls = match &cfg.tls {
+        Some((cert, key)) => match tls_config(cert, key) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                eprintln!("calyx: {e}");
+                return ExitCode::from(2);
+            }
+        },
+        None => None,
+    };
+    let local = listener.local_addr().is_ok_and(|a| a.ip().is_loopback());
+    if tls.is_none() && !local {
+        eprintln!(
+            "calyx: warning: serving on {bound} without TLS: tokens and answers cross the network in clear text; set `tls_cert` and `tls_key` in [serve], or put a proxy with TLS in front"
+        );
+    }
     eprintln!(
-        "calyx serve: listening on http://{bound}/mcp ({} caller(s))",
+        "calyx serve: listening on {}://{bound}/mcp ({} caller(s))",
+        if tls.is_some() { "https" } else { "http" },
         known.len()
     );
     let shared = Arc::new(Http {
@@ -253,9 +272,31 @@ fn serve_http(server: Server, addr: &str, cfg: calyx_runtime::config::ServeConfi
         sessions: Mutex::new(Map::new()),
     });
     for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
+        let Ok(mut stream) = stream else { continue };
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
         let h = Arc::clone(&shared);
-        std::thread::spawn(move || h.connection(stream));
+        let tls = tls.clone();
+        std::thread::spawn(move || match tls {
+            None => h.connection(&mut stream),
+            Some(cfg) => {
+                let Ok(conn) = rustls::ServerConnection::new(cfg) else {
+                    return;
+                };
+                // The handshake first: a client that fails it (plain HTTP,
+                // a certificate it does not trust) is closed at once, and
+                // gets nothing.
+                let mut tls = rustls::StreamOwned::new(conn, stream);
+                while tls.conn.is_handshaking() {
+                    if tls.conn.complete_io(&mut tls.sock).is_err() {
+                        return;
+                    }
+                }
+                h.connection(&mut tls);
+                tls.conn.send_close_notify();
+                let _ = tls.flush();
+            }
+        });
     }
     ExitCode::SUCCESS
 }
@@ -284,7 +325,7 @@ impl Request {
     }
 }
 
-fn read_request(stream: &TcpStream) -> Option<Request> {
+fn read_request(stream: &mut impl Read) -> Option<Request> {
     let mut r = BufReader::new(stream);
     let mut line = String::new();
     r.read_line(&mut line).ok()?;
@@ -321,7 +362,7 @@ fn read_request(stream: &TcpStream) -> Option<Request> {
     })
 }
 
-fn respond(mut stream: &TcpStream, status: u16, body: &str, extra: &[(&str, String)]) {
+fn respond(stream: &mut impl Write, status: u16, body: &str, extra: &[(&str, String)]) {
     let reason = match status {
         200 => "OK",
         202 => "Accepted",
@@ -356,25 +397,25 @@ impl Http {
             .map(|k| &k.caller)
     }
 
-    fn connection(&self, stream: TcpStream) {
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-        let Some(req) = read_request(&stream) else {
-            respond(&stream, 400, r#"{"error":"bad request"}"#, &[]);
+    /// One request, over `stream` (plain, or TLS), then the connection ends.
+    fn connection(&self, stream: &mut (impl Read + Write)) {
+        let Some(req) = read_request(stream) else {
+            respond(stream, 400, r#"{"error":"bad request"}"#, &[]);
             return;
         };
         if req.path.split('?').next() != Some("/mcp") {
-            respond(&stream, 404, r#"{"error":"the MCP endpoint is /mcp"}"#, &[]);
+            respond(stream, 404, r#"{"error":"the MCP endpoint is /mcp"}"#, &[]);
             return;
         }
         if let Some(origin) = req.header("origin")
             && !self.origins.iter().any(|o| o == origin)
         {
-            respond(&stream, 403, r#"{"error":"origin not allowed"}"#, &[]);
+            respond(stream, 403, r#"{"error":"origin not allowed"}"#, &[]);
             return;
         }
         let Some(caller) = self.caller(&req) else {
             respond(
-                &stream,
+                stream,
                 401,
                 r#"{"error":"a known Bearer token is needed"}"#,
                 &[],
@@ -391,13 +432,13 @@ impl Http {
                         sessions.remove(s);
                     }
                 }
-                respond(&stream, 200, "{}", &[]);
+                respond(stream, 200, "{}", &[]);
                 return;
             }
             // No stream from the server: answers come with each POST.
             _ => {
                 respond(
-                    &stream,
+                    stream,
                     405,
                     r#"{"error":"POST JSON-RPC messages to /mcp"}"#,
                     &[("Allow", "POST, DELETE".into())],
@@ -406,7 +447,7 @@ impl Http {
             }
         }
         let Ok(msg) = serde_json::from_slice::<Value>(&req.body) else {
-            respond(&stream, 400, r#"{"error":"the body is not JSON"}"#, &[]);
+            respond(stream, 400, r#"{"error":"the body is not JSON"}"#, &[]);
             return;
         };
         let mut extra = Vec::new();
@@ -429,7 +470,7 @@ impl Http {
             });
             if !ok {
                 respond(
-                    &stream,
+                    stream,
                     404,
                     r#"{"error":"unknown session: initialize first"}"#,
                     &[],
@@ -445,10 +486,33 @@ impl Http {
             );
         }
         match self.server.handle(&msg, Some(caller)) {
-            Some(out) => respond(&stream, 200, &out.to_string(), &extra),
-            None => respond(&stream, 202, "", &extra),
+            Some(out) => respond(stream, 200, &out.to_string(), &extra),
+            None => respond(stream, 202, "", &extra),
         }
     }
+}
+
+/// The server side of TLS, from PEM files: the certificate chain (the
+/// server's first) and its private key.
+fn tls_config(cert: &Path, key: &Path) -> Result<Arc<rustls::ServerConfig>, String> {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    let certs: Vec<CertificateDer> = CertificateDer::pem_file_iter(cert)
+        .and_then(|it| it.collect::<Result<_, _>>())
+        .map_err(|e| format!("tls_cert `{}`: {e}", cert.display()))?;
+    if certs.is_empty() {
+        return Err(format!(
+            "tls_cert `{}`: no certificate in it",
+            cert.display()
+        ));
+    }
+    let key = PrivateKeyDer::from_pem_file(key)
+        .map_err(|e| format!("tls_key `{}`: {e}", key.display()))?;
+    rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .and_then(|b| b.with_no_client_auth().with_single_cert(certs, key))
+        .map(Arc::new)
+        .map_err(|e| format!("tls_cert and tls_key: {e}"))
 }
 
 fn new_session() -> String {
