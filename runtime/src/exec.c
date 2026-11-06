@@ -197,7 +197,7 @@ struct exec {
     pthread_mutex_t mu, jmu;
     pthread_cond_t work_cv, io_cv;
     cx_arena arena; /* the main thread's */
-    cx_value *models, *tools, *prompts, *graphs, *entities, *defs, *routers;
+    cx_value *models, *tools, *prompts, *graphs, *entities, *defs, *routers, *skills;
     /* Identifies this run in entities' records of applied messages: the
      * run's directory name, the same when it is resumed. */
     const char *run_id;
@@ -3429,6 +3429,49 @@ static void tool_defs(exec *x, cx_value *tools, cx_buf *b) {
     cx_buf_putc(b, ']');
 }
 
+/*
+ * Skills (progressive disclosure): the agent sees one built-in tool,
+ * `load_skill`, whose description lists each skill's name and description;
+ * calling it gives the skill's text. The text is in the program, so it is
+ * the same on every run and every resume, and needs no journal entry.
+ */
+static void skill_def(exec *x, cx_value *skills, cx_buf *b) {
+    cx_buf d = {0};
+    cx_buf_puts(&d, "Loads a skill: the full procedure for a kind of task. Load the one that fits "
+                    "before doing that kind of task. The skills:");
+    for (size_t i = 0; i < len_of(skills); i++) {
+        cx_value *s = at(x->skills, as_index(at(skills, i)));
+        cx_buf_printf(&d, "\n- %s: %s", cx_get_str(s, "name", "?"),
+                      cx_get_str(s, "description", ""));
+    }
+    cx_buf_puts(b, "{\"type\":\"function\",\"function\":{\"name\":\"load_skill\",\"description\":");
+    cx_buf_json_str(b, d.data, d.len);
+    cx_buf_free(&d);
+    cx_buf_puts(b, ",\"parameters\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":"
+                   "\"string\",\"enum\":[");
+    for (size_t i = 0; i < len_of(skills); i++) {
+        if (i) cx_buf_putc(b, ',');
+        cx_write(b, cx_get(at(x->skills, as_index(at(skills, i))), "name"));
+    }
+    cx_buf_puts(b, "]}},\"required\":[\"name\"]}}}");
+}
+
+/* What `load_skill(name)` gives: the skill's text, or why not (0). */
+static int load_skill(exec *x, cx_value *skills, cx_value *arguments, cx_buf *obs) {
+    const char *want = arguments && arguments->kind == CX_REC
+                           ? cx_get_str(arguments, "name", "")
+                           : "";
+    for (size_t i = 0; i < len_of(skills); i++) {
+        cx_value *s = at(x->skills, as_index(at(skills, i)));
+        if (strcmp(cx_get_str(s, "name", ""), want) == 0) {
+            cx_buf_puts(obs, cx_get_str(s, "text", ""));
+            return 1;
+        }
+    }
+    cx_buf_printf(obs, "error: there is no skill `%s`", want);
+    return 0;
+}
+
 static void user_message(cx_buf *msgs, const char *text) {
     cx_buf_puts(msgs, ",{\"role\":\"user\",\"content\":");
     cx_buf_json_str(msgs, text, strlen(text));
@@ -3624,6 +3667,13 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
     }
     cx_buf defs = {0};
     tool_defs(x, tools, &defs);
+    cx_value *skills = cx_get(e, "skills");
+    if (len_of(skills)) {
+        defs.len--; /* the closing `]` */
+        if (nt) cx_buf_putc(&defs, ',');
+        skill_def(x, skills, &defs);
+        cx_buf_putc(&defs, ']');
+    }
     const char *defs_s = fmt(a, "%s", defs.data);
     cx_buf_free(&defs);
     const char *base = call_key(c, e);
@@ -3755,7 +3805,12 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
                 }
             }
             cx_buf obs = {0};
-            if (!tool) {
+            if (!tool && len_of(skills) && strcmp(name, "load_skill") == 0) {
+                cx_value *arguments = cx_get(call, "arguments");
+                int found = load_skill(x, skills, arguments, &obs);
+                trace(x, c->label, "skill %s%s", cx_get_str(arguments, "name", "?"),
+                      found ? "" : ": no such skill");
+            } else if (!tool) {
                 cx_buf_printf(&obs, "error: there is no tool `%s`", name);
             } else {
                 cx_buf req = {0};
@@ -4148,6 +4203,7 @@ char *calyx_run(const char *ir_json, const char *graph, const char *args_json,
     x->entities = cx_get(ir, "entities");
     x->defs = cx_get(ir, "defs");
     x->routers = cx_get(ir, "routers");
+    x->skills = cx_get(ir, "skills");
 
     size_t gi = (size_t)-1;
     for (size_t i = 0; i < len_of(x->graphs); i++)

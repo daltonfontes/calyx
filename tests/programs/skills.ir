@@ -1,0 +1,3 @@
+graph support(msg: Text) -> Text [read]
+  %0 answer: Text = agent m [read]
+  return %0

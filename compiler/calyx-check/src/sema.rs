@@ -33,6 +33,7 @@ pub fn check_program(program: &Program, diags: &mut Vec<Diagnostic>) -> ir::Prog
         raw_write_graphs: HashSet::new(),
         recursing: None,
         policies: HashMap::new(),
+        skills: HashSet::new(),
     };
     cx.collect(program);
     cx.resolve_signatures(program);
@@ -170,6 +171,8 @@ struct Cx<'a, 'p> {
     recursing: Option<(String, String)>,
     /// `policy tool:` declarations, by tool (decision D36).
     policies: HashMap<&'p str, &'p PolicyDecl>,
+    /// `skill` declarations: what agents may load on demand.
+    skills: HashSet<&'p str>,
 }
 
 fn err(code: &'static str, msg: impl Into<String>, span: Span) -> Diagnostic {
@@ -219,6 +222,9 @@ impl<'p> Cx<'_, 'p> {
                 continue;
             }
             match d {
+                Decl::Skill(k) => {
+                    self.skills.insert(&k.name.name);
+                }
                 Decl::Model(m) => {
                     self.models.insert(&m.name.name, m);
                 }
@@ -313,6 +319,23 @@ impl<'p> Cx<'_, 'p> {
                     let params = self.params(&d.params);
                     let ret = self.ty(&d.ret);
                     self.defs.insert(&d.name.name, DefSig { params, ret });
+                }
+                Decl::Skill(k) => {
+                    if k.description
+                        .as_ref()
+                        .is_none_or(|d| d.text.trim().is_empty())
+                    {
+                        self.push(
+                            err("E0698", "a skill needs a description", k.name.span)
+                                .expected("`description \"...\"`: what the agent reads to decide whether to load it"),
+                        );
+                    }
+                    if k.text.as_ref().is_none_or(|t| t.text.trim().is_empty()) {
+                        self.push(
+                            err("E0698", "a skill needs its text", k.name.span)
+                                .expected("the procedure, as `\"\"\"...\"\"\"`: what the agent gets when it loads the skill"),
+                        );
+                    }
                 }
                 Decl::Model(_) | Decl::Type(_) | Decl::Router(_) | Decl::Policy(_) => {}
             }
@@ -3764,6 +3787,28 @@ impl<'p> Cx<'_, 'p> {
                 t.ty
             }
         };
+        for k in &a.skills {
+            if !self.skills.contains(k.name.as_str()) {
+                self.push(
+                    err("E0602", "unknown skill", k.span)
+                        .expected("a skill declared with `skill`")
+                        .observed(format!("`{}`", k.name)),
+                );
+            }
+        }
+        if !a.skills.is_empty()
+            && let Some(t) = a.tools.iter().find(|t| t.name.name == "load_skill")
+        {
+            self.push(
+                err(
+                    "E0698",
+                    "an agent with skills loads them with `load_skill`",
+                    t.name.span,
+                )
+                .expected("another name for the tool")
+                .observed("a tool named `load_skill` too"),
+            );
+        }
         if let Some((p, at)) = &a.compact {
             // It is given the conversation as text, and gives the summary.
             let fits = self

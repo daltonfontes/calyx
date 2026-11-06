@@ -8,15 +8,15 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
-/// `compact with p` without `at`: compact above this many tokens, which
-/// fits the context of the models Calyx is used with, with room for a turn.
-pub const COMPACT_AT: u64 = 32_000;
-
 use calyx_ir::{self as ir, Effect, NodeId, Part, PromptPart};
 use calyx_syntax::ast::{
     Arg, Decl, DefDecl, DefStmt, EntityDecl, Expr, ExprKind, GraphDecl, Ident, OnLimit, OnNone,
     PolicyDecl, Program, RuleKind, Stmt, StrLit, ToolDecl, TypeDecl, TypeExpr, TypeKind,
 };
+
+/// `compact with p` without `at`: compact above this many tokens, which
+/// fits the context of the models Calyx is used with, with room for a turn.
+pub const COMPACT_AT: u64 = 32_000;
 
 pub fn lower(program: &Program, out: &mut ir::Program) {
     let mut cx = Lower {
@@ -28,6 +28,7 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
         variants: HashMap::new(),
         entities: HashMap::new(),
         defs: HashMap::new(),
+        skills: HashMap::new(),
         graphs: out
             .graphs
             .iter()
@@ -69,6 +70,14 @@ pub fn lower(program: &Program, out: &mut ir::Program) {
                     name: r.name.name.clone(),
                     models: Vec::new(),
                     check: 0,
+                });
+            }
+            Decl::Skill(k) => {
+                cx.skills.insert(&k.name.name, out.skills.len());
+                out.skills.push(ir::Skill {
+                    name: k.name.name.clone(),
+                    description: k.description.as_ref().map_or(String::new(), plain_text),
+                    text: k.text.as_ref().map_or(String::new(), |t| dedent(&t.text)),
                 });
             }
             Decl::Tool(_) | Decl::Prompt(_) | Decl::Graph(_) | Decl::Policy(_) => {}
@@ -220,6 +229,7 @@ struct Lower<'p> {
     /// Index in the IR and declaration.
     entities: HashMap<&'p str, (usize, &'p EntityDecl)>,
     defs: HashMap<&'p str, (usize, &'p DefDecl)>,
+    skills: HashMap<&'p str, usize>,
 }
 
 /// Functions every program has (the checker types them).
@@ -604,6 +614,11 @@ impl Lower<'_> {
                         let (i, _) = self.prompts.get(p.name.as_str())?;
                         Some((*i, at.unwrap_or(COMPACT_AT)))
                     }),
+                    skills: a
+                        .skills
+                        .iter()
+                        .filter_map(|k| self.skills.get(k.name.as_str()).copied())
+                        .collect(),
                 }))
             }
         }

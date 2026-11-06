@@ -265,6 +265,7 @@ fn kind(d: &Decl) -> (&'static str, u32) {
         Decl::Def(_) => ("def", 12),
         Decl::Router(_) => ("router", 19),
         Decl::Policy(_) => ("policy", 11),
+        Decl::Skill(_) => ("skill", 15),
     }
 }
 
@@ -279,6 +280,7 @@ fn span_of(d: &Decl) -> Span {
         Decl::Def(x) => x.span,
         Decl::Router(x) => x.span,
         Decl::Policy(x) => x.span,
+        Decl::Skill(x) => x.span,
     }
 }
 

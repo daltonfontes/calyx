@@ -261,6 +261,8 @@ pub struct Agent {
     pub on_stuck: Option<String>,
     /// `compact with p at n tokens`: the prompt (index) and the size.
     pub compact: Option<(usize, u64)>,
+    /// `skills [a, b]`: indices in `Program::skills`.
+    pub skills: Vec<usize>,
 }
 
 /// A piece of an interpolated text.
@@ -547,6 +549,16 @@ pub struct Program {
     /// delivered).
     pub messages: Vec<(String, String)>,
     pub routers: Vec<Router>,
+    /// `skill` declarations: what agents load on demand.
+    pub skills: Vec<Skill>,
+}
+
+/// A skill: the description an agent sees, and the procedure it loads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Skill {
+    pub name: String,
+    pub description: String,
+    pub text: String,
 }
 
 /// A router (decision D30): its models, cheapest first, and the `def` that

@@ -1,0 +1,40 @@
+# A skill needs a description and a text; an agent names skills that exist,
+# and has no tool of its own called `load_skill`.
+
+model m = "gemini-3.5-flash-lite"
+
+tool load_skill(name: Text) -> Text:
+    effect read
+    max_output 1000 tokens
+
+skill no_description:
+    """
+    Some steps.
+    """
+
+skill no_text:
+    description "Says what it is for, but has no steps."
+
+prompt help(msg: Text) -> Text:
+    """
+    {msg}
+    """
+
+graph unknown(msg: Text) -> Text:
+    answer = agent m:
+        skills [no_description, taxes]
+        max_turns 4
+        task help(msg)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer
+
+graph clash(msg: Text) -> Text:
+    answer = agent m:
+        tools [load_skill]
+        skills [no_text]
+        max_turns 4
+        task help(msg)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer

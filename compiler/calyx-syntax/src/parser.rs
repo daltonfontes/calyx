@@ -39,6 +39,7 @@ const RATE_UNITS: &[&str] = &["s", "min", "h"];
 
 const DECLS: &[&str] = &[
     "model", "tool", "type", "message", "prompt", "graph", "entity", "def", "router", "policy",
+    "skill",
 ];
 
 /// Declarations planned for later milestones.
@@ -372,6 +373,7 @@ impl Parser<'_> {
             "def" => self.def_decl().map(Decl::Def),
             "router" => self.router_decl().map(Decl::Router),
             "policy" => self.policy_decl().map(Decl::Policy),
+            "skill" => self.skill_decl().map(Decl::Skill),
             w => {
                 if let Some((_, m)) = FUTURE_DECLS.iter().find(|(k, _)| *k == w) {
                     Err(self.unsupported(w, m))
@@ -765,6 +767,43 @@ impl Parser<'_> {
             template,
             span: self.span_from(start),
         })
+    }
+
+    /// `skill name:` then `description "..."` and the procedure as a text.
+    fn skill_decl(&mut self) -> PResult<SkillDecl> {
+        let start = self.advance().span;
+        let name = self.ident("a skill name")?;
+        self.block_start("`description \"...\"` and the skill's text as `\"\"\"...\"\"\"`")?;
+        let mut skill = SkillDecl {
+            name,
+            description: None,
+            text: None,
+            span: start,
+        };
+        while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
+            match self.kind() {
+                TokenKind::Str | TokenKind::LongStr if skill.text.is_none() => {
+                    let t = self.advance();
+                    skill.text = Some(self.str_lit(t));
+                }
+                TokenKind::Ident if self.is_word("description") && skill.description.is_none() => {
+                    self.advance();
+                    let t = self.expect(TokenKind::Str, "the description, as `\"...\"`")?;
+                    skill.description = Some(self.str_lit(t));
+                }
+                _ => {
+                    return Err(self.error_here(
+                        "E0100",
+                        "syntax error",
+                        "`description \"...\"` or the skill's text, once each",
+                    ));
+                }
+            }
+            self.end_of_line()?;
+        }
+        self.eat(TokenKind::Dedent);
+        skill.span = self.span_from(start);
+        Ok(skill)
     }
 
     fn graph_decl(&mut self) -> PResult<GraphDecl> {
@@ -1977,6 +2016,7 @@ impl Parser<'_> {
             on_turn_limit: OnLimit::Missing,
             on_stuck: OnLimit::Missing,
             compact: None,
+            skills: Vec::new(),
             span: start,
         };
         while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
@@ -2003,6 +2043,19 @@ impl Parser<'_> {
                             }
                         }
                         agent.tools.push(AgentTool { name, lends });
+                        if !self.eat(TokenKind::Comma) {
+                            self.expect(TokenKind::RBracket, "`,` or `]`")?;
+                            break;
+                        }
+                    }
+                }
+                "skills" => {
+                    self.expect(TokenKind::LBracket, "`[` and the skills")?;
+                    loop {
+                        if self.eat(TokenKind::RBracket) {
+                            break;
+                        }
+                        agent.skills.push(self.ident("a skill")?);
                         if !self.eat(TokenKind::Comma) {
                             self.expect(TokenKind::RBracket, "`,` or `]`")?;
                             break;
@@ -2050,7 +2103,7 @@ impl Parser<'_> {
                         key.span,
                         "E0108",
                         "unknown agent property",
-                        "`tools`, `max_turns`, `task`, `compact`, `on turn_limit` or `on stuck`",
+                        "`tools`, `skills`, `max_turns`, `task`, `compact`, `on turn_limit` or `on stuck`",
                         other,
                     );
                     return Err(r);

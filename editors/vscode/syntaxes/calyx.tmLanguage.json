@@ -39,14 +39,14 @@
       "name": "variable.other.interpolation.calyx"
     },
     "declaration": {
-      "match": "^\\s*(model|tool|type|message|prompt|graph|entity|def|router|policy)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "match": "^\\s*(model|tool|type|message|prompt|graph|entity|def|router|policy|skill)\\s+([A-Za-z_][A-Za-z0-9_]*)",
       "captures": {
         "1": { "name": "storage.type.calyx" },
         "2": { "name": "entity.name.function.calyx" }
       }
     },
     "keyword": {
-      "match": "\\b(agent|loop|rounds|carry|match|case|done|next|if|elif|else|for|each|in|race|first|where|none|on|try|return|limits|requires|require|deny|from|after|unordered|compensate|fork|reads|edits|key|receive|about|timeout|send|ask|decreases|tools|task|max_turns|turn_limit|stuck|final_answer|max|last|fail|and|or|not)\\b",
+      "match": "\\b(agent|loop|rounds|carry|match|case|done|next|if|elif|else|for|each|in|race|first|where|none|on|try|return|limits|requires|require|deny|from|after|unordered|compensate|fork|reads|edits|key|receive|about|timeout|send|ask|decreases|tools|skills|task|max_turns|turn_limit|stuck|final_answer|max|last|fail|and|or|not)\\b",
       "name": "keyword.control.calyx"
     },
     "effect": {

@@ -26,6 +26,7 @@ pub enum Decl {
     Def(DefDecl),
     Router(RouterDecl),
     Policy(PolicyDecl),
+    Skill(SkillDecl),
 }
 
 impl Decl {
@@ -40,6 +41,7 @@ impl Decl {
             Decl::Def(d) => &d.name,
             Decl::Router(d) => &d.name,
             Decl::Policy(d) => &d.tool,
+            Decl::Skill(d) => &d.name,
         }
     }
 }
@@ -238,6 +240,17 @@ pub struct PromptDecl {
     pub params: Vec<Param>,
     pub ret: TypeExpr,
     pub template: StrLit,
+    pub span: Span,
+}
+
+/// `skill name:` then `description "..."` and the procedure as `"""..."""`
+/// (progressive disclosure): an agent with `skills [name]` sees only the
+/// description, and loads the procedure when it needs it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkillDecl {
+    pub name: Ident,
+    pub description: Option<StrLit>,
+    pub text: Option<StrLit>,
     pub span: Span,
 }
 
@@ -483,6 +496,8 @@ pub struct AgentExpr {
     /// `compact with summarize at 20000 tokens`: the prompt that sums up
     /// the conversation, and the size (in tokens) above which it does.
     pub compact: Option<(Ident, Option<u64>)>,
+    /// `skills [refunds, shipping]`: what the agent may load.
+    pub skills: Vec<Ident>,
     pub span: Span,
 }
 
