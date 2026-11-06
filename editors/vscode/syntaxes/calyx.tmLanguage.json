@@ -1,0 +1,73 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Calyx",
+  "scopeName": "source.calyx",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#prompt-text" },
+    { "include": "#string" },
+    { "include": "#declaration" },
+    { "include": "#keyword" },
+    { "include": "#effect" },
+    { "include": "#constant" },
+    { "include": "#number" },
+    { "include": "#type" },
+    { "include": "#call" }
+  ],
+  "repository": {
+    "comment": {
+      "match": "#.*$",
+      "name": "comment.line.number-sign.calyx"
+    },
+    "prompt-text": {
+      "begin": "\"\"\"",
+      "end": "\"\"\"",
+      "name": "string.quoted.triple.calyx",
+      "patterns": [{ "include": "#interpolation" }]
+    },
+    "string": {
+      "begin": "\"",
+      "end": "\"",
+      "name": "string.quoted.double.calyx",
+      "patterns": [
+        { "match": "\\\\.", "name": "constant.character.escape.calyx" },
+        { "include": "#interpolation" }
+      ]
+    },
+    "interpolation": {
+      "match": "\\{[^{}\"]*\\}",
+      "name": "variable.other.interpolation.calyx"
+    },
+    "declaration": {
+      "match": "^\\s*(model|tool|type|message|prompt|graph|entity|def|router|policy)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.calyx" },
+        "2": { "name": "entity.name.function.calyx" }
+      }
+    },
+    "keyword": {
+      "match": "\\b(agent|loop|rounds|carry|match|case|done|next|if|elif|else|for|each|in|race|first|where|none|on|try|return|limits|requires|require|deny|from|after|unordered|compensate|fork|reads|edits|key|receive|about|timeout|send|ask|decreases|tools|task|max_turns|turn_limit|stuck|final_answer|max|last|fail|and|or|not)\\b",
+      "name": "keyword.control.calyx"
+    },
+    "effect": {
+      "match": "\\b(effect|read|write|once|pure|sandbox|on_uncertain|verify|pause|accept_loss|idempotency_key|max_output|retry_on|description|checks|resource|state)\\b",
+      "name": "keyword.other.effect.calyx"
+    },
+    "constant": {
+      "match": "\\b(true|false)\\b",
+      "name": "constant.language.calyx"
+    },
+    "number": {
+      "match": "\\b[0-9][0-9_]*(\\.[0-9]+)?(\\s*(tokens|USD|BRL|EUR|ms|s|min|h|days|day|KB|MB|GB))?\\b",
+      "name": "constant.numeric.calyx"
+    },
+    "type": {
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b",
+      "name": "entity.name.type.calyx"
+    },
+    "call": {
+      "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": { "1": { "name": "entity.name.function.call.calyx" } }
+    }
+  }
+}

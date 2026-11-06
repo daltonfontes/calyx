@@ -7,6 +7,16 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.9.0 (2026-11-06)
+
+- `calyx lsp`: a language server over stdio. Diagnostics as you type (the
+  checks of `calyx check`, with their code, expected and observed), the
+  outline of a file, go to definition and hover for the names it declares.
+  Positions in UTF-16 units, as editors count them; CRLF files work.
+- `editors/vscode`: a VS Code extension that starts it, with syntax colors
+  (a TextMate grammar) and indentation rules. Other editors with an LSP
+  client run `calyx lsp` directly (the extension's README shows Neovim).
+
 ## 0.8.0 (2026-11-06)
 
 - `for each` bodies take steps: `name = value` lines, each seeing the ones

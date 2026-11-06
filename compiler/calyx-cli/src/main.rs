@@ -4,6 +4,7 @@
 //! 3 = the execution failed, 4 = the run waits for a message (`receive`).
 
 mod bundle;
+mod lsp;
 mod runs;
 mod serve;
 
@@ -115,6 +116,10 @@ commands:
       Make a key pair to sign deliveries: the private key goes to
       ~/.calyx/keys/ (or $CALYX_KEYS_DIR); the public key, printed, goes
       to `[senders]` in calyx.toml.
+  lsp
+      A language server over stdio, for editors: the diagnostics of
+      `calyx check` as you type, the outline of a file, go to definition
+      and hover. Editors start it on their own (see editors/ in the repo).
   login <tool> [--config FILE] [--no-browser]
       Log in to a remote MCP server that takes OAuth (`oauth` in the
       tool's calyx.toml entry): opens the browser on its authorization
@@ -167,6 +172,7 @@ fn main() -> ExitCode {
         Some("logout") => login(&args[1..], false),
         Some("tick") => tick(&args[1..]),
         Some("serve") => serve::serve(&args[1..]),
+        Some("lsp") => lsp::lsp(&args[1..]),
         Some("worker") => worker(&args[1..]),
         Some("version" | "--version" | "-V") => {
             println!("calyx {}", env!("CARGO_PKG_VERSION"));

@@ -1,0 +1,54 @@
+{
+  "name": "calyx",
+  "displayName": "Calyx",
+  "description": "The Calyx language for agent workflows: diagnostics as you type, outline, go to definition, hover and syntax colors.",
+  "version": "0.9.0",
+  "publisher": "calyx",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/daltonfontes/calyx"
+  },
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": ["Programming Languages", "Linters"],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "calyx",
+        "aliases": ["Calyx", "calyx"],
+        "extensions": [".clyx"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "calyx",
+        "scopeName": "source.calyx",
+        "path": "./syntaxes/calyx.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Calyx",
+      "properties": {
+        "calyx.path": {
+          "type": "string",
+          "default": "calyx",
+          "description": "The calyx command (a name on the PATH, or a full path). The extension runs `calyx lsp`."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "3.2.1"
+  },
+  "scripts": {
+    "package": "vsce package"
+  }
+}
