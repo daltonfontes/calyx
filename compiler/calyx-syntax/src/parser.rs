@@ -1976,6 +1976,7 @@ impl Parser<'_> {
             task: None,
             on_turn_limit: OnLimit::Missing,
             on_stuck: OnLimit::Missing,
+            compact: None,
             span: start,
         };
         while !matches!(self.kind(), TokenKind::Dedent | TokenKind::Eof) {
@@ -2029,13 +2030,27 @@ impl Parser<'_> {
                         }
                     }
                 }
-                "compact" => return Err(self.unsupported("compact", "a later milestone")),
+                "compact" => {
+                    self.expect_word("with")?;
+                    let prompt = self.ident("the prompt that sums up the conversation")?;
+                    let mut at = None;
+                    if self.is_word("at") {
+                        self.advance();
+                        let t =
+                            self.expect(TokenKind::Int, "a size in tokens, e.g. `20000 tokens`")?;
+                        at = Some(self.int_value(t));
+                        if self.is_word("tokens") {
+                            self.advance();
+                        }
+                    }
+                    agent.compact = Some((prompt, at));
+                }
                 other => {
                     let r = self.error_here_at(
                         key.span,
                         "E0108",
                         "unknown agent property",
-                        "`tools`, `max_turns`, `task`, `on turn_limit` or `on stuck`",
+                        "`tools`, `max_turns`, `task`, `compact`, `on turn_limit` or `on stuck`",
                         other,
                     );
                     return Err(r);

@@ -3764,6 +3764,35 @@ impl<'p> Cx<'_, 'p> {
                 t.ty
             }
         };
+        if let Some((p, at)) = &a.compact {
+            // It is given the conversation as text, and gives the summary.
+            let fits = self
+                .prompts
+                .get(p.name.as_str())
+                .map(|sig| matches!(sig.params.as_slice(), [(_, Ty::Text)]) && sig.ret == Ty::Text);
+            match fits {
+                None => self.push(
+                    err("E0602", "unknown prompt", p.span)
+                        .expected("a prompt declared with `prompt`, to sum up the conversation")
+                        .observed(format!("`{}`", p.name)),
+                ),
+                Some(false) => self.push(
+                    err("E0697", "`compact` needs a prompt from `Text` to `Text`", p.span)
+                        .expected(format!(
+                            "`prompt {}(conversation: Text) -> Text`: it gets the conversation so far and gives its summary",
+                            p.name
+                        ))
+                        .observed(format!("`{}` takes or gives something else", p.name)),
+                ),
+                Some(true) => {}
+            }
+            if *at == Some(0) {
+                self.push(
+                    err("E0697", "`compact ... at` needs a size above 0", p.span)
+                        .expected("`at 20000 tokens`, say"),
+                );
+            }
+        }
         if effect >= Effect::Write {
             self.raw_write = true; // an agent's writes have no compensation
         }

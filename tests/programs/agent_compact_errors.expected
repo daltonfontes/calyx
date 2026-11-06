@@ -1,0 +1,18 @@
+error[E0602]: unknown prompt
+- expected : a prompt declared with `prompt`, to sum up the conversation
+- observed : `nothing`
+Location: agent_compact_errors.clyx:38:22
+
+error[E0697]: `compact` needs a prompt from `Text` to `Text`
+- expected : `prompt two(conversation: Text) -> Text`: it gets the conversation so far and gives its summary
+- observed : `two` takes or gives something else
+Location: agent_compact_errors.clyx:48:22
+
+error[E0697]: `compact` needs a prompt from `Text` to `Text`
+- expected : `prompt notes(conversation: Text) -> Text`: it gets the conversation so far and gives its summary
+- observed : `notes` takes or gives something else
+Location: agent_compact_errors.clyx:58:22
+
+error[E0697]: `compact ... at` needs a size above 0
+- expected : `at 20000 tokens`, say
+Location: agent_compact_errors.clyx:68:22

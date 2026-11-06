@@ -2,7 +2,7 @@
   "name": "calyx",
   "displayName": "Calyx",
   "description": "The Calyx language for agent workflows: diagnostics as you type, outline, go to definition, hover and syntax colors.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "publisher": "calyx",
   "license": "MIT",
   "repository": {
@@ -12,15 +12,23 @@
   "engines": {
     "vscode": "^1.82.0"
   },
-  "categories": ["Programming Languages", "Linters"],
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
   "main": "./extension.js",
   "activationEvents": [],
   "contributes": {
     "languages": [
       {
         "id": "calyx",
-        "aliases": ["Calyx", "calyx"],
-        "extensions": [".clyx"],
+        "aliases": [
+          "Calyx",
+          "calyx"
+        ],
+        "extensions": [
+          ".clyx"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -46,9 +54,14 @@
     "vscode-languageclient": "9.0.1"
   },
   "devDependencies": {
-    "@vscode/vsce": "3.2.1"
+    "@vscode/vsce": "4.1.0"
   },
   "scripts": {
     "package": "vsce package"
+  },
+  "overrides": {
+    "@vscode/vsce": {
+      "minimatch": "11.0.4"
+    }
   }
 }

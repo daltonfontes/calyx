@@ -8,6 +8,10 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
+/// `compact with p` without `at`: compact above this many tokens, which
+/// fits the context of the models Calyx is used with, with room for a turn.
+pub const COMPACT_AT: u64 = 32_000;
+
 use calyx_ir::{self as ir, Effect, NodeId, Part, PromptPart};
 use calyx_syntax::ast::{
     Arg, Decl, DefDecl, DefStmt, EntityDecl, Expr, ExprKind, GraphDecl, Ident, OnLimit, OnNone,
@@ -596,6 +600,10 @@ impl Lower<'_> {
                     max_turns: a.max_turns.map_or(1, |m| m.0),
                     on_turn_limit: action(&a.on_turn_limit, "reached its turn limit"),
                     on_stuck: action(&a.on_stuck, "got stuck repeating the same action"),
+                    compact: a.compact.as_ref().and_then(|(p, at)| {
+                        let (i, _) = self.prompts.get(p.name.as_str())?;
+                        Some((*i, at.unwrap_or(COMPACT_AT)))
+                    }),
                 }))
             }
         }

@@ -1,0 +1,40 @@
+# `compact with p at n tokens`: an agent that sums up its conversation
+# when it grows past n tokens, so a long task fits the model's context.
+
+model m = "gemini-3.5-flash-lite"
+
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 2000 tokens
+
+prompt investigate(q: Text) -> Text:
+    """
+    Answer: {q}. Search as much as you need.
+    """
+
+prompt summarize(conversation: Text) -> Text:
+    """
+    Sum up what was found so far, keeping every fact and its source:
+    {conversation}
+    """
+
+graph ask(q: Text) -> Text:
+    answer = agent m:
+        tools [web_search]
+        max_turns 40
+        task investigate(q)
+        compact with summarize at 20000 tokens
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer
+
+# Without `at`: the default size.
+graph ask_default(q: Text) -> Text:
+    answer = agent m:
+        tools [web_search]
+        max_turns 40
+        task investigate(q)
+        compact with summarize
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer
