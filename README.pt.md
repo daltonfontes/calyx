@@ -2,7 +2,7 @@
 
 *In English: [README.md](README.md).*
 
-> **Beta pública (v0.8).** A Calyx funciona de ponta a ponta e é testada em
+> **Beta pública (v0.9).** A Calyx funciona de ponta a ponta e é testada em
 > Linux, macOS e Windows, mas é jovem: espere bugs e mudanças incompatíveis
 > antes da 1.0. Leia as [limitações](#limitações) antes de confiar nela com
 > dinheiro de verdade ou código desconhecido, e [relate o que quebrar](https://github.com/daltonfontes/calyx/issues).
@@ -230,6 +230,11 @@ GEMINI_API_KEY=... calyx run hello.clyx --text "qualquer texto"  # um modelo de 
 A resposta é conferida contra `Summary` antes de chegar a você. Outros
 provedores (OpenAI, OpenRouter, Groq, Ollama, NVIDIA...) vão num `calyx.toml`.
 
+No VS Code, a extensão em [editors/vscode](editors/vscode) mostra os
+mesmos erros enquanto você escreve, com o contorno do arquivo, ir para a
+definição e hover; qualquer outro editor com cliente LSP pode rodar
+`calyx lsp`.
+
 ### 3. Diga ao seu agente para usar a Calyx:
 
 Acrescente ao seu `AGENTS.md`:
@@ -346,7 +351,7 @@ modelos, em [`examples/`](examples).
 # Limitações
 
 ```
-- A Calyx é uma beta pública (v0.8). Espere bugs e mudanças incompatíveis antes da 1.0.
+- A Calyx é uma beta pública (v0.9). Espere bugs e mudanças incompatíveis antes da 1.0.
 - As mensagens do compilador e os nomes da linguagem são em inglês.
 - As garantias dependem de hipóteses declaradas: o serviço respeita a chave
   de idempotência, e o `verify` lê o estado atual. A Calyx não tem como
@@ -369,7 +374,7 @@ modelos, em [`examples/`](examples).
   o código que recebe, então rode agentes sobre código desconhecido num
   contêiner.
 - A camada pura não tem recursão, de propósito (todo programa termina).
-- Sem language server, depurador ou REPL.
+- Sem depurador ou REPL (há um language server: `calyx lsp`).
 - A maioria dos experimentos usa modelos falsos; os de paralelismo e
   recuperação foram repetidos com o Gemini. Os baselines e o corpus de bugs
   foram escritos pelo autor da Calyx; as tarefas e o avaliador do LIMBO não.

@@ -2,7 +2,7 @@
 
 *Em português: [README.pt.md](README.pt.md).*
 
-> **Public beta (v0.8).** Calyx works end to end and is tested on Linux, macOS
+> **Public beta (v0.9).** Calyx works end to end and is tested on Linux, macOS
 > and Windows, but it is young: expect bugs and breaking changes before 1.0.
 > Read the [limitations](#limitations) before trusting it with real money or
 > untrusted code, and [report what breaks](https://github.com/daltonfontes/calyx/issues).
@@ -262,6 +262,10 @@ GEMINI_API_KEY=... calyx run hello.clyx --text "any text" # a real model
 The answer is checked against `Summary` before you get it. Other providers
 (OpenAI, OpenRouter, Groq, Ollama, NVIDIA...) are set in a `calyx.toml`.
 
+In VS Code, the extension in [editors/vscode](editors/vscode) shows the
+same errors as you type, with the outline of the file, go to definition and
+hover; any other editor with an LSP client can run `calyx lsp`.
+
 ### 3. Tell your agent to use Calyx:
 
 Add this to your `AGENTS.md`:
@@ -382,7 +386,7 @@ for code agents to per-user memory, debates and model routers, in
 # Limitations
 
 ```
-- Calyx is a public beta (v0.8). Expect bugs and breaking changes before 1.0.
+- Calyx is a public beta (v0.9). Expect bugs and breaking changes before 1.0.
 - The spec, docs and examples are mostly in Portuguese; the paper is in English.
 - The guarantees rest on stated hypotheses: the service honours the idempotency
   key, and `verify` reads fresh state. Calyx cannot check a service that ignores
@@ -402,7 +406,7 @@ for code agents to per-user memory, debates and model routers, in
   with the permissions of whoever runs Calyx. A tool like `run_tests` runs
   the code it is given, so run agents over untrusted code in a container.
 - The pure layer has no recursion, by design (every program must terminate).
-- No language server, debugger or REPL.
+- No debugger or REPL (there is a language server: `calyx lsp`).
 - Most experiments use fake models; the parallelism and recovery ones were
   repeated with Gemini. The baselines and bug corpus were written by Calyx's
   author; LIMBO's tasks and grader were not.
