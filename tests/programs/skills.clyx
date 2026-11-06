@@ -1,0 +1,37 @@
+# Skills (progressive disclosure): an agent sees only each skill's
+# description, and loads the procedure with `load_skill` when it needs it.
+
+model m = "gemini-3.5-flash-lite"
+
+tool get_order(id: Text) -> Text:
+    effect read
+    max_output 1000 tokens
+
+skill refunds:
+    description "How to handle a refund request: what to check, and the limits."
+    """
+    1. Look up the order with get_order.
+    2. Refund only delivered orders.
+    3. Up to 100 BRL without approval; above that, say a person will decide.
+    """
+
+skill shipping:
+    description "How to answer where an order is, and what to promise."
+    """
+    Never promise a date the carrier did not give.
+    """
+
+prompt help(msg: Text) -> Text:
+    """
+    A customer wrote: {msg}
+    """
+
+graph support(msg: Text) -> Text:
+    answer = agent m:
+        tools [get_order]
+        skills [refunds, shipping]
+        max_turns 8
+        task help(msg)
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer

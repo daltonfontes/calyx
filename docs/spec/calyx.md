@@ -281,6 +281,20 @@ Na E6 (`bench/run_e6.py`), um agente de atendimento com 12 tickets que trazem in
 
 ---
 
+### 4.11 Skill
+
+```
+skill reembolsos:
+    description "Como tratar um pedido de reembolso: o que conferir, e os limites."
+    """
+    1. Consulte o pedido com get_order.
+    2. Só reembolse pedidos entregues.
+    3. Até 100 BRL sem aprovação; acima disso, diga que uma pessoa vai decidir.
+    """
+```
+
+Um procedimento que um agente carrega quando precisa (revelação progressiva). Um agente com `skills [reembolsos, envios]` vê só o nome e a `description` de cada uma, na descrição de uma tool embutida, `load_skill(name)`; ao chamá-la, recebe o texto. O contexto do agente leva só o que ele usa, e cada procedimento fica num lugar, com dono, em vez de crescer no prompt de todos. O texto faz parte do programa (entra no hash e no `calyx build`), então é o mesmo em toda execução e retomada, sem entrada no diário; no trace, `skill reembolsos` (ou `: no such skill`, se o modelo pede uma que o agente não tem: a resposta é um erro que ele lê, não uma falha da execução). O compilador exige `description` e o texto (`E0698`), confere que as skills de um agente existem (`E0602`) e recusa um agente com skills e uma tool própria chamada `load_skill` (`E0698`).
+
 ## 5. O corpo de um grafo
 
 ### 5.1 Limites (D3)
@@ -391,9 +405,10 @@ final = rounds 2, carry answers = start:
 ```
 resultado = agent modelo:
     tools [tool1, tool2(reads recurso), tool3(edits recurso)]
+    skills [skill1, skill2]              # opcional; carregadas sob demanda (4.11)
     max_turns N
     task prompt(...)
-    compact with prompt_de_resumo        # opcional; compactação por tamanho
+    compact with prompt_de_resumo at N tokens   # opcional; compactação por tamanho
     on turn_limit: final_answer | fail "motivo"
     on stuck: final_answer | fail "motivo"
 ```

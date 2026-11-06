@@ -1,0 +1,17 @@
+error[E0698]: a skill needs a description
+- expected : `description "..."`: what the agent reads to decide whether to load it
+Location: skills_errors.clyx:10:7
+
+error[E0698]: a skill needs its text
+- expected : the procedure, as `"""..."""`: what the agent gets when it loads the skill
+Location: skills_errors.clyx:15:7
+
+error[E0602]: unknown skill
+- expected : a skill declared with `skill`
+- observed : `taxes`
+Location: skills_errors.clyx:25:33
+
+error[E0698]: an agent with skills loads them with `load_skill`
+- expected : another name for the tool
+- observed : a tool named `load_skill` too
+Location: skills_errors.clyx:34:16

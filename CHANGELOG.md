@@ -7,6 +7,16 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.11.0 (2026-11-06)
+
+- Skills: `skill name:` with a `description` and the procedure as a text;
+  an agent with `skills [a, b]` sees only their names and descriptions, in
+  a built-in tool `load_skill`, and gets a skill's text when it calls it.
+  The text is part of the program (in its hash and in `calyx build`), so
+  it is the same on every run and resume. `E0698` for a skill without a
+  description or a text, and for an agent with skills and a tool of its
+  own called `load_skill`. The trace shows `skill name`.
+
 ## 0.10.0 (2026-11-06)
 
 - `compact with summarize at 20000 tokens` in an `agent`: before a turn

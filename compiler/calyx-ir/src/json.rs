@@ -101,6 +101,20 @@ impl Program {
             expr(o, &d.body, &mut 0);
             o.push('}');
         });
+        // Only when there are any: the IR of other programs, and their
+        // hash, stay as they were.
+        if !self.skills.is_empty() {
+            o.push_str(",\"skills\":");
+            list(&mut o, &self.skills, |o, s| {
+                o.push_str("{\"name\":");
+                string(o, &s.name);
+                o.push_str(",\"description\":");
+                string(o, &s.description);
+                o.push_str(",\"text\":");
+                string(o, &s.text);
+                o.push('}');
+            });
+        }
         o.push('}');
         o
     }
@@ -686,6 +700,10 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
             // Only when used: the IR of other programs, and their hash, stay.
             if let Some((p, at)) = a.compact {
                 o.push_str(&format!(",\"compact\":{{\"prompt\":{p},\"at\":{at}}}"));
+            }
+            if !a.skills.is_empty() {
+                o.push_str(",\"skills\":");
+                list(o, &a.skills, |o, s| o.push_str(&s.to_string()));
             }
             o.push('}');
         }
