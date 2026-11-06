@@ -5,7 +5,7 @@ Como pôr a Calyx em produção e mantê-la lá: instalar, rodar, guardar o esta
 ## 1. Instalar
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.6.0 sh
+curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh | CALYX_VERSION=v0.7.0 sh
 ```
 
 - **Fixe a versão** (`CALYX_VERSION`) em produção. Sem ela, o script instala a mais recente, e duas máquinas instaladas em dias diferentes podem ficar com versões diferentes.
@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/daltonfontes/calyx/main/install.sh 
 **No Windows** (PowerShell, sem WSL):
 
 ```powershell
-$env:CALYX_VERSION = 'v0.6.0'; irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
+$env:CALYX_VERSION = 'v0.7.0'; irm https://raw.githubusercontent.com/daltonfontes/calyx/main/install.ps1 | iex
 ```
 
 - O `install.ps1` faz o mesmo que o `install.sh`: confere o SHA-256, instala em `~\.calyx\bin\calyx.exe` (ou `$env:CALYX_INSTALL\bin`), guarda a cópia em `versions\<versão>\calyx.exe` e acrescenta `bin` ao PATH do usuário (`CALYX_NO_MODIFY_PATH=1` evita).
@@ -37,6 +37,7 @@ A Calyx não tem servidor próprio. O estado fica em arquivos ou no PostgreSQL.
 | Chaves de idempotência do `calyx serve` | `.calyx/serve/keys.json` | `.calyx/serve/keys.json`, no diretório do programa |
 | Sandboxes | `.calyx/runs/<id>/` | não são aceitas |
 | Chaves privadas de quem assina entregas | `~/.calyx/keys/` (ou `$CALYX_KEYS_DIR`) | o mesmo |
+| Tokens OAuth de servidores MCP remotos (`calyx login`) | `~/.calyx/oauth/` (ou `$CALYX_OAUTH_DIR`) | o mesmo, em cada máquina: cada uma faz o seu login |
 
 - **`.calyx/` fica no diretório em que o comando roda.** Rode `run`, `resume`, `tick` e `deliver` sempre do mesmo diretório; em serviços, fixe o diretório de trabalho.
 - **O diário guarda o caminho absoluto do programa.** Para retomar, o `.clyx` precisa estar no mesmo lugar, nesta máquina ou na outra que retoma. Não mova o projeto com execuções em andamento.
@@ -137,6 +138,7 @@ Nenhum segredo fica no `calyx.toml`: o arquivo diz o nome da variável de ambien
 |---|---|---|
 | Chaves dos provedores de modelos (`GEMINI_API_KEY`...) | em cada chamada, do ambiente do processo | mude o ambiente e reinicie o `worker` e o `serve`; um `run` novo já usa a nova |
 | Tokens de servidores MCP remotos (`token_env`) | na conexão com o servidor | o mesmo |
+| Logins OAuth de servidores MCP remotos (`oauth`) | do arquivo do `calyx login`, na conexão; renovados sozinhos | `calyx login <tool>` de novo; para tirar o acesso, revogue o app no servidor e rode `calyx logout <tool>` |
 | Tokens de quem chama o `calyx serve --http` (`[serve.callers]`) | quando o servidor sobe | ponha o token novo, reinicie o `serve` e depois tire o antigo do cliente |
 | Certificado e chave do `calyx serve --http` (`tls_cert`, `tls_key`) | quando o servidor sobe | troque os arquivos e reinicie o `serve` (um `certbot renew` precisa de um `--deploy-hook` que o reinicie) |
 | Chave de quem assina entregas (`[senders]`) | quando a execução toma a mensagem | abaixo |

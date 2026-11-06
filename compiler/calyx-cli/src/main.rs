@@ -115,6 +115,15 @@ commands:
       Make a key pair to sign deliveries: the private key goes to
       ~/.calyx/keys/ (or $CALYX_KEYS_DIR); the public key, printed, goes
       to `[senders]` in calyx.toml.
+  login <tool> [--config FILE] [--no-browser]
+      Log in to a remote MCP server that takes OAuth (`oauth` in the
+      tool's calyx.toml entry): opens the browser on its authorization
+      server (or, with --no-browser, prints the address to open), and keeps
+      the tokens in ~/.calyx/oauth/ (or $CALYX_OAUTH_DIR), readable only by
+      you. Runs refresh them when they expire, with no one there. Tools on
+      the same url share one login.
+  logout <tool> [--config FILE]
+      Forget the tokens kept for that tool's server.
   tick [--fake-models] [--quiet] [--config FILE]
       Resume every waiting run that got a message or whose deadline passed.
       Meant for a scheduler such as cron: no server is needed.
@@ -154,6 +163,8 @@ fn main() -> ExitCode {
         Some("prune") => prune(&args[1..]),
         Some("deliver") => deliver(&args[1..]),
         Some("keys") => keys(&args[1..]),
+        Some("login") => login(&args[1..], true),
+        Some("logout") => login(&args[1..], false),
         Some("tick") => tick(&args[1..]),
         Some("serve") => serve::serve(&args[1..]),
         Some("worker") => worker(&args[1..]),
@@ -859,6 +870,107 @@ fn keys(args: &[String]) -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// `calyx login <tool>` (or `logout`, with `login` false).
+fn login(args: &[String], login: bool) -> ExitCode {
+    let what = if login { "login" } else { "logout" };
+    let mut tool = None;
+    let mut config_path = None;
+    let mut browser = true;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--config" => match it.next() {
+                Some(c) => config_path = Some(PathBuf::from(c)),
+                None => return usage_error("--config expects a file"),
+            },
+            "--no-browser" if login => browser = false,
+            a if a.starts_with('-') => return usage_error(&format!("unknown option `{a}`")),
+            a if tool.is_none() => tool = Some(a.to_owned()),
+            _ => return usage_error(&format!("{what} takes a single tool")),
+        }
+    }
+    let Some(tool) = tool else {
+        return usage_error(&format!("{what} needs the name of a tool in calyx.toml"));
+    };
+    let config = match &config_path {
+        Some(p) => calyx_runtime::Config::load(p),
+        None => calyx_runtime::Config::discover(Path::new(".")),
+    };
+    let config = match config {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("calyx: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    let Some(server) = config.tools.get(&tool) else {
+        eprintln!("calyx: no `[tools.{tool}]` in calyx.toml");
+        return ExitCode::from(2);
+    };
+    let (Some(url), Some(oauth)) = (&server.url, &server.oauth) else {
+        eprintln!(
+            "calyx: `tools.{tool}` does not use OAuth: it needs `url = \"https://...\"` and `oauth = true`"
+        );
+        return ExitCode::from(2);
+    };
+    if !login {
+        return match calyx_runtime::oauth::logout(url) {
+            Ok(true) => {
+                println!("logged out of {url}");
+                ExitCode::SUCCESS
+            }
+            Ok(false) => {
+                println!("no login kept for {url}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("calyx: {e}");
+                ExitCode::from(2)
+            }
+        };
+    }
+    let open = |address: &str| {
+        println!("open this address to log in to {url}:\n\n  {address}\n");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        if browser {
+            open_browser(address);
+        }
+    };
+    match calyx_runtime::oauth::login(url, oauth, &open) {
+        Ok(path) => {
+            println!("logged in to {url}; the tokens are in {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("calyx: login to {url} failed: {e}");
+            ExitCode::from(3)
+        }
+    }
+}
+
+/// Opens `url` in the default browser, if there is one; the address is
+/// printed anyway.
+fn open_browser(url: &str) {
+    let mut cmd = if cfg!(target_os = "macos") {
+        let mut c = std::process::Command::new("open");
+        c.arg(url);
+        c
+    } else if cfg!(windows) {
+        let mut c = std::process::Command::new("rundll32");
+        c.args(["url.dll,FileProtocolHandler", url]);
+        c
+    } else {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(url);
+        c
+    };
+    let _ = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 /// `Approved` for `{"kind": "Approved"}`, when the type has variants with
