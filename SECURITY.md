@@ -25,6 +25,9 @@ A vulnerability is a way to break a guarantee Calyx states, for example:
 - a tool reaching outside its sandbox through Calyx itself, a crash or
   memory error in the runtime from a crafted journal, IR or model answer;
 - secrets (API keys, tokens) written to the journal, the trace or telemetry.
+- OAuth tokens kept by `calyx login` readable by other users, or sent to a
+  host other than the MCP server and its token endpoint; a login that
+  skips PKCE or the `state` check.
 
 ## What does not
 

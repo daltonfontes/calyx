@@ -15,6 +15,10 @@
 //! token_env = "GITHUB_PERSONAL_ACCESS_TOKEN" # sent as `Authorization: Bearer ...`
 //! headers_env = { "X-MCP-Toolsets" = "GITHUB_TOOLSETS" }   # values from the environment
 //!
+//! [tools.issues]                             # a remote server that takes OAuth
+//! url = "https://mcp.example.com/mcp"
+//! oauth = true                               # `calyx login issues` once (oauth.rs)
+//!
 //! [tools.refund.probe]           # for `calyx check --tools --probe` only
 //! setup = "probe_order"           # optional: a tool called first, no arguments
 //! args = { order = "{setup}", amount = 1.0 }       # the key's parameter is set by Calyx
@@ -63,6 +67,8 @@ pub struct ToolServer {
     pub headers_env: Vec<(String, String)>,
     /// The tool's name on the server, when it differs from the Calyx name.
     pub remote_name: Option<String>,
+    /// `oauth`: a remote server that takes OAuth tokens, from `calyx login`.
+    pub oauth: Option<OAuthConfig>,
     /// Directory the command runs in (the directory of `calyx.toml`).
     pub dir: PathBuf,
     /// How `calyx check --tools --probe` tests that the tool honours keys.
@@ -141,6 +147,17 @@ pub struct Config {
     pub senders: crate::senders::Senders,
     /// `[serve]`: who may call the program's graphs over HTTP.
     pub serve: ServeConfig,
+}
+
+/// `oauth = true`, or `oauth = { client_id = "...", scopes = [...] }`: how
+/// `calyx login` asks the server's authorization server for tokens.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OAuthConfig {
+    /// A client registered by hand; without it, dynamic registration.
+    pub client_id: Option<String>,
+    /// For a confidential client: the variable with its secret.
+    pub client_secret_env: Option<String>,
+    pub scopes: Vec<String>,
 }
 
 /// `calyx serve --http`: the callers and what each may call.
@@ -308,6 +325,48 @@ impl Config {
                                 "tools.{name}: `token_env` and `headers_env` are for a remote server (`url`)"
                             ));
                         }
+                        let oauth = match v.get("oauth") {
+                            None | Some(toml::Value::Boolean(false)) => None,
+                            Some(toml::Value::Boolean(true)) => Some(OAuthConfig::default()),
+                            Some(o @ toml::Value::Table(t)) => {
+                                let owner = format!("tools.{name}.oauth");
+                                for k in t.keys() {
+                                    if !["client_id", "client_secret_env", "scopes"]
+                                        .contains(&k.as_str())
+                                    {
+                                        return Err(format!("unknown key `{owner}.{k}`"));
+                                    }
+                                }
+                                let text = |k: &str| match t.get(k) {
+                                    None => Ok(None),
+                                    Some(_) => string(o, k, &owner).map(Some),
+                                };
+                                Some(OAuthConfig {
+                                    client_id: text("client_id")?,
+                                    client_secret_env: text("client_secret_env")?,
+                                    scopes: if t.contains_key("scopes") {
+                                        strings(o, "scopes", &owner)?
+                                    } else {
+                                        Vec::new()
+                                    },
+                                })
+                            }
+                            Some(_) => {
+                                return Err(format!(
+                                    "tools.{name}.oauth must be `true` or a table (client_id, client_secret_env, scopes)"
+                                ));
+                            }
+                        };
+                        if oauth.is_some() && url.is_none() {
+                            return Err(format!(
+                                "tools.{name}: `oauth` is for a remote server (`url`)"
+                            ));
+                        }
+                        if oauth.is_some() && token_env.is_some() {
+                            return Err(format!(
+                                "tools.{name}: `oauth` and `token_env` are two ways to send a token; use one"
+                            ));
+                        }
                         let remote_name = match v.get("name") {
                             Some(n) => Some(
                                 n.as_str()
@@ -324,6 +383,7 @@ impl Config {
                                 token_env,
                                 headers_env,
                                 remote_name,
+                                oauth,
                                 dir: dir.to_path_buf(),
                                 probe: probe(v, &format!("tools.{name}"))?,
                             },

@@ -7,6 +7,17 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.7.0 (2026-11-06)
+
+- OAuth for remote MCP servers, as the MCP authorization spec asks of a
+  client: `oauth = true` on a tool with a `url`, then `calyx login <tool>`
+  once. It finds the authorization server (RFC 9728, RFC 8414), registers
+  Calyx as a client when there is no `client_id` (RFC 7591), and opens the
+  browser with PKCE (S256), a random `state` and the server as `resource`
+  (RFC 8707). The tokens are kept readable only by their owner; runs use
+  them, refresh them when they expire or are refused, and keep rotated
+  refresh tokens, with no one there. `calyx logout <tool>` forgets them.
+
 ## 0.6.0 (2026-11-06)
 
 - `calyx serve --http` speaks HTTPS: with `tls_cert` and `tls_key` (PEM

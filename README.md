@@ -2,7 +2,7 @@
 
 *Em português: [README.pt.md](README.pt.md).*
 
-> **Public beta (v0.6).** Calyx works end to end and is tested on Linux, macOS
+> **Public beta (v0.7).** Calyx works end to end and is tested on Linux, macOS
 > and Windows, but it is young: expect bugs and breaking changes before 1.0.
 > Read the [limitations](#limitations) before trusting it with real money or
 > untrusted code, and [report what breaks](https://github.com/daltonfontes/calyx/issues).
@@ -167,12 +167,16 @@ tls_key = "tls/privkey.pem"
 ## Calyx calls LOCAL and REMOTE tools
 
 Each tool is an MCP server: a command (stdio) or a URL (Streamable HTTP,
-with the token from the environment):
+with the token from the environment, or OAuth):
 
 ```toml
 [tools.list_commits]
 url = "https://api.githubcopilot.com/mcp/"
 token_env = "GITHUB_PERSONAL_ACCESS_TOKEN"
+
+[tools.issues]
+url = "https://mcp.example.com/mcp"
+oauth = true            # `calyx login issues` once; runs refresh the token
 ```
 
 ## Calyx is OBSERVABLE
@@ -378,7 +382,7 @@ for code agents to per-user memory, debates and model routers, in
 # Limitations
 
 ```
-- Calyx is a public beta (v0.6). Expect bugs and breaking changes before 1.0.
+- Calyx is a public beta (v0.7). Expect bugs and breaking changes before 1.0.
 - The spec, docs and examples are mostly in Portuguese; the paper is in English.
 - The guarantees rest on stated hypotheses: the service honours the idempotency
   key, and `verify` reads fresh state. Calyx cannot check a service that ignores
@@ -392,8 +396,8 @@ for code agents to per-user memory, debates and model routers, in
 - Agents cannot call `write once` tools.
 - Several machines share runs only through the journal in PostgreSQL;
   programs with sandboxes (a directory) still run on one machine.
-- Tools only as MCP servers (stdio, or Streamable HTTP with a static token:
-  no OAuth yet); models only via OpenAI-compatible APIs.
+- Tools only as MCP servers (stdio or Streamable HTTP); models only via
+  OpenAI-compatible APIs.
 - A sandbox is a copy of a directory, not an isolation boundary: tools run
   with the permissions of whoever runs Calyx. A tool like `run_tests` runs
   the code it is given, so run agents over untrusted code in a container.

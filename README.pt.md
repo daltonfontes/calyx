@@ -2,7 +2,7 @@
 
 *In English: [README.md](README.md).*
 
-> **Beta pública (v0.6).** A Calyx funciona de ponta a ponta e é testada em
+> **Beta pública (v0.7).** A Calyx funciona de ponta a ponta e é testada em
 > Linux, macOS e Windows, mas é jovem: espere bugs e mudanças incompatíveis
 > antes da 1.0. Leia as [limitações](#limitações) antes de confiar nela com
 > dinheiro de verdade ou código desconhecido, e [relate o que quebrar](https://github.com/daltonfontes/calyx/issues).
@@ -346,7 +346,7 @@ modelos, em [`examples/`](examples).
 # Limitações
 
 ```
-- A Calyx é uma beta pública (v0.6). Espere bugs e mudanças incompatíveis antes da 1.0.
+- A Calyx é uma beta pública (v0.7). Espere bugs e mudanças incompatíveis antes da 1.0.
 - As mensagens do compilador e os nomes da linguagem são em inglês.
 - As garantias dependem de hipóteses declaradas: o serviço respeita a chave
   de idempotência, e o `verify` lê o estado atual. A Calyx não tem como
@@ -362,8 +362,8 @@ modelos, em [`examples/`](examples).
 - Agentes não podem chamar tools `write once`.
 - Várias máquinas compartilham execuções só pelo diário no PostgreSQL;
   programas com sandboxes (um diretório) ainda rodam numa máquina.
-- Tools só como servidores MCP (stdio, ou Streamable HTTP com token fixo:
-  ainda sem OAuth); modelos só por APIs compatíveis com a da OpenAI.
+- Tools só como servidores MCP (stdio ou Streamable HTTP); modelos só por
+  APIs compatíveis com a da OpenAI.
 - Uma sandbox é uma cópia de um diretório, não um isolamento: as tools rodam
   com as permissões de quem roda a Calyx. Uma tool como `run_tests` executa
   o código que recebe, então rode agentes sobre código desconhecido num

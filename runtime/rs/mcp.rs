@@ -15,7 +15,9 @@
 //!   after it. A session the server forgot (HTTP 404) is started again,
 //!   once. Calls are concurrent: one HTTP request each. A token
 //!   (`token_env`) goes as `Authorization: Bearer`, and other headers
-//!   (`headers_env`) come from the environment too.
+//!   (`headers_env`) come from the environment too. With `oauth`, the token
+//!   is the one `calyx login` kept (oauth.rs); one the server refuses is
+//!   refreshed and the request sent again, once.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -57,6 +59,8 @@ struct Http {
     session: Mutex<Option<String>>,
     /// The version agreed at `initialize`, sent as `MCP-Protocol-Version`.
     protocol: Mutex<Option<String>>,
+    /// With `oauth`: the access token in use, from `calyx login`'s store.
+    oauth: Option<Mutex<String>>,
 }
 
 pub struct Server {
@@ -392,22 +396,50 @@ impl Http {
         for (h, v) in &cfg.headers_env {
             headers.push((h.clone(), var(v, &format!("header {h}"))?));
         }
+        let oauth = match &cfg.oauth {
+            Some(_) => Some(Mutex::new(crate::oauth::access_token(url, None)?)),
+            None => None,
+        };
         Ok(Http {
             url: url.to_owned(),
             headers,
             agent: crate::llm::agent(),
             session: Mutex::new(None),
             protocol: Mutex::new(None),
+            oauth,
         })
     }
 
     /// Sends one JSON-RPC message. For a request (`id`), its answer, from a
     /// JSON body or from the event stream; for a notification, nothing.
+    /// With OAuth, a refused token is refreshed and the message sent again,
+    /// once.
     fn post(
         &self,
         msg: &Value,
         timeout: Duration,
         id: Option<u64>,
+    ) -> Result<Option<Value>, IoError> {
+        let Some(token) = &self.oauth else {
+            return self.post_with(msg, timeout, id, None);
+        };
+        let current = token.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        match self.post_with(msg, timeout, id, Some(&current)) {
+            Err(e) if e.kind == "Auth" && e.message.contains("(HTTP 401)") => {
+                let fresh = crate::oauth::access_token(&self.url, Some(&current))?;
+                *token.lock().unwrap_or_else(|e| e.into_inner()) = fresh.clone();
+                self.post_with(msg, timeout, id, Some(&fresh))
+            }
+            other => other,
+        }
+    }
+
+    fn post_with(
+        &self,
+        msg: &Value,
+        timeout: Duration,
+        id: Option<u64>,
+        bearer: Option<&str>,
     ) -> Result<Option<Value>, IoError> {
         let session = self
             .session
@@ -429,6 +461,9 @@ impl Http {
             .header("Accept", "application/json, text/event-stream");
         for (k, v) in &self.headers {
             req = req.header(k, v);
+        }
+        if let Some(t) = bearer {
+            req = req.header("Authorization", format!("Bearer {t}"));
         }
         if let Some(s) = &session {
             req = req.header("Mcp-Session-Id", s);
