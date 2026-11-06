@@ -3489,6 +3489,72 @@ static cx_value *agent_limit(ctx *c, cx_value *e, const char *which, cx_value *m
     return agent_answer(c, model, prompt, base, cx_get_str(ok, "text", ""));
 }
 
+/*
+ * `compact with p at n tokens` (D3). When the conversation is over n tokens
+ * (4 bytes each, as `max_output` counts them), the model sums it up with
+ * the prompt `p`, and the next turn starts from the task and that summary,
+ * in one message. The summary is a call of its own (`<agent>.t<k>.compact`),
+ * so a resumed run takes it from the journal and rebuilds the same
+ * conversation. NULL or PENDING if the call did not give a summary.
+ */
+static cx_value *agent_compact(ctx *c, cx_value *e, cx_value *model, const char *key,
+                               cx_buf *msgs) {
+    exec *x = c->x;
+    cx_arena *a = &c->w->arena;
+    cx_value *compact = cx_get(e, "compact");
+    cx_value *prompt = at(x->prompts, index_of(compact, "prompt"));
+    if (!prompt) return fatalf(c, "invalid IR: unknown prompt for `compact`");
+    cx_buf all = {0};
+    cx_buf_put(&all, msgs->data, msgs->len);
+    cx_buf_putc(&all, ']');
+    const char *err = NULL;
+    cx_value *list = cx_parse(a, all.data, all.len, &err);
+    cx_buf_free(&all);
+    if (!list) return fatalf(c, "the agent's conversation is not JSON: %s", err ? err : "?");
+    const char *task = cx_get_str(at(list, 0), "content", "");
+    /* The conversation after the task, as text: who said what. */
+    cx_buf said = {0};
+    for (size_t i = 1; i < len_of(list); i++) {
+        cx_value *m = at(list, i);
+        const char *role = cx_get_str(m, "role", "?");
+        cx_value *content = cx_get(m, "content");
+        if (content && content->kind == CX_STR && content->u.str.len) {
+            cx_buf_printf(&said, "%s: ", strcmp(role, "tool") == 0 ? "tool result" : role);
+            cx_buf_put(&said, content->u.str.s, content->u.str.len);
+            cx_buf_putc(&said, '\n');
+        }
+        cx_value *calls = cx_get(m, "tool_calls");
+        for (size_t k = 0; k < len_of(calls); k++) {
+            cx_value *f = cx_get(at(calls, k), "function");
+            cx_buf_printf(&said, "%s called %s(", role, cx_get_str(f, "name", "?"));
+            cx_value *args = cx_get(f, "arguments");
+            if (args && args->kind == CX_STR)
+                cx_buf_put(&said, args->u.str.s, args->u.str.len);
+            else
+                cx_write(&said, args);
+            cx_buf_puts(&said, ")\n");
+        }
+    }
+    cx_value *arg = cx_cstr(a, said.data ? said.data : "");
+    cx_buf_free(&said);
+    cx_buf text = prompt_text(prompt, &arg, 1);
+    cx_buf req = model_request(model, prompt, &text);
+    cx_buf_free(&text);
+    cx_value *summary = request(c, key, CALL_MODEL, model, prompt, &req, "compact");
+    if (!summary || summary == PENDING) return summary;
+    cx_buf next = {0};
+    cx_buf_puts(&next, task);
+    cx_buf_puts(&next, "\n\nWhat was done so far, summed up:\n");
+    render(&next, summary);
+    cx_buf_puts(&next, "\n\nGo on from there.");
+    msgs->len = 0;
+    cx_buf_puts(msgs, "[{\"role\":\"user\",\"content\":");
+    cx_buf_json_str(msgs, next.data, next.len);
+    cx_buf_putc(msgs, '}');
+    cx_buf_free(&next);
+    return summary;
+}
+
 static agent_progress *agent_find(exec *x, const char *key) {
     for (agent_progress *p = x->agents[hash_str(key) & 255]; p; p = p->next)
         if (strcmp(p->key, key) == 0) return p;
@@ -3584,7 +3650,16 @@ static cx_value *call_agent(ctx *c, cx_value *e) {
         cx_buf_put(&msgs, saved->msgs, saved->len);
     }
     pthread_mutex_unlock(&x->mu);
+    cx_value *compact = cx_get(e, "compact");
+    double compact_at = compact ? cx_get_num(compact, "at", 32000) : 0;
     for (long turn = first;; turn++) {
+        if (compact && turn > 0 && (double)msgs.len / 4 > compact_at) {
+            cx_value *s = agent_compact(c, e, model, fmt(a, "%s.t%ld.compact", base, turn), &msgs);
+            if (!s || s == PENDING) {
+                result = s;
+                break;
+            }
+        }
         if (turn >= max_turns) {
             result = agent_limit(c, e, "on_turn_limit", model, prompt, base, &msgs,
                                  "You reached the limit of turns. Do not call tools anymore: "

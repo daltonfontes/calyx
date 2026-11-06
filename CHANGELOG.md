@@ -7,6 +7,19 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.10.0 (2026-11-06)
+
+- `compact with summarize at 20000 tokens` in an `agent`: before a turn
+  (and the final answer), a conversation past that size is summed up by the
+  prompt `summarize` (a `Text` in, a `Text` out; `E0697` otherwise), and the
+  turn starts from the task and the summary. Without `at`, 32 000 tokens.
+  Each summary is a call of its own in the journal, so a run that crashes
+  anywhere resumes to the same answer, with no call made twice (a test
+  crashes after every call of an agent and checks it).
+- `editors/vscode`: the packaging tool updated, and a patched `minimatch`
+  forced, for two moderate advisories in development dependencies (nothing
+  in the extension itself).
+
 ## 0.9.0 (2026-11-06)
 
 - `calyx lsp`: a language server over stdio. Diagnostics as you type (the

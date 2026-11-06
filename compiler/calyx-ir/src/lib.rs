@@ -259,6 +259,8 @@ pub struct Agent {
     /// `None`: ask for a final answer; `Some(reason)`: fail.
     pub on_turn_limit: Option<String>,
     pub on_stuck: Option<String>,
+    /// `compact with p at n tokens`: the prompt (index) and the size.
+    pub compact: Option<(usize, u64)>,
 }
 
 /// A piece of an interpolated text.

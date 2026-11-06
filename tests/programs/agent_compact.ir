@@ -1,0 +1,7 @@
+graph ask(q: Text) -> Text [read]
+  %0 answer: Text = agent m [read]
+  return %0
+
+graph ask_default(q: Text) -> Text [read]
+  %0 answer: Text = agent m [read]
+  return %0

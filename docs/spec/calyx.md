@@ -408,8 +408,9 @@ resultado = agent modelo:
 - **`stuck`:** as mesmas chamadas (tool e argumentos) em três voltas seguidas; tools marcadas `repeatable` não contam.
 - **`final_answer`:** uma última chamada, sem tools, pedindo a resposta com o que o agente já sabe.
 - **Tipo da resposta:** se o `task` não devolve `Text`, uma chamada a mais converte a resposta final para o tipo do prompt.
-- **Exigências do compilador:** toda tool usada por um agente declara `max_output` (D16); `max_turns`, `task`, `on turn_limit` e `on stuck` são obrigatórios; tools `write once` não são aceitas (`E0640`); `compact` fica para depois.
+- **Exigências do compilador:** toda tool usada por um agente declara `max_output` (D16); `max_turns`, `task`, `on turn_limit` e `on stuck` são obrigatórios; tools `write once` não são aceitas (`E0640`).
 - **Empréstimo de recursos:** `tools [read_file(reads repo), edit_file(edits repo)]`. Cada sandbox que a tool pede é emprestada a todas as chamadas do agente (`E0649` se faltar); o modelo não vê nem escolhe esse parâmetro.
+- **`compact with p at N tokens`** (D3): antes de cada volta (e da resposta final), se a conversa passa de N tokens (4 bytes por token, como o `max_output` conta), o modelo a resume com o prompt `p`, e a volta começa da tarefa e do resumo, numa mensagem só. `p` recebe a conversa até ali como texto (quem disse o quê, as chamadas de tools e suas respostas) e devolve um `Text` (`E0697` se não for `prompt p(conversa: Text) -> Text`). Sem `at`, 32 000 tokens. O resumo é uma chamada com chave própria (`passo#agente.t3.compact`): uma execução retomada o tira do diário e reconstrói a mesma conversa. No trace, `(p)  compact`. É o que deixa um agente de muitas voltas caber na janela do modelo, com o custo à vista: cada compactação é uma chamada de modelo no grafo, não escondida no runtime.
 - **Diário:** cada volta e cada chamada de tool têm a sua chave (`passo#agente.t2`, `passo#agente.t2.c0`), então um agente interrompido retoma na volta em que estava, e o `replay` reproduz a conversa inteira sem chamar nada.
 
 ### 5.8 Corrida (D12)

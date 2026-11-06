@@ -1,0 +1,71 @@
+# `compact` needs a prompt that takes the conversation (a `Text`) and gives
+# its summary (a `Text`), and a size above 0.
+
+model m = "gemini-3.5-flash-lite"
+
+type Notes:
+    facts: List[Text]
+
+tool web_search(query: Text) -> Text:
+    effect read
+    max_output 2000 tokens
+
+prompt investigate(q: Text) -> Text:
+    """
+    {q}
+    """
+
+prompt two(a: Text, b: Text) -> Text:
+    """
+    {a} {b}
+    """
+
+prompt notes(conversation: Text) -> Notes:
+    """
+    {conversation}
+    """
+
+prompt summarize(conversation: Text) -> Text:
+    """
+    {conversation}
+    """
+
+graph unknown(q: Text) -> Text:
+    answer = agent m:
+        tools [web_search]
+        max_turns 10
+        task investigate(q)
+        compact with nothing
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer
+
+graph two_params(q: Text) -> Text:
+    answer = agent m:
+        tools [web_search]
+        max_turns 10
+        task investigate(q)
+        compact with two
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer
+
+graph not_text(q: Text) -> Text:
+    answer = agent m:
+        tools [web_search]
+        max_turns 10
+        task investigate(q)
+        compact with notes
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer
+
+graph zero(q: Text) -> Text:
+    answer = agent m:
+        tools [web_search]
+        max_turns 10
+        task investigate(q)
+        compact with summarize at 0 tokens
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer

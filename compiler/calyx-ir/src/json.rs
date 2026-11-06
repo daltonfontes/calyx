@@ -683,6 +683,10 @@ fn expr(o: &mut String, e: &Expr, ids: &mut usize) {
             opt_string(o, a.on_turn_limit.as_deref());
             o.push_str(",\"on_stuck\":");
             opt_string(o, a.on_stuck.as_deref());
+            // Only when used: the IR of other programs, and their hash, stay.
+            if let Some((p, at)) = a.compact {
+                o.push_str(&format!(",\"compact\":{{\"prompt\":{p},\"at\":{at}}}"));
+            }
             o.push('}');
         }
     }

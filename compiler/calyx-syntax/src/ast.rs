@@ -480,6 +480,9 @@ pub struct AgentExpr {
     pub task: Option<Expr>,
     pub on_turn_limit: OnLimit,
     pub on_stuck: OnLimit,
+    /// `compact with summarize at 20000 tokens`: the prompt that sums up
+    /// the conversation, and the size (in tokens) above which it does.
+    pub compact: Option<(Ident, Option<u64>)>,
     pub span: Span,
 }
 
