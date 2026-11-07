@@ -1,0 +1,12 @@
+graph main(stock: Map[Text, Nat], item: Text) -> Text [pure]
+  %0 more: Map[Text, Nat] = pure [pure]
+  %1 found: Result[Nat] = try [pure] <- %0
+  %2 roles: Map[Role, Text] = pure [pure]
+  %3 names: Text = pure [pure] <- %0
+  %4 known: Bool = pure [pure] <- %0
+  %5 sum_all: Nat = pure [pure] <- %0
+  %6 count: Nat = pure [pure] <- %0
+  %7 buyer: Text = pure [pure] <- %2
+  %8 cost: Float = pure [pure]
+  %9 return: Text = pure [pure] <- %3 %5 %6 %7 %4 %1 %8
+  return %9

@@ -1,0 +1,29 @@
+error[E0699]: a map's keys must be texts
+- expected : `Map[Text, ...]`, or keys of a type whose variants have no fields
+- observed : `Nat`: maps are JSON objects, in the journal too
+Location: maps_errors.clyx:7:16
+
+error[E0662]: only a map is read by `[key]`
+- expected : a map and a key of its type; for a list, `take(list, n)` or `for each`
+- observed : `List[Text]`[`Int`]
+Location: maps_errors.clyx:11:12
+
+error[E0662]: the key is not of the map's key type
+- expected : a `Text`
+- observed : a `Int`
+Location: maps_errors.clyx:14:12
+
+error[E0611]: the map's values have different types
+- expected : `Int`
+- observed : `Text`
+Location: maps_errors.clyx:17:26
+
+error[E0699]: a map's keys must be texts
+- expected : `Map[Text, ...]`, or keys of a type whose variants have no fields
+- observed : `Order`: maps are JSON objects, in the journal too
+Location: maps_errors.clyx:19:26
+
+error[E0699]: a map's keys must be texts
+- expected : texts, or variants without fields
+- observed : `Order`: maps are JSON objects, in the journal too
+Location: maps_errors.clyx:20:13

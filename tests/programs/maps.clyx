@@ -1,0 +1,29 @@
+# Maps: `{key: value}`, `m[key]` (a failure without the key, which `try`
+# catches), `get(m, key, default)`, `key in m`, `keys`, `values`, `len`,
+# and `+`, the right one's keys winning. Keys are texts, or variants
+# without fields; the order is the order they were added in.
+
+type Role = Buyer | Seller
+
+def price(prices: Map[Text, Float], item: Text) -> Float:
+    return get(prices, item, 0.0)
+
+# A literal is of its widest type: `[1, n]` is a `List[Nat]`.
+def first_ids(n: Nat) -> List[Nat]:
+    return [1, n]
+
+def total(stock: Map[Text, Nat]) -> Nat:
+    return sum(values(stock))
+
+graph main(stock: Map[Text, Nat], item: Text) -> Text:
+    more = stock + {"bia": 5, "ana": 9}
+    found = try:
+        more[item]
+    roles = {Buyer: "compra", Seller: "vende"}
+    names = join(keys(more), ", ")
+    known = item in more
+    sum_all = total(more)
+    count = len(more)
+    buyer = roles[Buyer]
+    cost = price({"x": 2.5}, item)
+    return "{names}: {sum_all} ({count}); {buyer}; {known}; {found}; {cost}"

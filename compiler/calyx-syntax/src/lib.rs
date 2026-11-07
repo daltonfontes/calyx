@@ -11,5 +11,5 @@ mod source;
 
 pub use diagnostic::{Diagnostic, Severity};
 pub use lexer::{Token, TokenKind, lex};
-pub use parser::parse;
+pub use parser::{INDEX, MAP, parse};
 pub use source::{LineCol, Source, Span};

@@ -140,3 +140,51 @@ fn the_remainder_has_the_sign_of_the_divisor() {
     let err = run(&report.ir.to_json(), "g", &json!({"a": 1, "b": 0}), opts).unwrap_err();
     assert!(format!("{err:?}").contains("division by zero"), "{err:?}");
 }
+
+#[test]
+fn maps_keep_the_order_keys_were_added_and_the_right_one_wins() {
+    let src = r#"
+type Seen:
+    names: List[Text]
+    values: List[Nat]
+    merged: Map[Text, Nat]
+    ana: Nat
+    missing: Nat
+    has_bia: Bool
+    size: Nat
+
+graph g(m: Map[Text, Nat]) -> Seen:
+    merged = m + {"bia": 5, "ana": 9}
+    return Seen(names = keys(merged), values = values(merged), merged = merged, ana = merged["ana"], missing = get(merged, "zé", 0), has_bia = "bia" in merged, size = len({}))
+"#;
+    assert_eq!(
+        eval(src, json!({"m": {"ana": 3, "caio": 1}})),
+        json!({
+            "names": ["ana", "caio", "bia"],
+            "values": [9, 1, 5],
+            "merged": {"ana": 9, "caio": 1, "bia": 5},
+            "ana": 9,
+            "missing": 0,
+            "has_bia": true,
+            "size": 0,
+        })
+    );
+    // A key given twice in one literal: its first place, its last value.
+    let src = "graph g(x: Nat) -> List[Nat]:\n    m = {\"a\": 1, \"b\": 2, \"a\": x}\n    return values(m)\n";
+    assert_eq!(eval(src, json!({"x": 7})), json!([7, 2]));
+}
+
+#[test]
+fn a_missing_key_is_a_failure_that_try_catches() {
+    let src = "graph g(m: Map[Text, Nat]) -> Nat:\n    return m[\"zé\"]\n";
+    let report = calyx_check::check("t.clyx", src);
+    let opts = RunOptions {
+        config: Config::builtin(),
+        ..RunOptions::default()
+    };
+    let err = run(&report.ir.to_json(), "g", &json!({"m": {"a": 1}}), opts).unwrap_err();
+    assert!(
+        format!("{err:?}").contains("the map has no key `zé`"),
+        "{err:?}"
+    );
+}

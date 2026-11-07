@@ -1,0 +1,20 @@
+# A map's keys are texts (or variants without fields); `[key]` reads only
+# maps; a map's values are of one type.
+
+type Order:
+    id: Text
+
+graph a(m: Map[Nat, Text]) -> Text:
+    return "x"
+
+graph b(xs: List[Text]) -> Text:
+    return xs[0]
+
+graph c(m: Map[Text, Nat]) -> Nat:
+    return m[3]
+
+graph d() -> Map[Text, Nat]:
+    return {"a": 1, "b": "dois"}
+
+graph e(o: Order) -> Map[Order, Nat]:
+    return {o: 1}

@@ -7,6 +7,18 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.13.0 (2026-11-07)
+
+- Maps, as in Python: `{"ana": 3}` and `{}`; `m[key]`, a failure without
+  the key that `try` catches; `get(m, key, default)`; `key in m`;
+  `keys(m)`, `values(m)`, `len(m)`; and `m + n`, `n`'s keys winning. Keys
+  are texts, or a type whose variants have no fields (`E0699` for other
+  key types, since maps are JSON objects, in the journal too); the order
+  is the order the keys were added in. All pure, so they work in `def`s.
+- A list or map literal takes its widest type: `[1, n]` with `n: Nat` is a
+  `List[Nat]`. It was refused when the literal came first (`[n, 1]` was
+  accepted).
+
 ## 0.12.0 (2026-11-07)
 
 - `%`, the remainder, with the sign of the divisor as in Python (`-1 % 2`

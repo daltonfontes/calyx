@@ -112,7 +112,27 @@ struct DefSig {
 
 /// Functions every program has. They are pure, like `def`s.
 const BUILTINS: &[(&str, &str)] = &[
-    ("len", "`len(list)` or `len(text)`"),
+    ("len", "`len(list)`, `len(text)` or `len(map)`"),
+    (
+        "keys",
+        "`keys(map)`: its keys, in the order they were added",
+    ),
+    (
+        "values",
+        "`values(map)`: its values, in the order of their keys",
+    ),
+    (
+        "get",
+        "`get(map, key, default)`: the key's value, or `default` without it",
+    ),
+    (
+        calyx_syntax::MAP,
+        "`{key: value, ...}`: keys are texts (or variants without fields), the values of one type",
+    ),
+    (
+        calyx_syntax::INDEX,
+        "`map[key]`: the value of a key in a map",
+    ),
     ("take", "`take(list, n)`: the first `n` items"),
     ("sum", "`sum(list)` of numbers or money"),
     ("join", "`join(list_of_texts, separator)`"),
@@ -585,7 +605,15 @@ impl<'p> Cx<'_, 'p> {
                     }
                 } else if n == "Map" {
                     if self.arity(t, n, args, 2) {
-                        Ty::Map(Box::new(self.ty(&args[0])), Box::new(self.ty(&args[1])))
+                        let key = self.ty(&args[0]);
+                        if !self.map_key(&key) {
+                            self.push(
+                                err("E0699", "a map's keys must be texts", args[0].span)
+                                    .expected("`Map[Text, ...]`, or keys of a type whose variants have no fields")
+                                    .observed(format!("`{key}`: maps are JSON objects, in the journal too")),
+                            );
+                        }
+                        Ty::Map(Box::new(key), Box::new(self.ty(&args[1])))
                     } else {
                         Ty::Error
                     }
@@ -1421,7 +1449,21 @@ impl<'p> Cx<'_, 'p> {
         let int = |t: &Ty| matches!(t, Ty::Nat | Ty::Int | Ty::IntLit | Ty::Error);
         let ty = match (name, tys.as_slice()) {
             _ if named => None,
-            ("len", [Ty::List(..) | Ty::Text | Ty::Error]) => Some(Ty::Nat),
+            ("len", [Ty::List(..) | Ty::Text | Ty::Map(..) | Ty::Error]) => Some(Ty::Nat),
+            ("keys", [Ty::Map(k, _)]) => Some(Ty::List(k.clone(), None)),
+            ("values", [Ty::Map(_, v)]) => Some(Ty::List(v.clone(), None)),
+            ("keys" | "values", [Ty::Error]) => Some(Ty::Error),
+            ("get", [Ty::Map(k, v), key, default])
+                if (assignable(key, k) || assignable(k, key)) && assignable(default, v) =>
+            {
+                Some((**v).clone())
+            }
+            ("get", [Ty::Error, _, d]) => Some(d.clone()),
+            (n, [Ty::Map(k, v), key]) if n == calyx_syntax::INDEX => {
+                (assignable(key, k) || assignable(k, key)).then(|| (**v).clone())
+            }
+            (n, [Ty::Error, _]) if n == calyx_syntax::INDEX => Some(Ty::Error),
+            (n, kv) if n == calyx_syntax::MAP && kv.len() % 2 == 0 => self.map_type(kv, args),
             ("take", [l @ (Ty::List(..) | Ty::Error), n]) if int(n) => Some(l.clone()),
             ("sum", [Ty::List(t, _)])
                 if is_number(t) || matches!(**t, Ty::Money | Ty::Duration) =>
@@ -1444,15 +1486,33 @@ impl<'p> Cx<'_, 'p> {
         };
         let ty = ty.unwrap_or_else(|| {
             let observed: Vec<String> = tys.iter().map(|t| format!("`{t}`")).collect();
-            self.push(
+            let d = if name == calyx_syntax::INDEX
+                && let [Ty::Map(k, _), key] = tys.as_slice()
+            {
+                err("E0662", "the key is not of the map's key type", span)
+                    .expected(format!("a `{k}`"))
+                    .observed(format!("a `{key}`"))
+            } else if name == calyx_syntax::INDEX {
+                // `x[k]`, not a call anyone wrote.
+                err("E0662", "only a map is read by `[key]`", span)
+                    .expected(
+                        "a map and a key of its type; for a list, `take(list, n)` or `for each`",
+                    )
+                    .observed(format!(
+                        "`{}`[`{}`]",
+                        tys[0],
+                        tys.get(1).unwrap_or(&Ty::Error)
+                    ))
+            } else {
                 err(
                     "E0662",
                     format!("`{name}` does not take these arguments"),
                     span,
                 )
                 .expected(usage)
-                .observed(format!("({})", observed.join(", "))),
-            );
+                .observed(format!("({})", observed.join(", ")))
+            };
+            self.push(d);
             Ty::Error
         });
         Some(Typed {
@@ -1460,6 +1520,57 @@ impl<'p> Cx<'_, 'p> {
             kind: NodeKind::Pure,
             effect,
         })
+    }
+
+    /// Whether a map may have keys of this type: texts, or a type whose
+    /// variants have no fields (their values are their names, texts).
+    fn map_key(&self, t: &Ty) -> bool {
+        match t {
+            Ty::Text | Ty::Error => true,
+            Ty::User(n) => matches!(
+                self.types.get(n.as_str()),
+                Some(UserType::Variants(vs)) if vs.iter().all(|(_, fields)| fields.is_empty())
+            ),
+            _ => false,
+        }
+    }
+
+    /// The type of `{k1: v1, k2: v2, ...}`, from the types of its keys and
+    /// values (`kv`, in turn); `{}` fits any map.
+    fn map_type(&mut self, kv: &[Ty], args: &[Arg]) -> Option<Ty> {
+        let mut key: Option<Ty> = None;
+        let mut value: Option<Ty> = None;
+        for (i, t) in kv.iter().enumerate() {
+            let slot = if i % 2 == 0 { &mut key } else { &mut value };
+            match slot {
+                None => *slot = Some(t.clone()),
+                Some(first) if assignable(first, t) => *slot = Some(t.clone()),
+                Some(first) if !assignable(t, first) => {
+                    let what = if i % 2 == 0 { "keys" } else { "values" };
+                    let d = err(
+                        "E0611",
+                        format!("the map's {what} have different types"),
+                        args[i].value.span,
+                    )
+                    .expected(format!("`{first}`"))
+                    .observed(format!("`{t}`"));
+                    self.push(d);
+                }
+                _ => {}
+            }
+        }
+        let key = key.unwrap_or(Ty::Error);
+        if !self.map_key(&key) {
+            self.push(
+                err("E0699", "a map's keys must be texts", args[0].value.span)
+                    .expected("texts, or variants without fields")
+                    .observed(format!(
+                        "`{key}`: maps are JSON objects, in the journal too"
+                    )),
+            );
+            return Some(Ty::Error);
+        }
+        Some(Ty::Map(Box::new(key), Box::new(value.unwrap_or(Ty::Error))))
     }
 
     /// `reads` / `edits` belong to tool parameters only.
@@ -2996,6 +3107,8 @@ impl<'p> Cx<'_, 'p> {
                     effect = effect.join(t.effect);
                     match &elem {
                         None => elem = Some(t.ty),
+                        // `[1, x]` with `x: Nat`: the list is of the wider type.
+                        Some(first) if assignable(first, &t.ty) => elem = Some(t.ty),
                         Some(first) if !assignable(&t.ty, first) => self.push(
                             err("E0611", "list elements have different types", it.span)
                                 .expected(format!("`{first}`"))
@@ -3273,9 +3386,20 @@ impl<'p> Cx<'_, 'p> {
                 };
                 (ordered(a) && (assignable(a, b) || assignable(b, a))).then_some(Ty::Bool)
             }
+            "+" if matches!((a, b), (Ty::Map(..), Ty::Map(..))) => {
+                // Joined, the right one's keys winning (Python's `|`).
+                (assignable(b, a) || assignable(a, b)).then(|| {
+                    if assignable(b, a) {
+                        a.clone()
+                    } else {
+                        b.clone()
+                    }
+                })
+            }
             "+" | "-" | "*" | "/" | "%" => arithmetic(op, a, b),
             "in" => match b {
                 Ty::List(t, _) => (assignable(a, t) || assignable(t, a)).then_some(Ty::Bool),
+                Ty::Map(k, _) => (assignable(a, k) || assignable(k, a)).then_some(Ty::Bool),
                 Ty::Text => matches!(a, Ty::Text).then_some(Ty::Bool),
                 _ => None,
             },

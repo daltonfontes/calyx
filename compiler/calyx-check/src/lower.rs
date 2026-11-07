@@ -233,7 +233,20 @@ struct Lower<'p> {
 }
 
 /// Functions every program has (the checker types them).
-const BUILTINS: &[&str] = &["len", "take", "sum", "join", "lower", "upper", "trim"];
+const BUILTINS: &[&str] = &[
+    "len",
+    "take",
+    "sum",
+    "join",
+    "lower",
+    "upper",
+    "trim",
+    "keys",
+    "values",
+    "get",
+    calyx_syntax::MAP,
+    calyx_syntax::INDEX,
+];
 
 /// The names `stmts` give values to, including inside `if`s.
 fn assigned(stmts: &[DefStmt], out: &mut Vec<String>) {

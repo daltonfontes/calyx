@@ -30,6 +30,11 @@ pub fn parse(text: &str) -> (Program, Vec<Diagnostic>) {
     (program, diags)
 }
 
+/// The built-ins that `{key: value}` and `m[k]` are calls of. No program
+/// can write these names.
+pub const MAP: &str = "{}";
+pub const INDEX: &str = "[]";
+
 /// Units accepted after a number literal.
 const UNITS: &[&str] = &[
     "tokens", "USD", "BRL", "EUR", "ms", "s", "min", "h", "days", "day", "KB", "MB", "GB",
@@ -1545,6 +1550,32 @@ impl Parser<'_> {
                         span,
                     };
                 }
+                // `m[k]`: a call of the built-in `[]`, as `{...}` is of `{}`.
+                TokenKind::LBracket => {
+                    let open = self.advance().span;
+                    let key = self.expr()?;
+                    self.expect(TokenKind::RBracket, "`]`")?;
+                    let span = self.span_from(e.span);
+                    e = Expr {
+                        kind: ExprKind::Call {
+                            callee: Box::new(Expr {
+                                kind: ExprKind::Ident(INDEX.into()),
+                                span: open,
+                            }),
+                            args: vec![
+                                Arg {
+                                    name: None,
+                                    value: e,
+                                },
+                                Arg {
+                                    name: None,
+                                    value: key,
+                                },
+                            ],
+                        },
+                        span,
+                    };
+                }
                 TokenKind::LParen => {
                     self.advance();
                     let args = self.args()?;
@@ -2127,6 +2158,41 @@ impl Parser<'_> {
         })
     }
 
+    /// `{key: value, ...}`: a map. It becomes a call of the built-in `{}`
+    /// (keys and values in turn), a name no program can write, so every
+    /// pass that walks calls sees its parts.
+    fn map_literal(&mut self) -> PResult<Expr> {
+        let start = self.advance().span; // {
+        let mut args = Vec::new();
+        loop {
+            if self.eat(TokenKind::RBrace) {
+                break;
+            }
+            let key = self.expr()?;
+            self.expect(TokenKind::Colon, "`:` and the key's value")?;
+            let value = self.expr()?;
+            args.push(Arg {
+                name: None,
+                value: key,
+            });
+            args.push(Arg { name: None, value });
+            if !self.eat(TokenKind::Comma) {
+                self.expect(TokenKind::RBrace, "`,` or `}`")?;
+                break;
+            }
+        }
+        Ok(Expr {
+            span: self.span_from(start),
+            kind: ExprKind::Call {
+                callee: Box::new(Expr {
+                    kind: ExprKind::Ident(MAP.into()),
+                    span: start,
+                }),
+                args,
+            },
+        })
+    }
+
     fn args(&mut self) -> PResult<Vec<Arg>> {
         let mut args = Vec::new();
         loop {
@@ -2244,7 +2310,7 @@ impl Parser<'_> {
                 self.expect(TokenKind::RParen, "`)`")?;
                 Ok(inner)
             }
-            TokenKind::LBrace => Err(self.unsupported("`{...}` literals", "a later milestone")),
+            TokenKind::LBrace => self.map_literal(),
             _ => Err(self.error_here("E0102", "expected an expression", "a value or a call")),
         }
     }
