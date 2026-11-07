@@ -1,0 +1,4 @@
+error[E0100]: syntax error
+- expected : `+`: it joins lists, and texts (`a + b`), as in Python
+- observed : `++`
+Location: plusplus.clyx:4:14

@@ -1,0 +1,4 @@
+graph main(xs: List[Text]) -> List[Nat] [pure]
+  %0 all: List[Text] = pure [pure]
+  %1 return: List[Nat] = pure [pure] <- %0
+  return %1

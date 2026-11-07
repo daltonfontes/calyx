@@ -3273,7 +3273,7 @@ impl<'p> Cx<'_, 'p> {
                 };
                 (ordered(a) && (assignable(a, b) || assignable(b, a))).then_some(Ty::Bool)
             }
-            "+" | "-" | "*" | "/" => arithmetic(op, a, b),
+            "+" | "-" | "*" | "/" | "%" => arithmetic(op, a, b),
             "in" => match b {
                 Ty::List(t, _) => (assignable(a, t) || assignable(t, a)).then_some(Ty::Bool),
                 Ty::Text => matches!(a, Ty::Text).then_some(Ty::Bool),
@@ -4861,13 +4861,16 @@ fn is_number(t: &Ty) -> bool {
     matches!(t, Ty::Nat | Ty::Int | Ty::Float | Ty::IntLit)
 }
 
-/// Type of `a op b` for `+ - * /`, or `None` if the operator does not apply.
+/// Type of `a op b` for `+ - * / %`, or `None` if the operator does not apply.
 fn arithmetic(op: &str, a: &Ty, b: &Ty) -> Option<Ty> {
     let num = |a: &Ty, b: &Ty| -> Ty {
         match (a, b) {
             (Ty::Float, _) | (_, Ty::Float) => Ty::Float,
             _ if op == "/" => Ty::Float,
             (Ty::IntLit, Ty::IntLit) => Ty::IntLit,
+            // The remainder has the divisor's sign (as in Python): a `Nat`
+            // divisor gives a `Nat`, whatever the dividend.
+            (_, Ty::Nat | Ty::IntLit) if op == "%" => Ty::Nat,
             (Ty::Nat | Ty::IntLit, Ty::Nat | Ty::IntLit) if op != "-" => Ty::Nat,
             _ => Ty::Int,
         }

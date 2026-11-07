@@ -1459,6 +1459,7 @@ impl Parser<'_> {
             let op = match self.kind() {
                 TokenKind::Star => "*",
                 TokenKind::Slash => "/",
+                TokenKind::Percent => "%",
                 _ => return Ok(e),
             };
             self.advance();
@@ -1568,7 +1569,14 @@ impl Parser<'_> {
                         &format!("the word `{word}`"),
                     ));
                 }
-                TokenKind::PlusPlus | TokenKind::Percent | TokenKind::DotDot => {
+                TokenKind::PlusPlus => {
+                    return Err(self.error_here(
+                        "E0100",
+                        "syntax error",
+                        "`+`: it joins lists, and texts (`a + b`), as in Python",
+                    ));
+                }
+                TokenKind::DotDot => {
                     let t = self.tok();
                     let op = self.text_of(t).to_owned();
                     return Err(self.unsupported(&format!("operator {op}"), "a later milestone"));
