@@ -266,6 +266,10 @@ In VS Code, the extension in [editors/vscode](editors/vscode) shows the
 same errors as you type, with the outline of the file, go to definition and
 hover; any other editor with an LSP client can run `calyx lsp`.
 
+For a whole agent, step by step (tools, an agent with skills, refunds that
+are never paid twice, a crash and a resume), see the
+[tutorial](docs/tutorial.md).
+
 ### 3. Tell your agent to use Calyx:
 
 Add this to your `AGENTS.md`:
