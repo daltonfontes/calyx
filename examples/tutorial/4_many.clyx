@@ -1,0 +1,44 @@
+# Step 4: many at once. Each item of a `for each` runs its steps in order,
+# the items in parallel; a map counts what came back.
+#
+#   calyx run 4_many.clyx --fake-models --orders '["A100", "A200", "A300"]'
+
+model gemini = "gemini-3.5-flash-lite"
+
+type Status = Pending | Delivered | Cancelled
+
+type Order:
+    id: Text
+    customer: Text
+    total: Float
+    refunded: Float
+    status: Status
+
+type Line:
+    order: Text
+    status: Status
+    note: Text
+
+tool get_order(id: Text) -> Order:
+    effect read
+
+prompt note(order: Order) -> Text:
+    """
+    One sentence for the customer about their order: {order}
+    """
+
+def tally(lines: List[Line]) -> Map[Text, Nat]:
+    delivered = len([l for l in lines if l.status == Delivered])
+    other = len([l for l in lines if l.status != Delivered])
+    return {"delivered": delivered, "other": other}
+
+type Report:
+    lines: List[Line]
+    counts: Map[Text, Nat]
+
+graph status_report(orders: List[Text]) -> Report:
+    lines = for each id in orders:
+        found = get_order(id)
+        text = gemini(note(found))
+        Line(order = id, status = found.status, note = text)
+    return Report(lines = lines, counts = tally(lines))

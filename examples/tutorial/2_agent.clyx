@@ -1,0 +1,60 @@
+# Step 2: an agent. The model decides what to look up; the program bounds
+# it (turns, budget), gives it skills to load when it needs them, and sums
+# up the conversation when it grows.
+#
+#   calyx run 2_agent.clyx --fake-models --message "My order A100 arrived broken"
+
+model gemini = "gemini-3.5-flash-lite"
+
+type Status = Pending | Delivered | Cancelled
+
+type Order:
+    id: Text
+    customer: Text
+    total: Float
+    refunded: Float
+    status: Status
+
+tool get_order(id: Text) -> Order:
+    effect read
+    max_output 500 tokens
+    description "An order, by its id (A100, A200...)."
+
+# The agent sees each skill's description, and loads the text when it needs it.
+skill refunds:
+    description "How to handle a refund request: what to check, and the limits."
+    """
+    1. Look up the order. Refund only delivered orders.
+    2. Never more than the total minus what was already refunded.
+    3. Up to 100 without approval; above that, say a person will decide.
+    """
+
+skill delays:
+    description "What to say when an order is late."
+    """
+    Give the status from the order. Never promise a date.
+    """
+
+prompt support(message: Text) -> Text:
+    """
+    You answer a store's customers. A customer wrote: {message}
+    Look up what you need, and answer in a few sentences.
+    """
+
+prompt summarize(conversation: Text) -> Text:
+    """
+    Sum up this support conversation, keeping every order id and amount:
+    {conversation}
+    """
+
+graph help(message: Text) -> Text:
+    limits budget 1 USD
+    answer = agent gemini:
+        tools [get_order]
+        skills [refunds, delays]
+        max_turns 8
+        task support(message)
+        compact with summarize at 20000 tokens
+        on turn_limit: final_answer
+        on stuck: final_answer
+    return answer

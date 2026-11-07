@@ -7,6 +7,15 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## Unreleased
+
+- A tutorial ([docs/tutorial.md](docs/tutorial.md), in Portuguese in
+  [docs/tutorial.pt.md](docs/tutorial.pt.md)): a store's support agent in
+  four steps, from a tool and a prompt to an agent with skills and
+  `compact`, refunds that are never paid twice (with a crash and a
+  resume), and a `for each` with a map. Its programs are in
+  `examples/tutorial/`, checked and run by CI.
+
 ## 0.13.0 (2026-11-07)
 
 - Maps, as in Python: `{"ana": 3}` and `{}`; `m[key]`, a failure without

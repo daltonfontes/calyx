@@ -235,6 +235,10 @@ mesmos erros enquanto você escreve, com o contorno do arquivo, ir para a
 definição e hover; qualquer outro editor com cliente LSP pode rodar
 `calyx lsp`.
 
+Para um agente inteiro, passo a passo (tools, um agente com skills,
+reembolsos que nunca são pagos duas vezes, uma queda e uma retomada), veja o
+[tutorial](docs/tutorial.pt.md).
+
 ### 3. Diga ao seu agente para usar a Calyx:
 
 Acrescente ao seu `AGENTS.md`:

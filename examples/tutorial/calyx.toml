@@ -1,0 +1,15 @@
+# The tools of the tutorial: a fake store (orders, refunds, e-mail), an MCP
+# server written in Python. Its state is in .calyx/fake_store.json; delete
+# it to start over.
+
+[tools.get_order]
+command = ["python3", "../tools/fake_store.py"]
+
+[tools.refund]
+command = ["python3", "../tools/fake_store.py"]
+
+[tools.email]
+command = ["python3", "../tools/fake_store.py"]
+
+[tools.email_sent]
+command = ["python3", "../tools/fake_store.py"]

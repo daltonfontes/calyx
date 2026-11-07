@@ -1,0 +1,30 @@
+# Step 1: a tool, a type, a prompt, a graph.
+#
+#   calyx run 1_lookup.clyx --fake-models --order A100 --question "Where is my order?"
+
+model gemini = "gemini-3.5-flash-lite"
+
+type Status = Pending | Delivered | Cancelled
+
+type Order:
+    id: Text
+    customer: Text
+    total: Float
+    refunded: Float
+    status: Status
+
+# Reading an order changes nothing: `effect read`, so Calyx may retry it.
+tool get_order(id: Text) -> Order:
+    effect read
+    max_output 500 tokens
+
+prompt answer(order: Order, question: Text) -> Text:
+    """
+    You answer a store's customers. Their order: {order}
+    Their question: {question}
+    Answer in two sentences.
+    """
+
+graph help(order: Text, question: Text) -> Text:
+    found = get_order(order)
+    return gemini(answer(found, question))
