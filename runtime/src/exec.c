@@ -2145,6 +2145,34 @@ static cx_value *call_graph(ctx *c, cx_value *e) {
 
 /* ----- operators ------------------------------------------------------------ */
 
+/*
+ * A map from keys and values in turn (a JSON object): a key given again
+ * keeps its first place and takes the last value, as in Python.
+ */
+static cx_value *make_map(cx_arena *a, const char **keys, cx_value **vals, size_t n) {
+    const char **ks = cx_alloc(a, (n ? n : 1) * sizeof *ks);
+    cx_value **vs = cx_alloc(a, (n ? n : 1) * sizeof *vs);
+    size_t m = 0;
+    for (size_t i = 0; i < n; i++) {
+        size_t j = 0;
+        while (j < m && strcmp(ks[j], keys[i]) != 0) j++;
+        if (j == m) ks[m++] = keys[i];
+        vs[j] = vals[i];
+    }
+    return cx_rec(a, ks, vs, m);
+}
+
+/* `l + r` for two maps: `l`, with `r`'s keys added or replaced. */
+static cx_value *merge(cx_arena *a, cx_value *l, cx_value *r) {
+    size_t n = l->u.rec.len + r->u.rec.len;
+    const char **ks = cx_alloc(a, (n ? n : 1) * sizeof *ks);
+    cx_value **vs = cx_alloc(a, (n ? n : 1) * sizeof *vs);
+    for (size_t i = 0; i < l->u.rec.len; i++) ks[i] = l->u.rec.keys[i], vs[i] = l->u.rec.vals[i];
+    for (size_t i = 0; i < r->u.rec.len; i++)
+        ks[l->u.rec.len + i] = r->u.rec.keys[i], vs[l->u.rec.len + i] = r->u.rec.vals[i];
+    return make_map(a, ks, vs, n);
+}
+
 static cx_value *concat(cx_arena *a, cx_value *l, cx_value *r) {
     if (l->kind == CX_STR) {
         cx_buf b = {0};
@@ -2185,7 +2213,8 @@ static cx_value *binary(ctx *c, cx_value *e) {
             return cx_bool(a, 0);
         }
         if (r->kind == CX_STR && l->kind == CX_STR) return cx_bool(a, strstr(r->u.str.s, l->u.str.s) != NULL);
-        return failf(c, "`in` needs a list or a text on the right");
+        if (r->kind == CX_REC && l->kind == CX_STR) return cx_bool(a, cx_get(r, l->u.str.s) != NULL);
+        return failf(c, "`in` needs a list, a text or a map on the right");
     }
     if (strcmp(op, "==") == 0) return cx_bool(a, cx_equal(l, r));
     if (strcmp(op, "!=") == 0) return cx_bool(a, !cx_equal(l, r));
@@ -2201,6 +2230,7 @@ static cx_value *binary(ctx *c, cx_value *e) {
     }
     if (strcmp(op, "+") == 0 && l->kind == r->kind && (l->kind == CX_STR || l->kind == CX_LIST))
         return concat(a, l, r);
+    if (strcmp(op, "+") == 0 && l->kind == CX_REC && r->kind == CX_REC) return merge(a, l, r);
     if (l->kind != CX_NUM || r->kind != CX_NUM)
         return failf(c, "operator `%s` needs numbers", op);
     double x = l->u.num, y = r->u.num;
@@ -2406,7 +2436,11 @@ static int is_space(int ch) {
     return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
 }
 
-/* `len`, `take`, `sum`, `join`, `lower`, `upper`, `trim`. */
+/*
+ * `len`, `take`, `sum`, `join`, `lower`, `upper`, `trim`, `keys`, `values`,
+ * `get`, and the two a program writes as syntax: `{}` for `{k: v, ...}`
+ * (keys and values in turn) and `[]` for `m[k]`.
+ */
 static cx_value *builtin(ctx *c, cx_value *e) {
     cx_arena *a = &c->w->arena;
     const char *name = cx_get_str(e, "name", "");
@@ -2414,8 +2448,39 @@ static cx_value *builtin(ctx *c, cx_value *e) {
     size_t n = len_of(args_e);
     cx_value **v = cx_alloc(a, (n ? n : 1) * sizeof *v);
     EVAL_ALL(c, args_e, v);
+    if (strcmp(name, "{}") == 0) {
+        size_t m = n / 2;
+        const char **ks = cx_alloc(a, (m ? m : 1) * sizeof *ks);
+        cx_value **vs = cx_alloc(a, (m ? m : 1) * sizeof *vs);
+        for (size_t i = 0; i < m; i++) {
+            if (v[2 * i]->kind != CX_STR) return failf(c, "a map's keys must be texts");
+            ks[i] = v[2 * i]->u.str.s;
+            vs[i] = v[2 * i + 1];
+        }
+        return make_map(a, ks, vs, m);
+    }
     cx_value *x = n > 0 ? v[0] : NULL;
     if (!x) return failf(c, "`%s` needs an argument", name);
+    if (x->kind == CX_REC) {
+        if (strcmp(name, "[]") == 0 && n == 2 && v[1]->kind == CX_STR) {
+            cx_value *found = cx_get(x, v[1]->u.str.s);
+            if (found) return found;
+            return failf(c, "the map has no key `%s`", v[1]->u.str.s);
+        }
+        if (strcmp(name, "get") == 0 && n == 3 && v[1]->kind == CX_STR) {
+            cx_value *found = cx_get(x, v[1]->u.str.s);
+            return found ? found : v[2];
+        }
+        if (strcmp(name, "len") == 0) return cx_num(a, (double)x->u.rec.len);
+        int keys = strcmp(name, "keys") == 0;
+        if (keys || strcmp(name, "values") == 0) {
+            size_t m = x->u.rec.len;
+            cx_value **items = cx_alloc(a, (m ? m : 1) * sizeof *items);
+            for (size_t i = 0; i < m; i++)
+                items[i] = keys ? cx_cstr(a, x->u.rec.keys[i]) : x->u.rec.vals[i];
+            return cx_list(a, items, m);
+        }
+    }
     if (strcmp(name, "len") == 0) {
         if (x->kind == CX_LIST) return cx_num(a, (double)x->u.list.len);
         if (x->kind == CX_STR) {

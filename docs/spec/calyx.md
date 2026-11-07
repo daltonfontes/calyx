@@ -207,7 +207,8 @@ def check(c: Contract) -> List[Text]:
 - **Listas por compreensão:** `[f.content for f in facts if f.topic == t]`. Também puras (`E0663`); para chamadas por item, `for each`.
 - **`in`:** `x in lista`, `"parte" in texto`.
 - **Literais:** `true` e `false`.
-- **Funções embutidas:** `len` (itens ou caracteres), `take(lista, n)`, `sum(lista)`, `join(textos, separador)`, `lower`, `upper` (com letras acentuadas), `trim`. Um nome declarado no programa tem prioridade sobre elas. Argumentos errados: `E0662`.
+- **Funções embutidas:** `len` (itens, caracteres ou chaves), `take(lista, n)`, `sum(lista)`, `join(textos, separador)`, `lower`, `upper` (com letras acentuadas), `trim`, e, para mapas, `keys(m)`, `values(m)` e `get(m, chave, padrão)`. Um nome declarado no programa tem prioridade sobre elas. Argumentos errados: `E0662`.
+- **Mapas:** `{"ana": 3, "bia": 5}` (e `{}`); `m[chave]` é o valor da chave, e uma chave que não existe é uma falha local, que o `try` captura (como o `KeyError` do Python); `get(m, chave, padrão)` nunca falha; `chave in m`; `m + n` junta os dois, com as chaves de `n` vencendo (o `|` do Python). A ordem das chaves é a ordem em que entraram, e uma chave repetida num literal fica no primeiro lugar com o último valor, como em Python. `[chave]` só lê mapas: para listas, `take` ou `for each`.
 
 ### 4.8 Grafo
 
@@ -579,7 +580,7 @@ Ramos paralelos veem o valor do momento da bifurcação (snapshot) e suas escrit
 |---|---|
 | `Text`, `Nat`, `Int`, `Float`, `Bool`, `Money`, `Duration`, `Date` | Básicos |
 | `List[T]`, `List[T] max N` | Listas; o limite entra nas análises de custo |
-| `Map[K, V]` | Mapas |
+| `Map[K, V]` | Mapas: as chaves são textos, ou de um tipo cujas variantes não têm campos (`E0699`); objetos JSON, também no diário |
 | Registros e variantes | Seção 4.4 |
 | `Conversation` | Histórico de conversa com um modelo; valor imutável (D3) |
 | `Reply[T]` | Resposta com `.value: T` e `.conversation` |
