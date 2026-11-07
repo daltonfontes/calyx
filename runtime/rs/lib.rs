@@ -9,6 +9,7 @@
 pub mod annotations;
 pub mod config;
 pub mod io;
+mod isolate;
 mod llm;
 mod mcp;
 pub mod oauth;
@@ -130,6 +131,7 @@ pub fn run(
         "uncertain_value": opts.uncertain_value,
     });
     telemetry::configure(&opts.config.telemetry);
+    isolate::set_sandboxes(sandboxes.iter().map(|(_, p)| p.clone()).collect());
     io::configure(opts.config, opts.fake_models);
     io::declare(annotations::declared(ir_json));
     let c = |s: &str| CString::new(s).map_err(|_| "text contains NUL".to_owned());

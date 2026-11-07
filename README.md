@@ -2,7 +2,7 @@
 
 *Em português: [README.pt.md](README.pt.md).*
 
-> **Public beta (v0.13).** Calyx works end to end and is tested on Linux, macOS
+> **Public beta (v0.14).** Calyx works end to end and is tested on Linux, macOS
 > and Windows, but it is young: expect bugs and breaking changes before 1.0.
 > Read the [limitations](#limitations) before trusting it with real money or
 > untrusted code, and [report what breaks](https://github.com/daltonfontes/calyx/issues).
@@ -390,7 +390,7 @@ for code agents to per-user memory, debates and model routers, in
 # Limitations
 
 ```
-- Calyx is a public beta (v0.13). Expect bugs and breaking changes before 1.0.
+- Calyx is a public beta (v0.14). Expect bugs and breaking changes before 1.0.
 - The spec, docs and examples are mostly in Portuguese; the paper is in English.
 - The guarantees rest on stated hypotheses: the service honours the idempotency
   key, and `verify` reads fresh state. Calyx cannot check a service that ignores
@@ -406,9 +406,11 @@ for code agents to per-user memory, debates and model routers, in
   programs with sandboxes (a directory) still run on one machine.
 - Tools only as MCP servers (stdio or Streamable HTTP); models only via
   OpenAI-compatible APIs.
-- A sandbox is a copy of a directory, not an isolation boundary: tools run
-  with the permissions of whoever runs Calyx. A tool like `run_tests` runs
-  the code it is given, so run agents over untrusted code in a container.
+- A sandbox is a copy of a directory. Tools run with the permissions of
+  whoever runs Calyx, unless the tool has `isolate = true` in calyx.toml:
+  then, on Linux (Landlock), it writes only in the run's sandboxes, reads
+  only the system and its own script, and opens no TCP connections. On
+  other systems an isolated tool does not run; use a container there.
 - The pure layer has no recursion, by design (every program must terminate).
 - No debugger or REPL (there is a language server: `calyx lsp`).
 - Most experiments use fake models; the parallelism and recovery ones were

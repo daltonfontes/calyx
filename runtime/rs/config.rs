@@ -69,6 +69,8 @@ pub struct ToolServer {
     pub remote_name: Option<String>,
     /// `oauth`: a remote server that takes OAuth tokens, from `calyx login`.
     pub oauth: Option<OAuthConfig>,
+    /// `isolate`: a local server that runs under Landlock (isolate.rs).
+    pub isolate: Option<IsolateConfig>,
     /// Directory the command runs in (the directory of `calyx.toml`).
     pub dir: PathBuf,
     /// How `calyx check --tools --probe` tests that the tool honours keys.
@@ -158,6 +160,18 @@ pub struct OAuthConfig {
     /// For a confidential client: the variable with its secret.
     pub client_secret_env: Option<String>,
     pub scopes: Vec<String>,
+}
+
+/// `isolate = true`, or `isolate = { network = true, read = [...], write =
+/// [...] }`: what an isolated tool may reach besides its sandboxes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IsolateConfig {
+    /// TCP connections allowed (off by default).
+    pub network: bool,
+    /// More directories it may read (relative to calyx.toml).
+    pub read: Vec<PathBuf>,
+    /// More directories it may write in.
+    pub write: Vec<PathBuf>,
 }
 
 /// `calyx serve --http`: the callers and what each may call.
@@ -367,6 +381,48 @@ impl Config {
                                 "tools.{name}: `oauth` and `token_env` are two ways to send a token; use one"
                             ));
                         }
+                        let isolate = match v.get("isolate") {
+                            None | Some(toml::Value::Boolean(false)) => None,
+                            Some(toml::Value::Boolean(true)) => Some(IsolateConfig::default()),
+                            Some(o @ toml::Value::Table(t)) => {
+                                let owner = format!("tools.{name}.isolate");
+                                for k in t.keys() {
+                                    if !["network", "read", "write"].contains(&k.as_str()) {
+                                        return Err(format!("unknown key `{owner}.{k}`"));
+                                    }
+                                }
+                                let dirs = |k: &str| -> Result<Vec<PathBuf>, String> {
+                                    if t.contains_key(k) {
+                                        Ok(strings(o, k, &owner)?
+                                            .iter()
+                                            .map(|d| dir.join(d))
+                                            .collect())
+                                    } else {
+                                        Ok(Vec::new())
+                                    }
+                                };
+                                Some(IsolateConfig {
+                                    network: match t.get("network") {
+                                        None => false,
+                                        Some(b) => b.as_bool().ok_or(format!(
+                                            "`{owner}.network` must be true or false"
+                                        ))?,
+                                    },
+                                    read: dirs("read")?,
+                                    write: dirs("write")?,
+                                })
+                            }
+                            Some(_) => {
+                                return Err(format!(
+                                    "tools.{name}.isolate must be `true` or a table (network, read, write)"
+                                ));
+                            }
+                        };
+                        if isolate.is_some() && url.is_some() {
+                            return Err(format!(
+                                "tools.{name}: `isolate` is for a local server (`command`); a remote one runs elsewhere"
+                            ));
+                        }
                         let remote_name = match v.get("name") {
                             Some(n) => Some(
                                 n.as_str()
@@ -384,6 +440,7 @@ impl Config {
                                 headers_env,
                                 remote_name,
                                 oauth,
+                                isolate,
                                 dir: dir.to_path_buf(),
                                 probe: probe(v, &format!("tools.{name}"))?,
                             },

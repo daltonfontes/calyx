@@ -7,7 +7,18 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
-## Unreleased
+## 0.14.0 (2026-11-07)
+
+- `isolate = true` on a tool in calyx.toml: its MCP server runs under
+  Landlock, the Linux kernel's sandbox for unprivileged processes. It
+  writes only in the run's sandboxes and a temporary directory of its own,
+  reads only the system and its own script's directory (not the project,
+  where a `.env` may be, nor `~/.ssh` or the tokens of `calyx login`), and
+  opens no TCP connections. `isolate = { network = true, read = [...],
+  write = [...] }` allows more. Where Landlock is missing (macOS, Windows,
+  an old kernel), an isolated tool does not run: it never runs without it.
+  A test runs a tool that tries to read a secret, write outside its
+  sandbox and connect, with and without `isolate`.
 
 - A tutorial ([docs/tutorial.md](docs/tutorial.md), in Portuguese in
   [docs/tutorial.pt.md](docs/tutorial.pt.md)): a store's support agent in

@@ -146,6 +146,14 @@ impl Server {
         if cfg!(windows) && std::env::var_os("PYTHONIOENCODING").is_none() {
             command.env("PYTHONIOENCODING", "utf-8");
         }
+        if let Some(iso) = &cfg.isolate {
+            crate::isolate::apply(&mut command, &cfg.command, &cfg.dir, iso).map_err(|e| {
+                IoError::new(
+                    "Config",
+                    format!("MCP server `{}`: {e}", cfg.command.join(" ")),
+                )
+            })?;
+        }
         let mut child = command
             .args(args)
             .current_dir(&cfg.dir)

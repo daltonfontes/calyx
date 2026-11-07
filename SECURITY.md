@@ -33,10 +33,14 @@ A vulnerability is a way to break a guarantee Calyx states, for example:
 
 These are documented limits, not vulnerabilities:
 
-- A sandbox is a copy of a directory, not an isolation boundary. Tools run
+- A sandbox is a copy of a directory. A tool without `isolate = true` runs
   with the permissions of whoever runs Calyx, so a tool that runs code
-  (tests, scripts) runs it with those permissions. Run agents over
-  untrusted code inside a container or a VM.
+  (tests, scripts) runs it with those permissions. With `isolate`, on
+  Linux, Landlock confines it (see the spec); UDP and Unix sockets are not
+  covered by Landlock's network rules. On other systems, or for stronger
+  isolation, run agents over untrusted code inside a container or a VM.
+  An isolated tool that reaches what its rules do not allow *is* a
+  vulnerability: report it.
 - `calyx serve --http` without `tls_cert` and `tls_key` is plain HTTP: on
   an address other than 127.0.0.1 it warns when it starts, and tokens cross
   the network in clear text.
