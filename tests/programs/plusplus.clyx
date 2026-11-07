@@ -1,0 +1,4 @@
+# `++` is not an operator: `+` joins lists and texts.
+
+graph g(a: List[Text]) -> List[Text]:
+    return a ++ a

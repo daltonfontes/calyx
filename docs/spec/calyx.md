@@ -354,7 +354,7 @@ match expr:
 - Cada ramo é uma expressão na mesma linha, ou um bloco indentado: passos (`nome = valor`, cada um vendo os anteriores, com `requires` depois de uma chamada a tool) e, por último, o valor do ramo. Os passos de um ramo rodam **na ordem do texto**: um e-mail escrito depois de um pagamento só sai depois dele. Todos os ramos dão o mesmo tipo. O mesmo vale para `if` e `else`.
 - `if` exige `else` (é uma expressão: sempre dá um valor). A condição é um `Bool`.
 
-**Operadores:** `+ - * /` para números (e `Money`, `Duration`); `+` também junta textos e listas; `== !=` para valores do mesmo tipo; `< <= > >=` para números, dinheiro, durações e textos; `and`, `or`, `not` para `Bool` (`and`/`or` não avaliam o lado direito quando não precisam). Parênteses agrupam.
+**Operadores:** `+ - * /` para números (e `Money`, `Duration`); `%` é o resto da divisão, com o sinal do divisor, como em Python (`-1 % 2` é `1`; com um divisor `Nat`, o resultado é `Nat`); `+` também junta textos e listas (`++` não existe: o erro aponta o `+`); `== !=` para valores do mesmo tipo; `< <= > >=` para números, dinheiro, durações e textos; `and`, `or`, `not` para `Bool` (`and`/`or` não avaliam o lado direito quando não precisam). Parênteses agrupam.
 
 **Construir valores:** `Ponto(x=1, y=2)` para registros e `Rejected(feedback="...")` para variantes, sempre com os campos pelo nome (um campo único pode ir pela posição). Uma variante sem campos é o próprio nome: `Approved`.
 

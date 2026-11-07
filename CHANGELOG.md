@@ -7,6 +7,14 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.12.0 (2026-11-07)
+
+- `%`, the remainder, with the sign of the divisor as in Python (`-1 % 2`
+  is `1`); with a `Nat` divisor the result is a `Nat`. Division by zero is
+  a failure, as with `/`.
+- `++` gets an error that points to `+`, which already joins lists and
+  texts, as in Python. Before, it said "planned for a later milestone".
+
 ## 0.11.0 (2026-11-06)
 
 - Skills: `skill name:` with a `description` and the procedure as a text;

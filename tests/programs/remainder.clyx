@@ -1,0 +1,12 @@
+# `%`: the remainder, with the divisor's sign (as in Python); with a `Nat`
+# divisor, a `Nat`. `+` joins lists and texts.
+
+def bucket(i: Int, n: Nat) -> Nat:
+    return i % n
+
+def even(n: Nat) -> Bool:
+    return n % 2 == 0
+
+graph main(xs: List[Text]) -> List[Nat]:
+    all = xs + ["extra"]
+    return [bucket(len(x) - 3, 2) for x in all]

@@ -124,3 +124,19 @@ graph g(id: Text) -> List[Text]:
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(out, json!(["Pipoca"]));
 }
+
+#[test]
+fn the_remainder_has_the_sign_of_the_divisor() {
+    let src = "graph g(a: Int, b: Int) -> Int:\n    return a % b\n";
+    // As in Python: 7 % 3 == 1, -7 % 3 == 2, 7 % -3 == -2, -7 % -3 == -1.
+    for (a, b, want) in [(7, 3, 1), (-7, 3, 2), (7, -3, -2), (-7, -3, -1), (6, 3, 0)] {
+        assert_eq!(eval(src, json!({"a": a, "b": b})), json!(want), "{a} % {b}");
+    }
+    let report = calyx_check::check("t.clyx", src);
+    let opts = RunOptions {
+        config: Config::builtin(),
+        ..RunOptions::default()
+    };
+    let err = run(&report.ir.to_json(), "g", &json!({"a": 1, "b": 0}), opts).unwrap_err();
+    assert!(format!("{err:?}").contains("division by zero"), "{err:?}");
+}

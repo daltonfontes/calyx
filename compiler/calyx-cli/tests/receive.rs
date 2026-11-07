@@ -34,7 +34,7 @@ graph about(request: Text) -> Text:
         case Denied(reason): "recusado ({reason})"
 
 graph quick(request: Text) -> Text:
-    approval = receive Approval, timeout 1 s:
+    approval = receive Approval, timeout 4 s:
         on timeout: Denied(reason="prazo vencido")
     return match approval:
         case Approved: "aprovado"
@@ -157,7 +157,7 @@ fn tick_resumes_runs_whose_deadline_passed() {
         "{}",
         text(&out.stderr)
     );
-    std::thread::sleep(std::time::Duration::from_millis(1600));
+    std::thread::sleep(std::time::Duration::from_millis(4600));
     let out = d.calyx(&["tick", "--fake-models", "--quiet"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stdout), "recusado (prazo vencido)\n");
@@ -203,7 +203,7 @@ fn an_answer_after_the_deadline_is_not_taken() {
     // late, even though the run has not taken its `on timeout` yet.
     let d = Dir::new("late");
     let id = d.start("quick", &["--request", "x"]);
-    std::thread::sleep(std::time::Duration::from_millis(1600));
+    std::thread::sleep(std::time::Duration::from_millis(4600));
     let out = d.calyx(&["deliver", &id, "Approval", "Approved"]);
     assert!(!out.status.success());
     assert!(

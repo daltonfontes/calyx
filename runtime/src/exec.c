@@ -51,6 +51,7 @@
 #include "sha256.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <fcntl.h>
 #include <pthread.h>
 #ifndef _WIN32
@@ -2207,6 +2208,13 @@ static cx_value *binary(ctx *c, cx_value *e) {
     case '+': return cx_num(a, x + y);
     case '-': return cx_num(a, x - y);
     case '*': return cx_num(a, x * y);
+    case '%': {
+        if (y == 0) return failf(c, "division by zero");
+        /* As in Python: the remainder has the sign of the divisor. */
+        double m = fmod(x, y);
+        if (m != 0 && (m < 0) != (y < 0)) m += y;
+        return cx_num(a, m);
+    }
     default:
         if (y == 0) return failf(c, "division by zero");
         return cx_num(a, x / y);
