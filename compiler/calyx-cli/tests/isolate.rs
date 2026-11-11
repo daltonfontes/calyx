@@ -90,6 +90,13 @@ fn an_isolated_tool_reaches_only_its_sandbox() {
     let shut = setup("shut", true);
     let o = run(&shut, port);
     if !landlock() {
+        // Where the confinement itself must be tested (CI on Linux), a
+        // kernel without Landlock fails the test instead of passing it by
+        // the refusal alone.
+        assert!(
+            std::env::var_os("CALYX_REQUIRE_LANDLOCK").is_none(),
+            "CALYX_REQUIRE_LANDLOCK is set, and this kernel has no Landlock with network rules"
+        );
         // Refused before the tool runs; nothing written outside.
         assert!(!o.status.success());
         assert!(

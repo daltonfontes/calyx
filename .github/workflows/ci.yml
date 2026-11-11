@@ -40,6 +40,10 @@ jobs:
 
       - name: Test (Rust compiler + C runtime)
         run: make test
+        env:
+          # The isolate test must run under Landlock here, not pass by
+          # checking that a kernel without it refuses.
+          CALYX_REQUIRE_LANDLOCK: "1"
 
       - name: The journal in PostgreSQL over TLS (a server with its own CA)
         run: |
