@@ -40,6 +40,10 @@ jobs:
 
       - name: Test (Rust compiler + C runtime)
         run: make test
+        env:
+          # The isolate test must run under Landlock here, not pass by
+          # checking that a kernel without it refuses.
+          CALYX_REQUIRE_LANDLOCK: "1"
 
       - name: The journal in PostgreSQL over TLS (a server with its own CA)
         run: |
@@ -219,13 +223,26 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # A clang the image already has, if it links libFuzzer; the package
+      # archive is asked only when none does, a few times (it is not always
+      # reachable from the runners).
       - name: clang with libFuzzer
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q clang-18 libclang-rt-18-dev
+          printf 'int LLVMFuzzerTestOneInput(const unsigned char *d, unsigned long n) { (void)d; (void)n; return 0; }\n' > "$RUNNER_TEMP/probe.c"
+          works() { command -v "$1" > /dev/null && "$1" -fsanitize=fuzzer,address,undefined "$RUNNER_TEMP/probe.c" -o "$RUNNER_TEMP/probe" 2> /dev/null; }
+          pick() { for c in clang-18 clang-19 clang-20 clang-21 clang-22 clang; do if works "$c"; then echo "$c"; return; fi; done; return 1; }
+          if ! cc=$(pick); then
+            for attempt in 1 2 3 4 5; do
+              if sudo apt-get update -q && sudo apt-get install -y -q clang-18 libclang-rt-18-dev; then break; fi
+              sleep 60
+            done
+            cc=$(pick)
+          fi
+          "$cc" --version
+          echo "FUZZ_CC=$cc" >> "$GITHUB_ENV"
 
       - name: Fuzz each target for 60 s
-        run: make -C runtime fuzz-run FUZZ_CC=clang-18 FUZZ_SECONDS=60
+        run: make -C runtime fuzz-run FUZZ_CC="$FUZZ_CC" FUZZ_SECONDS=60
 
       - name: Keep the inputs that crashed
         if: failure()
