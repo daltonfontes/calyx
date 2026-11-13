@@ -2,7 +2,7 @@
   "name": "calyx",
   "displayName": "Calyx",
   "description": "The Calyx language for agent workflows: diagnostics as you type, outline, go to definition, hover and syntax colors.",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "publisher": "calyx",
   "license": "MIT",
   "repository": {

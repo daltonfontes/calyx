@@ -102,6 +102,9 @@ struct EntitySig {
     /// (`next n = n + x`, `next xs = xs + [x]`). A send to one of these
     /// loses no other run's update, whatever its arguments came from.
     changes: HashSet<String>,
+    /// Handlers that change the state (`next`), answering or not: they
+    /// take `send`, never `ask`.
+    writers: HashSet<String>,
 }
 
 /// A pure function (decision D27).
@@ -953,10 +956,17 @@ impl<'p> Cx<'_, 'p> {
             })
             .map(|h| h.name.name.clone())
             .collect();
+        let writers = e
+            .handlers
+            .iter()
+            .filter(|h| !h.updates.is_empty())
+            .map(|h| h.name.name.clone())
+            .collect();
         EntitySig {
             key,
             handlers,
             changes,
+            writers,
         }
     }
 
@@ -1030,8 +1040,11 @@ impl<'p> Cx<'_, 'p> {
                     );
                 }
             }
-            match (&h.ret, &h.returns, h.updates.is_empty()) {
-                (Some(rt), Some(r), true) => {
+            // A handler answers (`-> T` and `return`), changes the state
+            // (`next`), or both: then it answers with what it computed on
+            // the state before the message, as every `next` does.
+            match (&h.ret, &h.returns) {
+                (Some(rt), Some(r)) => {
                     let want = self.ty(rt);
                     let t = self.expr(r, &hc);
                     if !assignable(&t.ty, &want) {
@@ -1042,39 +1055,51 @@ impl<'p> Cx<'_, 'p> {
                         );
                     }
                 }
-                (None, None, false) => {
-                    let mut seen = HashSet::new();
-                    for (f, v) in &h.updates {
-                        let t = self.expr(v, &hc);
-                        match fields.iter().find(|(n, _)| *n == f.name) {
-                            None => self.push(
-                                err("E0653", "`next` names something that is not a state field", f.span)
-                                    .expected("a `state` field of the entity")
-                                    .observed(format!("`{}`", f.name)),
-                            ),
-                            Some(_) if !seen.insert(f.name.as_str()) => self.push(
-                                err("E0653", "a state field changed twice in one handler", f.span)
-                                    .observed(format!("`next {}` twice", f.name)),
-                            ),
-                            Some((_, ty)) if !assignable(&t.ty, ty) && !is_empty_list(v) => self.push(
-                                err("E0653", "new value of the wrong type", v.span)
-                                    .expected(format!("`{ty}` for `{}`", f.name))
-                                    .observed(format!("`{}`", t.ty)),
-                            ),
-                            Some(_) => {}
-                        }
-                    }
-                }
+                (None, None) if !h.updates.is_empty() => {}
                 _ => self.push(
-                    err("E0652", "a handler either answers or changes the state", h.name.span)
-                        .expected("`on M(...) -> T:` with one `return`, or `on M(...):` with `next field = ...` lines")
-                        .observed(match (&h.ret, &h.returns) {
-                            (Some(_), None) => "`-> T` without `return`".to_owned(),
-                            (None, Some(_)) => "`return` without `-> T`".to_owned(),
-                            _ if !h.updates.is_empty() && h.returns.is_some() => "both `return` and `next`".to_owned(),
-                            _ => "neither `return` nor `next`".to_owned(),
-                        }),
+                    err(
+                        "E0652",
+                        "a handler answers, changes the state, or both",
+                        h.name.span,
+                    )
+                    .expected(
+                        "`on M(...) -> T:` with one `return`, `next field = ...` lines, or both",
+                    )
+                    .observed(match (&h.ret, &h.returns) {
+                        (Some(_), None) => "`-> T` without `return`".to_owned(),
+                        (None, Some(_)) => "`return` without `-> T`".to_owned(),
+                        _ => "neither `return` nor `next`".to_owned(),
+                    }),
                 ),
+            }
+            let mut seen = HashSet::new();
+            for (f, v) in &h.updates {
+                let t = self.expr(v, &hc);
+                match fields.iter().find(|(n, _)| *n == f.name) {
+                    None => self.push(
+                        err(
+                            "E0653",
+                            "`next` names something that is not a state field",
+                            f.span,
+                        )
+                        .expected("a `state` field of the entity")
+                        .observed(format!("`{}`", f.name)),
+                    ),
+                    Some(_) if !seen.insert(f.name.as_str()) => self.push(
+                        err(
+                            "E0653",
+                            "a state field changed twice in one handler",
+                            f.span,
+                        )
+                        .observed(format!("`next {}` twice", f.name)),
+                    ),
+                    Some((_, ty)) if !assignable(&t.ty, ty) && !is_empty_list(v) => self.push(
+                        err("E0653", "new value of the wrong type", v.span)
+                            .expected(format!("`{ty}` for `{}`", f.name))
+                            .observed(format!("`{}`", t.ty)),
+                    ),
+                    Some(_) => {}
+                }
             }
         }
     }
@@ -1198,6 +1223,7 @@ impl<'p> Cx<'_, 'p> {
             return Typed::pure(Ty::Error);
         };
         let key_ty = sig.key.clone();
+        let writes = sig.writers.contains(m.handler.name.as_str());
         let Some((_, params, ret)) = sig
             .handlers
             .iter()
@@ -1233,36 +1259,43 @@ impl<'p> Cx<'_, 'p> {
         }
         let inner = self.args(&callee, &params, &m.args, m.handler.span, gc);
         let effect = key.effect.join(inner);
-        match (m.send, ret) {
-            (false, Some(t)) => Typed {
+        let answers = ret.is_some();
+        match (m.send, ret, writes) {
+            (false, Some(t), false) => Typed {
                 ty: t,
                 kind: NodeKind::Other(format!("ask {callee}")),
                 effect: effect.join(Effect::Read),
             },
-            (true, None) => Typed {
-                ty: Ty::Unit,
+            (true, ret, true) => Typed {
+                ty: ret.unwrap_or(Ty::Unit),
                 kind: NodeKind::Other(format!("send {callee}")),
                 effect: effect.join(Effect::Write),
             },
-            (false, None) => {
+            (false, _, true) => {
                 self.push(
                     err(
                         "E0656",
-                        "`ask` waits for an answer this message does not give",
+                        "`ask` only reads, and this message changes the state",
                         m.handler.span,
                     )
                     .expected(format!(
-                        "`send {}(...).{}(...)`: it changes the state and answers nothing",
-                        m.entity.name, m.handler.name
+                        "`send {}(...).{}(...)`{}",
+                        m.entity.name,
+                        m.handler.name,
+                        if answers {
+                            ": its value is the answer"
+                        } else {
+                            ""
+                        }
                     ))
                     .observed(format!(
-                        "`ask` of `on {}(...)` without `-> T`",
+                        "`ask` of `on {}(...)`, which has `next`",
                         m.handler.name
                     )),
                 );
                 Typed::pure(Ty::Error)
             }
-            (true, Some(_)) => {
+            (true, _, false) => {
                 self.push(
                     err(
                         "E0656",
@@ -1277,6 +1310,8 @@ impl<'p> Cx<'_, 'p> {
                 );
                 Typed::pure(Ty::Error)
             }
+            // A handler with neither: already an error (`E0652`).
+            (false, None, false) => Typed::pure(Ty::Error),
         }
     }
 
