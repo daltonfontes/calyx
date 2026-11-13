@@ -231,3 +231,69 @@ fn replay_takes_entity_answers_from_the_journal() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(d.count("a"), "2", "replay sends nothing");
 }
+
+/// A message that changes the state and answers: a queue that hands out
+/// each item once.
+const QUEUE: &str = r#"
+entity Queue(key name: Text):
+    state items: List[Text] = ["a", "b", "c"]
+
+    on Take() -> Text:
+        next items = [i for i in items if i != items[0]]
+        return items[0]
+
+graph take(name: Text) -> Text:
+    first = send Queue(name).Take()
+    second = send Queue(name).Take()
+    second after first
+    return "{first} {second}"
+"#;
+
+#[test]
+fn a_message_that_changes_the_state_answers_once_even_after_a_crash() {
+    let d = Dir::new("answers");
+    std::fs::write(d.0.join("q.clyx"), QUEUE).unwrap();
+    let take = |name: &str, crash: bool| {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_calyx"));
+        c.args(["run", "q.clyx", "--quiet", "--name", name])
+            .current_dir(&d.0);
+        if crash {
+            c.env("CALYX_CRASH_IN_SEND", "1");
+        }
+        c.output().unwrap()
+    };
+    let out = take("q1", false);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout).trim(),
+        "a b",
+        "each answer sees the state before its message"
+    );
+
+    // Killed after the entity applied `first` and before the journal
+    // recorded it: the resumed run sends it again, the entity does not
+    // apply it again, and the answer is the one it gave.
+    let out = take("q2", true);
+    assert_eq!(out.status.code(), Some(137), "{}", text(&out.stderr));
+    let id = text(&out.stderr)
+        .lines()
+        .find_map(|l| l.strip_prefix("calyx: run ").map(str::to_owned))
+        .unwrap();
+    let out = d.calyx(&["resume", &id]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).contains("already applied"),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(text(&out.stdout).trim(), "a b");
+    // Only `c` is left: the next run takes it, and its second `Take` finds
+    // the queue empty (a failure, which `try` would catch).
+    let third = take("q2", false);
+    assert!(!third.status.success());
+    assert!(
+        text(&third.stderr).contains("the list has no item 0 (it has 0)"),
+        "{}",
+        text(&third.stderr)
+    );
+}

@@ -2792,9 +2792,27 @@ static char *entity_step(emsg *m, const char *text, size_t len) {
         int seen = 0;
         for (size_t i = 0; i < len_of(applied) && !seen; i++)
             seen = at(applied, i)->kind == CX_STR && strcmp(str_at(applied, i), id) == 0;
+        /* A message that also answers: its answers are kept, by id, so
+         * that a run resumed after the entity applied it (and before its
+         * journal recorded it) gets the same answer. */
+        cx_value *answers = cx_get(doc, "answers");
+        cx_value *answer_expr = cx_get(m->handler, "answer");
+        if (answer_expr && answer_expr->kind == CX_NULL) answer_expr = NULL;
         if (seen) {
             trace(x, j->label, "send  %s(%s).%s  already applied", ename, m->kjson, hname);
-            m->result = cx_null(m->a);
+            cx_value *kept = answer_expr ? cx_get(answers, id) : NULL;
+            if (kept) {
+                cx_buf vb = {0};
+                cx_write(&vb, kept);
+                m->result = cx_parse(m->a, vb.data, vb.len, NULL);
+                cx_buf_free(&vb);
+            } else if (answer_expr) {
+                snprintf(m->why, m->why_len,
+                         "entity `%s`, message `%s`: applied, but its answer was not kept", ename,
+                         hname);
+            } else {
+                m->result = cx_null(m->a);
+            }
         } else {
             /* Every update sees the state before the message. */
             size_t nf = state->kind == CX_REC ? state->u.rec.len : 0;
@@ -2806,6 +2824,9 @@ static char *entity_step(emsg *m, const char *text, size_t len) {
             }
             cx_value *updates = cx_get(m->handler, "updates");
             int failed = 0;
+            /* The answer, like every update, sees the state before. */
+            cx_value *answer = answer_expr ? eval(&hc, answer_expr) : NULL;
+            if (answer_expr && !answer) failed = 1;
             for (size_t u = 0; u < len_of(updates) && !failed; u++) {
                 const char *f = cx_get_str(at(updates, u), "field", "");
                 cx_value *v = eval(&hc, cx_get(at(updates, u), "v"));
@@ -2829,12 +2850,40 @@ static char *entity_step(emsg *m, const char *text, size_t len) {
                     cx_buf_putc(&db, ',');
                 }
                 cx_buf_json_str(&db, id, strlen(id));
-                cx_buf_puts(&db, "]}");
+                cx_buf_putc(&db, ']');
+                if (answer || (answers && answers->kind == CX_REC && answers->u.rec.len)) {
+                    /* Only written once some message answers, so the
+                     * documents of other entities do not change. */
+                    cx_buf_puts(&db, ",\"answers\":{");
+                    int first = 1;
+                    for (size_t i = 0; answers && answers->kind == CX_REC && i < answers->u.rec.len; i++) {
+                        if (!first) cx_buf_putc(&db, ',');
+                        first = 0;
+                        cx_buf_json_str(&db, answers->u.rec.keys[i], strlen(answers->u.rec.keys[i]));
+                        cx_buf_putc(&db, ':');
+                        cx_write(&db, answers->u.rec.vals[i]);
+                    }
+                    if (answer) {
+                        if (!first) cx_buf_putc(&db, ',');
+                        cx_buf_json_str(&db, id, strlen(id));
+                        cx_buf_putc(&db, ':');
+                        cx_write(&db, answer);
+                    }
+                    cx_buf_putc(&db, '}');
+                }
+                cx_buf_putc(&db, '}');
                 out = malloc(db.len + 1);
                 if (out) {
                     memcpy(out, db.data, db.len);
                     out[db.len] = '\0';
-                    m->result = cx_null(m->a);
+                    if (answer) {
+                        cx_buf vb = {0};
+                        cx_write(&vb, answer);
+                        m->result = cx_parse(m->a, vb.data, vb.len, NULL);
+                        cx_buf_free(&vb);
+                    } else {
+                        m->result = cx_null(m->a);
+                    }
                 } else {
                     snprintf(m->why, m->why_len, "entity `%s`: out of memory", ename);
                 }

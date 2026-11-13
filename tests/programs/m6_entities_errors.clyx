@@ -19,9 +19,10 @@ entity Counter(key name: Text):
     on Bad(name: Text) -> Text:
         return m(p(name))
 
+    # `-> T` and no `return`: a handler may change the state and answer,
+    # but what it answers must be said.
     on Both() -> Nat:
         next count = 1
-        return count
 
     on Add(n: Nat):
         next cuont = count + n

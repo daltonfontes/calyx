@@ -1,0 +1,22 @@
+# A message that changes the state and answers (`next` and `return`):
+# `send` gives the answer. The answer, like each `next`, is computed on
+# the state before the message, and the entity keeps it with the message's
+# id, so a resumed run gets the same answer.
+
+entity Queue(key name: Text):
+    state items: List[Text] = []
+    state handed: Nat = 0
+
+    on Put(item: Text):
+        next items = items + [item]
+
+    on Take() -> Text:
+        next items = [i for i in items if i != items[0]]
+        next handed = handed + 1
+        return items[0]
+
+graph main(name: Text) -> Text:
+    put = send Queue(name).Put("a")
+    first = send Queue(name).Take()
+    first after put
+    return first

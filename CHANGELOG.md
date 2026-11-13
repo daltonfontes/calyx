@@ -7,6 +7,18 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.16.0 (2026-11-13)
+
+- An entity's handler may change the state **and** answer (`next` lines
+  and a `return`): `x = send E(k).Take()` is the answer. Taking an item
+  from a queue, or giving a task to someone, is one message, so nobody
+  changes the entity between the change and the answer. The answer, like
+  each `next`, is computed on the state before the message, and the entity
+  keeps it with the message's id: a run resumed after a crash gets the same
+  answer and does not apply the message again. `ask` stays for handlers
+  that only answer (`E0656`).
+- `examples/team.clyx` claims a task in one message instead of two.
+
 ## 0.15.0 (2026-11-13)
 
 - `list[n]`: the item at position `n` of a list, from 0. A position the

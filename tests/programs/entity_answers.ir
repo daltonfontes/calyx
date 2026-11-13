@@ -1,0 +1,4 @@
+graph main(name: Text) -> Text [write]
+  %0 put: Unit = send Queue.Put [write]
+  %1 first: Text = send Queue.Take [write] <- %0
+  return %1
