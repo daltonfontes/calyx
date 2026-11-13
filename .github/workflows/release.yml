@@ -5,7 +5,7 @@ name: Release
 #
 # Pushing a tag `vX.Y.Z` (matching the version in Cargo.toml) publishes a
 # GitHub release with one archive per target and its checksum, which
-# install.sh downloads. Running it by hand with a `tag` does the same,
+# install.sh downloads, and the VS Code extension (calyx-vscode.vsix). Running it by hand with a `tag` does the same,
 # creating the tag on the commit it ran on. Without a tag, or on a pull
 # request that changes the release, it only builds and keeps the archives
 # as artifacts.
@@ -20,6 +20,7 @@ on:
       - "install.sh"
       - "install.ps1"
       - "compiler/calyx-cli/src/bundle.rs"
+      - "editors/vscode/**"
   workflow_dispatch:
     inputs:
       tag:
@@ -97,7 +98,13 @@ jobs:
 
       - name: Install qemu, to try the ARM binary (Linux)
         if: matrix.run == 'qemu-aarch64'
-        run: sudo apt-get update && sudo apt-get install -y qemu-user
+        # The package archive is not always reachable from the runners.
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get update && sudo apt-get install -y qemu-user; then exit 0; fi
+            sleep 60
+          done
+          exit 1
 
       - name: Check that the tag matches the version
         if: env.TAG != ''
@@ -177,8 +184,41 @@ jobs:
           name: calyx-${{ matrix.target }}
           path: dist/*
 
+  # The VS Code extension, as a file to install: no clone, no npm.
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check that the extension has the version of Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          extension=$(node -p "require('./editors/vscode/package.json').version")
+          if [ "$extension" != "$version" ]; then
+            echo "editors/vscode/package.json has version $extension, Cargo.toml has $version"
+            exit 1
+          fi
+
+      - name: Package
+        working-directory: editors/vscode
+        run: |
+          npm ci --no-audit --no-fund
+          cp ../../LICENSE LICENSE
+          mkdir -p ../../dist
+          npx vsce package -o ../../dist/calyx-vscode.vsix
+          unzip -l ../../dist/calyx-vscode.vsix | grep -E "extension/(extension.js|package.json|syntaxes/calyx.tmLanguage.json)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: calyx-vscode
+          path: dist/*
+
   publish:
-    needs: build
+    needs: [build, extension]
     if: github.ref_type == 'tag' || inputs.tag != ''
     runs-on: ubuntu-latest
     permissions:

@@ -262,8 +262,10 @@ GEMINI_API_KEY=... calyx run hello.clyx --text "any text" # a real model
 The answer is checked against `Summary` before you get it. Other providers
 (OpenAI, OpenRouter, Groq, Ollama, NVIDIA...) are set in a `calyx.toml`.
 
-In VS Code, the extension in [editors/vscode](editors/vscode) shows the
-same errors as you type, with the outline of the file, go to definition and
+In VS Code, the extension
+([calyx-vscode.vsix](https://github.com/daltonfontes/calyx/releases/latest/download/calyx-vscode.vsix),
+installed with "Install from VSIX..."; see [editors/vscode](editors/vscode))
+shows the same errors as you type, with the outline of the file, go to definition and
 hover; any other editor with an LSP client can run `calyx lsp`.
 
 For a whole agent, step by step (tools, an agent with skills, refunds that

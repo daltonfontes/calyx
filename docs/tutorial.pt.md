@@ -17,9 +17,9 @@ inventados do tipo certo. Clone o repositório e entre na pasta:
 git clone https://github.com/daltonfontes/calyx && cd calyx/examples/tutorial
 ```
 
-Se você usa o VS Code, instale a extensão de
-[`editors/vscode`](../editors/vscode): os erros abaixo aparecem enquanto
-você escreve. Os programas estão em inglês, como os nomes da linguagem.
+Se você usa o VS Code, instale a extensão
+([calyx-vscode.vsix](https://github.com/daltonfontes/calyx/releases/latest/download/calyx-vscode.vsix),
+com "Install from VSIX..."): os erros abaixo aparecem enquanto você escreve. Os programas estão em inglês, como os nomes da linguagem.
 
 ## 1. Uma tool, um tipo, um prompt, um grafo
 

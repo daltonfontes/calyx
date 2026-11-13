@@ -17,8 +17,9 @@ right type. Clone the repository and go to the folder:
 git clone https://github.com/daltonfontes/calyx && cd calyx/examples/tutorial
 ```
 
-If you use VS Code, install the extension in
-[`editors/vscode`](../editors/vscode): the errors below show up as you type.
+If you use VS Code, install the extension
+([calyx-vscode.vsix](https://github.com/daltonfontes/calyx/releases/latest/download/calyx-vscode.vsix),
+with "Install from VSIX..."): the errors below show up as you type.
 
 ## 1. A tool, a type, a prompt, a graph
 

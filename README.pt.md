@@ -230,8 +230,10 @@ GEMINI_API_KEY=... calyx run hello.clyx --text "qualquer texto"  # um modelo de 
 A resposta é conferida contra `Summary` antes de chegar a você. Outros
 provedores (OpenAI, OpenRouter, Groq, Ollama, NVIDIA...) vão num `calyx.toml`.
 
-No VS Code, a extensão em [editors/vscode](editors/vscode) mostra os
-mesmos erros enquanto você escreve, com o contorno do arquivo, ir para a
+No VS Code, a extensão
+([calyx-vscode.vsix](https://github.com/daltonfontes/calyx/releases/latest/download/calyx-vscode.vsix),
+instalada com "Install from VSIX..."; veja [editors/vscode](editors/vscode))
+mostra os mesmos erros enquanto você escreve, com o contorno do arquivo, ir para a
 definição e hover; qualquer outro editor com cliente LSP pode rodar
 `calyx lsp`.
 
