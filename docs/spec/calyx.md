@@ -208,7 +208,8 @@ def check(c: Contract) -> List[Text]:
 - **`in`:** `x in lista`, `"parte" in texto`.
 - **Literais:** `true` e `false`.
 - **Funções embutidas:** `len` (itens, caracteres ou chaves), `take(lista, n)`, `sum(lista)`, `join(textos, separador)`, `lower`, `upper` (com letras acentuadas), `trim`, e, para mapas, `keys(m)`, `values(m)` e `get(m, chave, padrão)`. Um nome declarado no programa tem prioridade sobre elas. Argumentos errados: `E0662`.
-- **Mapas:** `{"ana": 3, "bia": 5}` (e `{}`); `m[chave]` é o valor da chave, e uma chave que não existe é uma falha local, que o `try` captura (como o `KeyError` do Python); `get(m, chave, padrão)` nunca falha; `chave in m`; `m + n` junta os dois, com as chaves de `n` vencendo (o `|` do Python). A ordem das chaves é a ordem em que entraram, e uma chave repetida num literal fica no primeiro lugar com o último valor, como em Python. `[chave]` só lê mapas: para listas, `take` ou `for each`.
+- **Posição numa lista:** `lista[n]` é o item na posição `n`, a partir de 0 (`lista[0]` é o primeiro). Uma posição que a lista não tem (negativa, ou além do fim) é uma falha local, que o `try` captura (como o `IndexError` do Python; posições negativas não contam do fim). O índice é um número inteiro (`E0662`).
+- **Mapas:** `{"ana": 3, "bia": 5}` (e `{}`); `m[chave]` é o valor da chave, e uma chave que não existe é uma falha local, que o `try` captura (como o `KeyError` do Python); `get(m, chave, padrão)` nunca falha; `chave in m`; `m + n` junta os dois, com as chaves de `n` vencendo (o `|` do Python). A ordem das chaves é a ordem em que entraram, e uma chave repetida num literal fica no primeiro lugar com o último valor, como em Python.
 
 ### 4.8 Grafo
 

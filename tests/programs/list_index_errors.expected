@@ -1,0 +1,14 @@
+error[E0662]: a list's items are numbered
+- expected : a whole number, from 0: `list[0]` is the first item
+- observed : a `Text`
+Location: list_index_errors.clyx:4:12
+
+error[E0662]: a list's items are numbered
+- expected : a whole number, from 0: `list[0]` is the first item
+- observed : a `Float`
+Location: list_index_errors.clyx:7:12
+
+error[E0610]: returned value has the wrong type
+- expected : `Nat`
+- observed : `Text`
+Location: list_index_errors.clyx:10:12

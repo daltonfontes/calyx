@@ -1,0 +1,10 @@
+# A list's positions are whole numbers.
+
+graph a(xs: List[Text]) -> Text:
+    return xs["first"]
+
+graph b(xs: List[Text]) -> Text:
+    return xs[1.5]
+
+graph c(xs: List[Text]) -> Nat:
+    return xs[0]

@@ -181,7 +181,7 @@ command = ["python3", "tools/fake_search.py"]   # relativo ao calyx.toml
 | `tests/programs/` | Programas de teste com os diagnósticos esperados (`.expected`) e a representação intermediária esperada (`.ir`) |
 | `tests/state_bugs/` | A medida Q2: workflows com um bug de estado conhecido cada, e quem o pega (compilador, runtime ou ninguém) |
 | `editors/` | Suporte a editores: `vscode/`, a extensão do VS Code (cores da sintaxe e o `calyx lsp`, com diagnósticos, contorno, definição e hover) |
-| `examples/` | Programas de exemplo. `research.clyx`, `agent.clyx`, `refund.clyx`, `fix.clyx`, `revisor.clyx`, `memory.clyx`, `approval.clyx`, `debate.clyx`, `race.clyx`, `router.clyx` e `atendimento.clyx` (atendimento ao cliente, juntando quase tudo) passam na verificação e rodam; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
+| `examples/` | Programas de exemplo. `research.clyx`, `agent.clyx`, `refund.clyx`, `fix.clyx`, `revisor.clyx`, `team.clyx` (um time de agentes em volta de um quadro de tarefas), `memory.clyx`, `approval.clyx`, `debate.clyx`, `race.clyx`, `router.clyx` e `atendimento.clyx` (atendimento ao cliente, juntando quase tudo) passam na verificação e rodam; os outros usam construções de marcos futuros e, por enquanto, só precisam ser válidos lexicamente. `calyx.toml` e `tools/` configuram as tools dos exemplos |
 
 ## Referências
 
