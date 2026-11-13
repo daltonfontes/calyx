@@ -7,6 +7,16 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.14.1 (2026-11-13)
+
+- Each release has the VS Code extension as a file, `calyx-vscode.vsix`,
+  to install with "Install from VSIX..." (or `code --install-extension`):
+  no clone and no npm. The release checks that the extension has the
+  version of the binary.
+- CI: the isolate test must run under Landlock on Linux (it could pass by
+  checking only that a kernel without it refuses); the fuzz job uses a
+  clang the runner image has.
+
 ## 0.14.0 (2026-11-07)
 
 - `isolate = true` on a tool in calyx.toml: its MCP server runs under

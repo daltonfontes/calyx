@@ -8,14 +8,22 @@ from the language server in the `calyx` binary (`calyx lsp`).
 
 1. Install calyx (see the [README](../../README.md)), and check that
    `calyx --version` works in a terminal.
-2. Build the extension and install it:
+2. Download
+   [calyx-vscode.vsix](https://github.com/daltonfontes/calyx/releases/latest/download/calyx-vscode.vsix)
+   (each release has it) and install it: in VS Code, the Extensions view,
+   `...`, **Install from VSIX...**; or, in a terminal:
 
    ```bash
-   cd editors/vscode
-   npm install
-   npm run package          # makes calyx-<version>.vsix
-   code --install-extension calyx-*.vsix
+   code --install-extension calyx-vscode.vsix
    ```
+
+To build it from the source instead:
+
+```bash
+cd editors/vscode
+npm ci
+npx vsce package -o calyx-vscode.vsix
+```
 
 If `calyx` is not on the PATH VS Code sees, set **Calyx: Path** (`calyx.path`)
 to the full path of the binary, e.g. `C:\Users\you\.calyx\bin\calyx.exe`.
