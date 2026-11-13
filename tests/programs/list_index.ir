@@ -1,0 +1,6 @@
+graph main(tasks: List[Task], n: Nat) -> Text [pure]
+  %0 first: Task = pure [pure]
+  %1 found: Result[Text] = try [pure]
+  %2 last: Task = pure [pure]
+  %3 return: Text = pure [pure] <- %0 %1 %2
+  return %3

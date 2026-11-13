@@ -1,0 +1,15 @@
+# `list[n]`: the item at position `n`, from 0. A position the list does not
+# have is a failure, which `try` catches.
+
+type Task:
+    what: Text
+
+def second(xs: List[Text]) -> Text:
+    return xs[1]
+
+graph main(tasks: List[Task], n: Nat) -> Text:
+    first = tasks[0]
+    found = try:
+        tasks[n].what
+    last = tasks[len(tasks) - 1]
+    return "{first.what}; {found}; {last.what}"

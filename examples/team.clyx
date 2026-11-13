@@ -1,0 +1,118 @@
+# team.clyx: a team of agents around a shared task board.
+#
+# After "Safely scaling multi-agent teams" (1 lead, many helpers, no
+# messages between agents: only a shared board). Here the board is an
+# entity: its state lives outside the runs, one message changes it at a
+# time, and each message is applied once, so helpers running at the same
+# time (in one run or in many, on one machine or, with PostgreSQL, on many)
+# never take the same task.
+#
+# - The lead splits the goal into tasks and posts them (`Add`).
+# - Each helper, in turns: claims a task (`Claim`), asks which is its
+#   (`Mine`), and works on it. The model either solves it or splits it into
+#   smaller tasks, which go back to the board for anyone to take.
+# - A handler answers or changes the state, never both, so taking a task is
+#   two messages: `Claim` gives the first open task to the helper, and
+#   `Mine` says which. Both name the helper, so nobody reads another's.
+#
+#   calyx run examples/team.clyx --fake-models --project p1 --goal "Write the report" --helpers '["ana", "bia", "caio"]'
+
+model gemini = "gemini-3.5-flash-lite"
+
+type Task:
+    id: Text
+    what: Text
+    owner: Text
+    answer: Text
+
+type Outcome = Solved(answer: Text) | Split(parts: List[Text])
+
+def open(t: Task) -> Bool:
+    return t.owner == ""
+
+# `t` with `helper` as its owner, if it is the task being given out.
+def given(t: Task, first: List[Task], helper: Text) -> Task:
+    owner = t.owner
+    if t in first:
+        owner = helper
+    return Task(id = t.id, what = t.what, owner = owner, answer = t.answer)
+
+def answered(t: Task, id: Text, answer: Text) -> Task:
+    text = t.answer
+    if t.id == id:
+        text = answer
+    return Task(id = t.id, what = t.what, owner = t.owner, answer = text)
+
+# The first open task becomes `helper`'s, unless it is still on one.
+def claimed(tasks: List[Task], helper: Text) -> List[Task]:
+    busy = [t for t in tasks if t.owner == helper and t.answer == ""]
+    first = take([t for t in tasks if open(t)], 1)
+    if len(busy) > 0:
+        first = []
+    return [given(t, first, helper) for t in tasks]
+
+entity Board(key project: Text):
+    state tasks: List[Task] = []
+
+    on Add(new: List[Task]):
+        next tasks = tasks + new
+
+    on Claim(helper: Text):
+        next tasks = claimed(tasks, helper)
+
+    on Mine(helper: Text) -> List[Task]:
+        return [t for t in tasks if t.owner == helper and t.answer == ""]
+
+    on Finish(id: Text, answer: Text):
+        next tasks = [answered(t, id, answer) for t in tasks]
+
+    on Done() -> List[Task]:
+        return [t for t in tasks if t.answer != ""]
+
+prompt plan(goal: Text) -> List[Text] max 6:
+    """
+    Split this goal into up to 6 independent tasks, one line each: {goal}
+    """
+
+prompt work(what: Text) -> Outcome:
+    """
+    Do this task: {what}
+    If it is too large for one answer, split it into smaller tasks instead.
+    """
+
+prompt report(goal: Text, done: List[Task]) -> Text:
+    """
+    Goal: {goal}
+    What the team did: {done}
+    Write the final result.
+    """
+
+graph team(project: Text, goal: Text, helpers: List[Text]) -> Text:
+    limits threads 8, budget 2 USD
+
+    parts = gemini(plan(goal))
+    posted = send Board(project).Add([Task(id = "{project}/{p}", what = p, owner = "", answer = "") for p in parts])
+
+    # Every helper at once; each takes tasks in turns until none is left
+    # for it (or its turns end).
+    worked = for each h in helpers:
+        loop n = 0, max 6:
+            claim = send Board(project).Claim(h)
+            mine = ask Board(project).Mine(h)
+            if len(mine) == 0:
+                done n
+            else:
+                task = mine[0]
+                outcome = gemini(work(task.what))
+                match outcome:
+                    case Solved(answer):
+                        finished = send Board(project).Finish(task.id, answer)
+                        next n + 1
+                    case Split(smaller):
+                        added = send Board(project).Add([Task(id = "{task.id}/{p}", what = p, owner = "", answer = "") for p in smaller])
+                        finished = send Board(project).Finish(task.id, "split into {smaller}")
+                        next n + 1
+            on limit: last
+
+    done = ask Board(project).Done()
+    return gemini(report(goal, done))

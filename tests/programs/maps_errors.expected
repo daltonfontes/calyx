@@ -3,9 +3,9 @@ error[E0699]: a map's keys must be texts
 - observed : `Nat`: maps are JSON objects, in the journal too
 Location: maps_errors.clyx:7:16
 
-error[E0662]: only a map is read by `[key]`
-- expected : a map and a key of its type; for a list, `take(list, n)` or `for each`
-- observed : `List[Text]`[`Int`]
+error[E0662]: only a map or a list is read by `[...]`
+- expected : a map and a key of its type, or a list and a position
+- observed : `Text`[`Int`]
 Location: maps_errors.clyx:11:12
 
 error[E0662]: the key is not of the map's key type

@@ -131,7 +131,7 @@ const BUILTINS: &[(&str, &str)] = &[
     ),
     (
         calyx_syntax::INDEX,
-        "`map[key]`: the value of a key in a map",
+        "`map[key]`: the value of a key in a map; `list[n]`: the item at position `n`, from 0",
     ),
     ("take", "`take(list, n)`: the first `n` items"),
     ("sum", "`sum(list)` of numbers or money"),
@@ -1462,6 +1462,7 @@ impl<'p> Cx<'_, 'p> {
             (n, [Ty::Map(k, v), key]) if n == calyx_syntax::INDEX => {
                 (assignable(key, k) || assignable(k, key)).then(|| (**v).clone())
             }
+            (n, [Ty::List(t, _), i]) if n == calyx_syntax::INDEX && int(i) => Some((**t).clone()),
             (n, [Ty::Error, _]) if n == calyx_syntax::INDEX => Some(Ty::Error),
             (n, kv) if n == calyx_syntax::MAP && kv.len() % 2 == 0 => self.map_type(kv, args),
             ("take", [l @ (Ty::List(..) | Ty::Error), n]) if int(n) => Some(l.clone()),
@@ -1492,12 +1493,16 @@ impl<'p> Cx<'_, 'p> {
                 err("E0662", "the key is not of the map's key type", span)
                     .expected(format!("a `{k}`"))
                     .observed(format!("a `{key}`"))
+            } else if name == calyx_syntax::INDEX
+                && let [Ty::List(..), i] = tys.as_slice()
+            {
+                err("E0662", "a list's items are numbered", span)
+                    .expected("a whole number, from 0: `list[0]` is the first item")
+                    .observed(format!("a `{i}`"))
             } else if name == calyx_syntax::INDEX {
                 // `x[k]`, not a call anyone wrote.
-                err("E0662", "only a map is read by `[key]`", span)
-                    .expected(
-                        "a map and a key of its type; for a list, `take(list, n)` or `for each`",
-                    )
+                err("E0662", "only a map or a list is read by `[...]`", span)
+                    .expected("a map and a key of its type, or a list and a position")
                     .observed(format!(
                         "`{}`[`{}`]",
                         tys[0],

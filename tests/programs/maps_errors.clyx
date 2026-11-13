@@ -1,5 +1,5 @@
-# A map's keys are texts (or variants without fields); `[key]` reads only
-# maps; a map's values are of one type.
+# A map's keys are texts (or variants without fields); `[...]` reads only
+# maps and lists; a map's values are of one type.
 
 type Order:
     id: Text
@@ -7,8 +7,8 @@ type Order:
 graph a(m: Map[Nat, Text]) -> Text:
     return "x"
 
-graph b(xs: List[Text]) -> Text:
-    return xs[0]
+graph b(name: Text) -> Text:
+    return name[0]
 
 graph c(m: Map[Text, Nat]) -> Nat:
     return m[3]

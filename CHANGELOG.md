@@ -7,6 +7,16 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.15.0 (2026-11-13)
+
+- `list[n]`: the item at position `n` of a list, from 0. A position the
+  list does not have is a failure, which `try` catches (like a missing key
+  of a map). Before, the only ways to one item were `take` and `for each`.
+- New example, [`examples/team.clyx`](examples/team.clyx): a team of
+  agents around a shared task board. The board is an entity, so helpers
+  running at the same time never take the same task; a helper solves its
+  task or splits it into smaller ones, which go back to the board.
+
 ## 0.14.1 (2026-11-13)
 
 - Each release has the VS Code extension as a file, `calyx-vscode.vsix`,

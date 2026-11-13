@@ -2461,6 +2461,13 @@ static cx_value *builtin(ctx *c, cx_value *e) {
     }
     cx_value *x = n > 0 ? v[0] : NULL;
     if (!x) return failf(c, "`%s` needs an argument", name);
+    if (strcmp(name, "[]") == 0 && x->kind == CX_LIST && n == 2 && v[1]->kind == CX_NUM) {
+        /* From 0; a position the list does not have is a failure (`try`). */
+        double i = v[1]->u.num;
+        if (i >= 0 && i < (double)x->u.list.len && i == (double)(size_t)i)
+            return x->u.list.items[(size_t)i];
+        return failf(c, "the list has no item %.0f (it has %zu)", i, x->u.list.len);
+    }
     if (x->kind == CX_REC) {
         if (strcmp(name, "[]") == 0 && n == 2 && v[1]->kind == CX_STR) {
             cx_value *found = cx_get(x, v[1]->u.str.s);

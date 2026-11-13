@@ -188,3 +188,34 @@ fn a_missing_key_is_a_failure_that_try_catches() {
         "{err:?}"
     );
 }
+
+#[test]
+fn a_list_is_read_by_position_from_zero() {
+    let src = "graph g(xs: List[Text], n: Int) -> Text:\n    return xs[n]\n";
+    assert_eq!(
+        eval(src, json!({"xs": ["a", "b", "c"], "n": 0})),
+        json!("a")
+    );
+    assert_eq!(
+        eval(src, json!({"xs": ["a", "b", "c"], "n": 2})),
+        json!("c")
+    );
+    let report = calyx_check::check("t.clyx", src);
+    for (n, said) in [(3, "no item 3 (it has 3)"), (-1, "no item -1")] {
+        let opts = RunOptions {
+            config: Config::builtin(),
+            ..RunOptions::default()
+        };
+        let err = run(
+            &report.ir.to_json(),
+            "g",
+            &json!({"xs": ["a", "b", "c"], "n": n}),
+            opts,
+        )
+        .unwrap_err();
+        assert!(format!("{err:?}").contains(said), "{err:?}");
+    }
+    // `try` catches it, as it does a missing key.
+    let src = "graph g(xs: List[Nat]) -> Nat:\n    x = try:\n        xs[5]\n    return match x:\n        case Ok(v): v\n        case Failed(e): 0\n";
+    assert_eq!(eval(src, json!({"xs": [1]})), json!(0));
+}
