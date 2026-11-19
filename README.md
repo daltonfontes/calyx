@@ -2,7 +2,7 @@
 
 *Em português: [README.pt.md](README.pt.md).*
 
-> **Public beta (v0.20).** Calyx works end to end and is tested on Linux, macOS
+> **Public beta (v0.21).** Calyx works end to end and is tested on Linux, macOS
 > and Windows, but it is young: expect bugs and breaking changes before 1.0.
 > Read the [limitations](#limitations) before trusting it with real money or
 > untrusted code, and [report what breaks](https://github.com/daltonfontes/calyx/issues).
@@ -274,7 +274,9 @@ current folder. Create a program (from an example), import or download
 step, what it calls, its effect and what it waits for, with the errors as
 you type. **Run** a graph from there (with fake models, or real ones): each
 step lights up as it finishes, with its calls, tokens and time, and each
-call's answer from the journal. Past runs are listed there too: reopen
+call's answer from the journal. Add steps from the graph too (a model call, a tool call, a `for each`,
+a wait for a message), rename or delete one: each is an edit of the code,
+which Ctrl+Z undoes. Past runs are listed there too: reopen
 one, resume one that stopped, or give a run waiting on `receive` its
 message (an approval, say) with a form, and watch it finish. Edit there or
 in your editor; the page follows the files. It runs on your machine only, from the `calyx` binary:
@@ -404,7 +406,7 @@ for code agents to per-user memory, debates and model routers, in
 # Limitations
 
 ```
-- Calyx is a public beta (v0.20). Expect bugs and breaking changes before 1.0.
+- Calyx is a public beta (v0.21). Expect bugs and breaking changes before 1.0.
 - The spec, docs and examples are mostly in Portuguese; the paper is in English.
 - The guarantees rest on stated hypotheses: the service honours the idempotency
   key, and `verify` reads fresh state. Calyx cannot check a service that ignores

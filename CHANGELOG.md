@@ -7,6 +7,21 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.21.0 (2026-11-19)
+
+- Calyx Studio edits from the graph. A bar over the graph adds a step: a
+  model call (a model and a prompt the program declares), a tool call, a
+  `for each` over a list, or a wait for a message (`receive`, with its
+  timeout and what happens then, from the message's type). A form shows the
+  line it writes, with each argument taken from a step or parameter of the
+  right type. It goes after the selected step, or before `return`.
+- The selected step can be renamed (where the graph uses it changes too,
+  in `{...}` inside texts as well, never a field of the same name) or
+  deleted.
+- Every edit is an edit of the code, as if typed: Ctrl+Z undoes it, the
+  rest of the file is untouched, and the graph is drawn again from the
+  code. The graph frames itself again when steps come or go.
+
 ## 0.20.0 (2026-11-19)
 
 - Calyx Studio keeps the runs. The **Runs** tab lists the open program's

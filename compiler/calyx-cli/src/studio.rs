@@ -984,7 +984,7 @@ pub(crate) fn analyze(name: &str, text: &str) -> Value {
             first.to_owned()
         }
     };
-    let mut written: Vec<(String, u32, Vec<Value>)> = Vec::new();
+    let mut written: Vec<(String, u32, Vec<Value>, u32)> = Vec::new();
     for d in &ast.decls {
         if let Decl::Graph(g) = d {
             let steps = g
@@ -1020,12 +1020,15 @@ pub(crate) fn analyze(name: &str, text: &str) -> Value {
                     Some(json!({
                         "name": name,
                         "line": line(at),
+                        // The last line of the step, for edits from the page.
+                        "end_line": line(value.span.end.saturating_sub(1).max(at)),
                         "code": first,
                         "inner": inner,
                     }))
                 })
                 .collect();
-            written.push((g.name.name.clone(), line(g.name.span.start), steps));
+            let end = line(g.span.end.saturating_sub(1).max(g.name.span.start));
+            written.push((g.name.name.clone(), line(g.name.span.start), steps, end));
         }
     }
     let graphs: Vec<Value> = if ok {
@@ -1034,10 +1037,10 @@ pub(crate) fn analyze(name: &str, text: &str) -> Value {
             .graphs
             .iter()
             .map(|g| {
-                let place = written.iter().find(|(n, _, _)| *n == g.name);
+                let place = written.iter().find(|(n, _, _, _)| *n == g.name);
                 let step = |n: &str| {
                     place
-                        .and_then(|(_, _, s)| s.iter().find(|v| v["name"] == n))
+                        .and_then(|(_, _, s, _)| s.iter().find(|v| v["name"] == n))
                         .cloned()
                         .unwrap_or(Value::Null)
                 };
@@ -1054,6 +1057,9 @@ pub(crate) fn analyze(name: &str, text: &str) -> Value {
                     "ret": g.ret,
                     "effect": g.effect.map(|e| e.as_str()),
                     "line": place.map(|p| p.1),
+                    "end_line": place.map(|p| p.3),
+                    // Every step as written (bare `send`s and `return` too).
+                    "steps": place.map(|p| p.2.clone()).unwrap_or_default(),
                     "output": g.output.map(|o| o.0),
                     "nodes": g.nodes.iter().map(|n| {
                         let s = step(&n.name);
@@ -1067,6 +1073,7 @@ pub(crate) fn analyze(name: &str, text: &str) -> Value {
                             "fan_out": n.fan_out,
                             "over": n.over.as_ref().and_then(over),
                             "line": s["line"],
+                            "end_line": s["end_line"],
                             "code": s["code"],
                             "inner": s.get("inner").cloned().unwrap_or(json!([])),
                         })
@@ -1089,10 +1096,34 @@ pub(crate) fn analyze(name: &str, text: &str) -> Value {
     } else {
         Vec::new()
     };
+    // The types of a tool's or prompt's parameters, as written.
+    let types = |name: &str| -> Vec<String> {
+        ast.decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Tool(t) if t.name.name == name => Some(&t.params),
+                Decl::Prompt(p) if p.name.name == name => Some(&p.params),
+                _ => None,
+            })
+            .map(|ps| ps.iter().map(|p| src.slice(p.ty.span).to_owned()).collect())
+            .unwrap_or_default()
+    };
+    // What the program declares, for the page's forms.
+    let decls = if ok {
+        let ir = &report.ir;
+        json!({
+            "models": ir.models.iter().map(|m| m.name.clone()).collect::<Vec<_>>(),
+            "tools": ir.tools.iter().map(|t| json!({"name": t.name, "params": t.params, "types": types(&t.name), "effect": t.effect.as_str()})).collect::<Vec<_>>(),
+            "prompts": ir.prompts.iter().map(|p| json!({"name": p.name, "params": p.params, "types": types(&p.name)})).collect::<Vec<_>>(),
+        })
+    } else {
+        Value::Null
+    };
     json!({
         "file": name,
         "hash": hash(text),
         "messages": messages,
+        "decls": decls,
         "text": text,
         "ok": ok,
         "diagnostics": diagnostics,
