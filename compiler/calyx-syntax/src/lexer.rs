@@ -395,6 +395,14 @@ impl Lexer<'_> {
                     self.bump();
                     self.escape();
                 }
+                // `{...}` is read whole: a `"` inside it is a text of its
+                // own, not the end of this one.
+                Some('{') => match crate::interpolation_end(self.text, self.pos) {
+                    Some(close) => self.pos = close + 1,
+                    None => {
+                        self.bump();
+                    }
+                },
                 Some('\n') | None => {
                     self.diags.push(
                         Diagnostic::error(

@@ -14,6 +14,6 @@ error[E0602]: unknown name
 Location: interp_exprs_errors.clyx:12:15
 
 error[E0402]: invalid interpolation
-- expected : a name, a field, or an expression such as `{len(items)}` (no quotes or braces inside)
+- expected : a name, a field, or a whole expression, such as `{len(items)}` or `{counts["done"]}`
 - observed : `{1 +}`
 Location: interp_exprs_errors.clyx:13:10

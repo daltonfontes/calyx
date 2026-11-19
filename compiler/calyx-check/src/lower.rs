@@ -1469,32 +1469,42 @@ pub(crate) fn dedent(text: &str) -> String {
 pub(crate) fn split_template(raw: &str) -> Vec<PromptPart> {
     let mut parts = Vec::new();
     let mut lit = String::new();
-    let mut chars = raw.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut i = 0;
+    while i < raw.len() {
+        let c = raw[i..].chars().next().unwrap_or('\0');
         match c {
-            '\\' => match chars.next() {
-                Some('n') => lit.push('\n'),
-                Some('t') => lit.push('\t'),
-                Some('r') => lit.push('\r'),
-                Some(other) => lit.push(other),
-                None => {}
-            },
-            '{' => {
-                let mut inner = String::new();
-                for c in chars.by_ref() {
-                    if c == '}' {
-                        break;
-                    }
-                    inner.push(c);
+            '\\' => {
+                let next = raw[i + 1..].chars().next();
+                match next {
+                    Some('n') => lit.push('\n'),
+                    Some('t') => lit.push('\t'),
+                    Some('r') => lit.push('\r'),
+                    Some(other) => lit.push(other),
+                    None => {}
                 }
+                i += 1 + next.map_or(0, char::len_utf8);
+            }
+            '{' => {
+                // To its `}`, quotes and nested braces inside it included;
+                // a `{` that does not close on its line is just a brace.
+                let Some(close) = calyx_syntax::interpolation_end(raw, i) else {
+                    lit.push('{');
+                    i += 1;
+                    continue;
+                };
+                let inner = &raw[i + 1..close];
                 if !lit.is_empty() {
                     parts.push(PromptPart::Lit(std::mem::take(&mut lit)));
                 }
                 parts.push(PromptPart::Path(
                     inner.split('.').map(|s| s.trim().to_owned()).collect(),
                 ));
+                i = close + 1;
             }
-            c => lit.push(c),
+            c => {
+                lit.push(c);
+                i += c.len_utf8();
+            }
         }
     }
     if !lit.is_empty() {

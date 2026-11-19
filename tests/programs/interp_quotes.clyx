@@ -1,0 +1,9 @@
+# Inside a text's `{...}`, texts and braces of their own: a map's key, a
+# separator, a map literal, an `if` between texts. `\{` is still a brace,
+# and a `{` that does not close on its line is just a brace.
+
+def label(counts: Map[Text, Nat], names: List[Text]) -> Text:
+    return "{counts["done"]} done; {join(names, ", ")}; {get({"a": 1}, "a", 0)}; {"many" if len(names) > 1 else "one"}; \{as is\}; a { b"
+
+graph main(names: List[Text]) -> Text:
+    return label({"done": 2}, names)

@@ -7,6 +7,16 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.24.0 (2026-11-19)
+
+- A text's `{...}` may hold texts and braces of its own:
+  `"{counts["done"]} done"`, `"{join(names, ", ")}"`, a map literal,
+  `"{"many" if n > 1 else "one"}"`. A `"` inside `{...}` opens and closes
+  a text of its own, not the outer one. `\{` is still a brace, and a `{`
+  that does not close on its line is just a brace, as before.
+- The studio's editor and the VS Code extension color and rename these
+  the same way the compiler reads them.
+
 ## 0.23.1 (2026-11-19)
 
 - The examples use what 0.22 and 0.23 added: `examples/team.clyx` picks

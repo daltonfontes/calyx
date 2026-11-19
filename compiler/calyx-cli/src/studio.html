@@ -442,8 +442,7 @@ function highlightLine(line, inStr) {
       out += `<span class="t-str">${interp(line.slice(i, end + 3))}</span>`; i = end + 3; continue;
     }
     if (c === '"') {
-      let j = i + 1;
-      while (j < line.length && line[j] !== '"') j += line[j] === "\\" ? 2 : 1;
+      const j = stringEnd(line, i);
       out += `<span class="t-str">${interp(line.slice(i, j + 1))}</span>`; i = j + 1; continue;
     }
     let m = /^[0-9][0-9_]*(\.[0-9]+)?/.exec(rest);
@@ -458,7 +457,39 @@ function highlightLine(line, inStr) {
   }
   return [out, false];
 }
-function interp(s) { return esc(s).replace(/\{[^{}"]*\}/g, (m) => `<span class="t-in">${m}</span>`); }
+// Where the `{...}` opened at `open` ends (its `}`), as the compiler reads
+// it: a "..." inside is a text of its own, and braces nest. -1: it does not.
+function interpEnd(s, open) {
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    const c = s[i];
+    if (c === "{") depth++;
+    else if (c === "}") { if (--depth === 0) return i; }
+    else if (c === '"') { i++; while (i < s.length && s[i] !== '"') i += s[i] === "\\" ? 2 : 1; if (i >= s.length) return -1; }
+  }
+  return -1;
+}
+// The closing quote of the text opened at `i` (its `{...}` read whole).
+function stringEnd(line, i) {
+  let j = i + 1;
+  while (j < line.length && line[j] !== '"') {
+    if (line[j] === "\\") j += 2;
+    else if (line[j] === "{" && interpEnd(line, j) > 0) j = interpEnd(line, j) + 1;
+    else j++;
+  }
+  return j;
+}
+// A text with its `{...}` marked.
+function interp(s) {
+  let out = "", i = 0;
+  while (i < s.length) {
+    if (s[i] === "\\") { out += esc(s.slice(i, i + 2)); i += 2; continue; }
+    const e = s[i] === "{" ? interpEnd(s, i) : -1;
+    if (e > 0) { out += `<span class="t-in">${esc(s.slice(i, e + 1))}</span>`; i = e + 1; continue; }
+    out += esc(s[i]); i++;
+  }
+  return out;
+}
 
 /* ---------- editor ---------- */
 const code = $("code"), hl = $("hl"), gutter = $("gutter");
@@ -1298,10 +1329,16 @@ function renameInLine(line, from, to) {
     const c = line[i];
     if (c === "#") { out += line.slice(i); break; }
     if (c === '"') {
-      let j = i + 1;
-      while (j < line.length && line[j] !== '"') j += line[j] === "\\" ? 2 : 1;
-      out += line.slice(i, j + 1).replace(/\{[^{}"]*\}/g, (m) => m.replace(word, to));
-      i = j + 1; continue;
+      const j = stringEnd(line, i);
+      // In a text, only inside its `{...}` (and not in the texts there).
+      const text = line.slice(i, j + 1);
+      let t = "", k = 0;
+      while (k < text.length) {
+        const e = text[k] === "{" ? interpEnd(text, k) : -1;
+        if (e > 0) { t += renameInLine(text.slice(k + 1, e), from, to).replace(/^/, "{") + "}"; k = e + 1; continue; }
+        t += text[k]; k++;
+      }
+      out += t; i = j + 1; continue;
     }
     let j = i;
     while (j < line.length && line[j] !== '"' && line[j] !== "#") j++;
