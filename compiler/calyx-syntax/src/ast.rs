@@ -297,6 +297,10 @@ pub struct StrLit {
     pub text: String,
     pub content_offset: u32,
     pub span: Span,
+    /// Each `{...}` of the text, in order, parsed as an expression (`None`
+    /// where it is not one; a prompt's template reports it, a text in a
+    /// graph does too).
+    pub parts: Vec<Option<Expr>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

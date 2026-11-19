@@ -1,0 +1,19 @@
+error[E0402]: invalid interpolation
+- expected : `{name}` or `{name.field}`: in a prompt, compute the value in the graph and pass it
+- observed : `{len(x)}`
+Location: interp_exprs_errors.clyx:7:8
+
+error[E0403]: a `{...}` in a text computes; it does not call
+- expected : the call as a step with a name (`x = ...`), then `{x}` in the text
+- observed : a call with effects
+Location: interp_exprs_errors.clyx:11:11
+
+error[E0602]: unknown name
+- expected : a parameter, node or value in scope
+- observed : `ys`
+Location: interp_exprs_errors.clyx:12:15
+
+error[E0402]: invalid interpolation
+- expected : a name, a field, or an expression such as `{len(items)}` (no quotes or braces inside)
+- observed : `{1 +}`
+Location: interp_exprs_errors.clyx:13:10

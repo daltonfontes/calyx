@@ -81,6 +81,32 @@ pub fn lex(text: &str) -> (Vec<Token>, Vec<Diagnostic>) {
     (lx.tokens, lx.diags)
 }
 
+/// Lexes `text[start..end]` as one expression (the inside of a text's
+/// `{...}`): spans are in `text`, and there are no line breaks or blocks.
+pub fn lex_at(text: &str, start: usize, end: usize) -> (Vec<Token>, Vec<Diagnostic>) {
+    let mut lx = Lexer {
+        text: &text[..end],
+        pos: start,
+        tokens: Vec::new(),
+        diags: Vec::new(),
+        indents: vec![0],
+        depth: 1,
+        at_line_start: false,
+    };
+    lx.run();
+    let tokens = lx
+        .tokens
+        .into_iter()
+        .filter(|t| {
+            !matches!(
+                t.kind,
+                TokenKind::Newline | TokenKind::Indent | TokenKind::Dedent
+            )
+        })
+        .collect();
+    (tokens, lx.diags)
+}
+
 struct Lexer<'a> {
     text: &'a str,
     pos: usize,

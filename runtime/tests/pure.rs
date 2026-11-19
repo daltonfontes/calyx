@@ -219,3 +219,26 @@ fn a_list_is_read_by_position_from_zero() {
     let src = "graph g(xs: List[Nat]) -> Nat:\n    x = try:\n        xs[5]\n    return match x:\n        case Ok(v): v\n        case Failed(e): 0\n";
     assert_eq!(eval(src, json!({"xs": [1]})), json!(0));
 }
+
+#[test]
+fn a_text_interpolates_any_pure_expression() {
+    let src = r#"
+type Order:
+    id: Text
+    total: Float
+
+def label(xs: List[Text]) -> Text:
+    return "{len(xs)} items, first {xs[0]}"
+
+graph g(xs: List[Text], orders: List[Order], n: Nat) -> Text:
+    total = sum([o.total for o in orders])
+    return "{label(xs)}; {n + 1}; {total * 2}; {orders[0].id}; {xs[n % len(xs)]}; {[n, n]}"
+"#;
+    assert_eq!(
+        eval(
+            src,
+            json!({"xs": ["a", "b", "c"], "orders": [{"id": "A1", "total": 10.5}, {"id": "A2", "total": 2}], "n": 4})
+        ),
+        json!("3 items, first a; 5; 25; A1; b; - 4\n- 4")
+    );
+}

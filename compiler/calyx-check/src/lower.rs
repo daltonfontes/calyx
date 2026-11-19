@@ -1110,12 +1110,19 @@ impl Lower<'_> {
                 .collect();
             return ir::Expr::Text(text);
         }
+        // The k-th `{...}`: an expression when it is not a plain name.
+        let mut k = 0;
         ir::Expr::Interp(
             parts
                 .into_iter()
                 .map(|p| match p {
                     PromptPart::Lit(s) => Part::Lit(s),
                     PromptPart::Path(path) => {
+                        let e = lit.parts.get(k).and_then(Option::as_ref);
+                        k += 1;
+                        if let Some(e) = e.filter(|e| !is_path(e)) {
+                            return Part::Expr(self.expr(e, scope));
+                        }
                         let mut it = path.into_iter();
                         let root = it.next().unwrap_or_default();
                         let mut e = self.name(&root, scope);
@@ -1494,6 +1501,15 @@ pub(crate) fn split_template(raw: &str) -> Vec<PromptPart> {
         parts.push(PromptPart::Lit(lit));
     }
     parts
+}
+
+/// A name, or fields of one: what `{...}` always took.
+fn is_path(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Ident(_) => true,
+        ExprKind::Field { base, .. } => is_path(base),
+        _ => false,
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,20 @@
+# A text's `{...}` takes any pure expression: functions, indexes, sums,
+# fields of an item, a `def`. Plain `{name}` and `{name.field}` lower as
+# before.
+
+model gemini = "gemini-3.5-flash-lite"
+
+prompt p(x: Text) -> Text:
+    """{x}"""
+
+type Order:
+    id: Text
+    total: Float
+
+def label(xs: List[Text]) -> Text:
+    return "{len(xs)} items, first {xs[0]}"
+
+graph main(xs: List[Text], orders: List[Order], n: Nat) -> Text:
+    a = gemini(p("{len(xs)} items"))
+    total = sum([o.total for o in orders])
+    return "{a}: {label(xs)}; {n + 1}; {total * 2}; {orders[0].id}; {xs[n % len(xs)]}"

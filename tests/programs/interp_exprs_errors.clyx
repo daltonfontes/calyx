@@ -1,0 +1,14 @@
+# A `{...}` computes, it does not call; it is a whole expression; in a
+# prompt's template it is a name or a field.
+
+model gemini = "gemini-3.5-flash-lite"
+
+prompt p(x: Text) -> Text:
+    """{len(x)} and {x}"""
+
+graph main(xs: List[Text]) -> Text:
+    a = gemini(p("x"))
+    b = "{gemini(p(a))}"
+    c = "{len(ys)}"
+    d = "{1 +}"
+    return "{a}{b}{c}{d}"
