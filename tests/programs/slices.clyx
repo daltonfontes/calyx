@@ -1,0 +1,10 @@
+# Slices, as in Python: from the start up to, not including, the end; a
+# negative position counts from the end. A text is cut by characters.
+
+def initials(name: Text) -> Text:
+    return upper(name[:1])
+
+graph g(xs: List[Int], name: Text) -> Text:
+    rest = xs[1:]
+    last_two = xs[-2:]
+    return "{initials(name)}{name[1:]}: {len(rest)}, {sum(last_two)}"

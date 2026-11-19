@@ -2488,6 +2488,38 @@ static cx_value *builtin(ctx *c, cx_value *e) {
             return x->u.list.items[(size_t)i];
         return failf(c, "the list has no item %.0f (it has %zu)", i, x->u.list.len);
     }
+    if (strcmp(name, "[:]") == 0 && (n == 2 || n == 3) && (x->kind == CX_LIST || x->kind == CX_STR)) {
+        /* As in Python: from `start` up to, not including, `end`; a negative
+         * position counts from the end, and one past either end stops there.
+         * A text is cut by characters, not bytes. */
+        size_t len = 0;
+        if (x->kind == CX_LIST) len = x->u.list.len;
+        else
+            for (size_t i = 0; i < x->u.str.len; i++)
+                if (((unsigned char)x->u.str.s[i] & 0xC0) != 0x80) len++;
+        double pos[2] = {0, (double)len};
+        for (size_t k = 1; k < n; k++) {
+            if (v[k]->kind != CX_NUM || v[k]->u.num != floor(v[k]->u.num))
+                return failf(c, "a position is a whole number");
+            double p = v[k]->u.num;
+            if (p < 0) p += (double)len;
+            pos[k - 1] = p < 0 ? 0 : p > (double)len ? (double)len : p;
+        }
+        size_t from = (size_t)pos[0], to = pos[1] > pos[0] ? (size_t)pos[1] : from;
+        if (x->kind == CX_LIST) return cx_list(a, x->u.list.items + from, to - from);
+        size_t chars = 0, b0 = x->u.str.len, b1 = x->u.str.len;
+        for (size_t i = 0; i < x->u.str.len; i++) {
+            if (((unsigned char)x->u.str.s[i] & 0xC0) == 0x80) continue;
+            if (chars == from && b0 == x->u.str.len) b0 = i;
+            if (chars == to) {
+                b1 = i;
+                break;
+            }
+            chars++;
+        }
+        if (b0 > b1) b0 = b1;
+        return cx_str(a, x->u.str.s + b0, b1 - b0);
+    }
     if (x->kind == CX_REC) {
         if (strcmp(name, "[]") == 0 && n == 2 && v[1]->kind == CX_STR) {
             cx_value *found = cx_get(x, v[1]->u.str.s);

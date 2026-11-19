@@ -291,3 +291,30 @@ graph g(csv: Text, scores: List[Nat], names: List[Text]) -> Out:
     let src = "graph g(xs: List[Nat]) -> Nat:\n    x = try:\n        min(xs)\n    return match x:\n        case Ok(v): v\n        case Failed(e): 0\n";
     assert_eq!(eval(src, json!({"xs": []})), json!(0));
 }
+
+#[test]
+fn slices_cut_lists_and_texts_as_python_does() {
+    let src = r#"
+type Out:
+    tail: List[Int]
+    head: List[Int]
+    last: List[Int]
+    middle: List[Int]
+    past: List[Int]
+    backwards: List[Int]
+    first: Text
+    end: Text
+    inner: Text
+    all: Text
+
+graph g(xs: List[Int], t: Text) -> Out:
+    return Out(tail = xs[1:], head = xs[:2], last = xs[-2:], middle = xs[1:-1], past = xs[9:], backwards = xs[3:1], first = t[:3], end = t[-3:], inner = t[2:4], all = t[:])
+"#;
+    assert_eq!(
+        eval(src, json!({"xs": [1, 2, 3, 4], "t": "ação ok"})),
+        json!({
+            "tail": [2, 3, 4], "head": [1, 2], "last": [3, 4], "middle": [2, 3], "past": [],
+            "backwards": [], "first": "açã", "end": " ok", "inner": "ão", "all": "ação ok",
+        })
+    );
+}

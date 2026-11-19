@@ -11,7 +11,7 @@ mod source;
 
 pub use diagnostic::{Diagnostic, Severity};
 pub use lexer::{Token, TokenKind, lex};
-pub use parser::{INDEX, MAP, parse};
+pub use parser::{INDEX, MAP, SLICE, parse};
 pub use source::{LineCol, Source, Span};
 
 /// Where the `{...}` opened at `open` in a text ends: the index of its `}`.

@@ -1,0 +1,5 @@
+graph g(xs: List[Int], name: Text) -> Text [pure]
+  %0 rest: List[Int] = pure [pure]
+  %1 last_two: List[Int] = pure [pure]
+  %2 return: Text = pure [pure] <- %0 %1
+  return %2

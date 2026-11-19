@@ -7,6 +7,16 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.28.0 (2026-11-19)
+
+- Slices, as in Python: `x[a:b]` is the items of a list, or the characters
+  of a text, from position `a` up to, not including, `b`. Either end can be
+  left out (`xs[1:]`, `xs[:3]`, `name[:1]`), and a negative position counts
+  from the end (`xs[-2:]`, the last two). A slice never fails: a position
+  past either end stops there. Texts are cut by characters, not bytes.
+  Anything but a list or a text, or a position that is not a whole number,
+  is `E0662`.
+
 ## 0.27.0 (2026-11-19)
 
 - New built-ins. For texts: `split(text, separator)`, `replace(text, old,
