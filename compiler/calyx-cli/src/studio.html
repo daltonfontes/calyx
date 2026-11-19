@@ -145,6 +145,23 @@ main { display: grid; grid-template-columns: var(--left, 55%) 6px 1fr; min-heigh
 .term.end .chip { border-color: var(--accent); }
 .tools { position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column; gap: 4px; }
 .tools button { width: 30px; height: 30px; padding: 0; background: var(--panel); }
+.palette { position: absolute; left: 12px; top: 12px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; z-index: 2; max-width: calc(100% - 70px); }
+.palette .lbl { font-size: 11px; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
+.palette button { background: var(--panel); font-size: 12px; padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; }
+.palette button i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.palette button:disabled { opacity: .4; }
+.inspector { position: absolute; right: 12px; bottom: 12px; width: 280px; background: var(--panel); border: 1px solid var(--line2); border-radius: 10px; padding: 10px 12px; z-index: 2; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+.inspector h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
+.inspector .row2 { display: flex; gap: 6px; }
+.inspector input { flex: 1; min-width: 0; font: 13px var(--mono); padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line2); background: var(--bg); color: var(--text); outline: none; }
+.inspector input:focus { border-color: var(--accent); }
+.inspector .acts { display: flex; gap: 6px; margin-top: 8px; }
+.inspector .acts button { flex: 1; font-size: 12px; }
+.inspector .danger { color: var(--err); }
+.inspector .note { font-size: 11.5px; color: var(--faint); margin-top: 6px; }
+dialog select { width: 100%; font: 13px var(--mono); padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line2); background: var(--bg); color: var(--text); }
+dialog .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+dialog pre.preview { margin: 10px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); font: 12px/1.5 var(--mono); white-space: pre-wrap; max-height: 160px; overflow: auto; }
 .legend { position: absolute; left: 12px; bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--muted);
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; }
 .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
@@ -234,7 +251,7 @@ dialog .params { display: grid; gap: 2px; max-height: 50vh; overflow: auto; }
 dialog textarea { width: 100%; min-height: 64px; font: 12.5px var(--mono); padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line2); background: var(--bg); color: var(--text); resize: vertical; outline: none; }
 dialog textarea:focus, dialog input[type=number]:focus { border-color: var(--accent); }
 dialog input[type=number] { width: 100%; font: 13px var(--mono); padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line2); background: var(--bg); color: var(--text); outline: none; }
-dialog .ty { color: var(--faint); font-family: var(--mono); }
+dialog .ty { color: var(--faint); font-family: var(--mono); font-size: 12px; }
 dialog .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--text); font-size: 13px; }
 dialog .check small { color: var(--muted); }
 @media (max-width: 760px) { .rbody { grid-template-columns: 1fr; } .rbody > div + div { border-left: 0; border-top: 1px solid var(--line); } }
@@ -298,6 +315,19 @@ dialog .check small { color: var(--muted); }
     <div class="world" id="world"><svg id="edges"></svg></div>
     <div class="banner" id="banner">The code has errors: the graph is the last version that checked.</div>
     <div class="empty" id="empty"></div>
+    <div class="palette" id="palette" aria-label="Add a step">
+      <span class="lbl">Add</span>
+      <button data-add="model" title="A call to a model with a prompt"><i class="b-llm"></i>Model call</button>
+      <button data-add="tool" title="A call to a tool"><i class="b-read"></i>Tool call</button>
+      <button data-add="each" title="The same steps for every item of a list, all at once"><i class="b-pure"></i>For each</button>
+      <button data-add="receive" title="Wait, durably, for a message: an approval, say"><i class="b-write"></i>Wait for message</button>
+    </div>
+    <div class="inspector" id="inspector" hidden>
+      <h4>Step</h4>
+      <div class="row2"><input id="insName" aria-label="Step name" spellcheck="false"><button id="insRename">Rename</button></div>
+      <div class="acts"><button id="insAdd">Add after…</button><button id="insDelete" class="danger">Delete</button></div>
+      <div class="note" id="insNote"></div>
+    </div>
     <div class="tools">
       <button id="zin" title="Zoom in" aria-label="Zoom in">+</button>
       <button id="zout" title="Zoom out" aria-label="Zoom out">−</button>
@@ -335,6 +365,17 @@ dialog .check small { color: var(--muted); }
 <input type="file" id="importInput" accept=".clyx" multiple hidden>
 <div class="drop" id="drop">Drop .clyx files to add them to the workspace</div>
 <div class="toast" id="toast" role="status"></div>
+
+<dialog id="addDlg">
+  <form method="dialog" id="addForm">
+    <h3 id="addTitle">Add a step</h3>
+    <div id="addFields"></div>
+    <pre class="preview" id="addPreview"></pre>
+    <div class="hint" id="addWhere"></div>
+    <div class="err" id="addErr"></div>
+    <div class="row"><button type="button" id="addCancel">Cancel</button><button class="primary" type="submit">Add to the code</button></div>
+  </form>
+</dialog>
 
 <dialog id="runDlg">
   <form method="dialog" id="runForm">
@@ -845,8 +886,11 @@ function drawGraph() {
     svg += `<path class="edge" data-from="${p}" data-to="${id}" marker-end="url(#ar)" d="M${x1},${y1} C${x1},${y1 + dy} ${x2},${y2 - dy} ${x2},${y2}"/>`;
   }
   $("edges").innerHTML = svg;
+  // Steps added or removed: frame the graph again.
+  const shape = g.name + ":" + g.nodes.map((n) => n.name).join(",");
+  if (state.shape !== shape) { state.shape = shape; state.fitted = false; }
   if (!state.fitted) { fit(); state.fitted = true; } else applyView();
-  drawSelection(); paintRunNodes();
+  drawSelection(); paintRunNodes(); paintInspector();
 }
 function term(id, box, html, end) {
   const el = document.createElement("div");
@@ -879,6 +923,7 @@ function nodeEl(n, box) {
   return el;
 }
 function drawSelection() {
+  paintInspector();
   for (const el of document.querySelectorAll(".node")) el.classList.toggle("sel", state.sel != null && +el.dataset.id === state.sel);
   const line = caretLine();
   for (const el of document.querySelectorAll(".node .step[data-i]")) {
@@ -1062,6 +1107,209 @@ function paintRunPanel() {
   };
 }
 
+/* ---------- editing from the graph ---------- */
+// Every edit is a text edit of the code, made like typing (so Ctrl+Z undoes
+// it), and the graph is drawn again from the code.
+const lines = () => state.text.split("\n");
+const offsetOf = (line) => { const ls = lines(); let o = 0; for (let i = 0; i < line && i < ls.length; i++) o += ls[i].length + 1; return o; };
+function replaceRange(from, to, text, caretAt) {
+  code.focus({ preventScroll: true });
+  code.selectionStart = from; code.selectionEnd = to;
+  insert(text);
+  if (caretAt != null) { code.selectionStart = code.selectionEnd = caretAt; }
+  state.text = code.value;
+  clearTimeout(checkTimer); check().then(() => onCaret());
+}
+// A step's lines as written: from its name to its last line, without the
+// blank lines and comments before the next step.
+function stepRange(g, name) {
+  const steps = (g.steps || []).slice().sort((a, b) => a.line - b.line);
+  const i = steps.findIndex((s) => s.name === name);
+  if (i < 0) return null;
+  const s = steps[i], next = steps[i + 1];
+  let end = Math.min(s.end_line, next ? next.line - 1 : g.end_line);
+  const ls = lines();
+  while (end > s.line && /^\s*(#.*)?$/.test(ls[end] || "")) end--;
+  return { start: s.line, end };
+}
+function indentOf(g) {
+  const s = (g.steps || [])[0], ls = lines();
+  return s ? /^\s*/.exec(ls[s.line])[0] : "    ";
+}
+// Where a new step goes: after the selected one, or before `return`.
+function insertLine(g) {
+  const sel = state.sel != null ? g.nodes.find((n) => n.id === state.sel) : null;
+  if (sel) { const r = stepRange(g, sel.name); if (r) return { line: r.end + 1, after: sel.name }; }
+  const ret = (g.steps || []).find((s) => s.name === "return");
+  if (ret) return { line: ret.line, after: null };
+  return { line: g.end_line + 1, after: null };
+}
+function namesIn(g) {
+  return new Set([...g.params.map((p) => p[0]), ...(g.steps || []).map((s) => s.name), ...(state.last.decls ? [...state.last.decls.models, ...state.last.decls.tools.map((t) => t.name), ...state.last.decls.prompts.map((p) => p.name)] : [])]);
+}
+function freshName(g, base) {
+  const used = namesIn(g); let n = base, i = 2;
+  while (used.has(n)) n = `${base}${i++}`;
+  return n;
+}
+// Names a new step can use: the graph's parameters and the steps before it.
+function visibleAt(g, line) {
+  return [...g.params.map((p) => p[0]), ...(g.steps || []).filter((s) => s.line < line && s.name !== "return").map((s) => s.name)];
+}
+// The type of a visible name, as written (`List[Text] max 6` is a `List[Text]`).
+function typeOf(g, name) {
+  const p = g.params.find((x) => x[0] === name); if (p) return p[1];
+  const n = g.nodes.find((x) => x.name === name);
+  return n ? n.type.replace(/\s+max\s+\d+$/, "") : null;
+}
+// What to pass for a parameter: a visible name of its type (the same name
+// first), else the parameter's own name, for you to replace.
+function guessArg(g, vis, param, type) {
+  const same = vis.filter((v) => type && typeOf(g, v) === type);
+  if (same.includes(param)) return param;
+  if (same.length) return same[same.length - 1];
+  if (type === "Text") return vis.includes(param) ? param : `"${param}"`;
+  return param;
+}
+let addKind = null;
+for (const b of document.querySelectorAll("[data-add]")) b.onclick = (e) => { e.stopPropagation(); openAdd(b.dataset.add); };
+function paletteState() {
+  const ok = !!(state.last && state.last.ok && cur());
+  for (const b of document.querySelectorAll("[data-add]")) {
+    const k = b.dataset.add, d = state.last && state.last.decls;
+    b.disabled = !ok || (k === "model" && !(d && d.models.length && d.prompts.length)) || (k === "tool" && !(d && d.tools.length)) || (k === "receive" && !(state.last.messages || []).length);
+    b.title = b.disabled && ok ? { model: "Declare a model and a prompt first", tool: "Declare a tool first", receive: "Declare a message type first" }[k] || "" : b.title;
+  }
+}
+function openAdd(kind) {
+  const g = cur(); if (!g || !state.last.ok) return;
+  addKind = kind;
+  const d = state.last.decls, at = insertLine(g), vis = visibleAt(g, at.line);
+  const opt = (xs, v) => xs.map((x) => `<option${x === v ? " selected" : ""}>${esc(x)}</option>`).join("");
+  const guess = (param, type) => guessArg(g, vis, param, type);
+  let html = `<label>Name</label><input type="text" id="aName" value="${esc(freshName(g, { model: "answer", tool: "result", each: "items", receive: "reply" }[kind]))}" spellcheck="false">`;
+  if (kind === "model") {
+    html += `<label>Model</label><select id="aModel">${opt(d.models)}</select><label>Prompt</label><select id="aPrompt">${opt(d.prompts.map((p) => p.name))}</select><div id="aArgs"></div>`;
+  } else if (kind === "tool") {
+    html += `<label>Tool</label><select id="aTool">${opt(d.tools.map((t) => t.name))}</select><div id="aArgs"></div>`;
+  } else if (kind === "each") {
+    const lists = vis.filter((v) => /^List\[/.test(typeOf(g, v) || ""));
+    if (!lists.length) { toast("Nothing here is a list yet: a parameter or a step of type List[...] comes first.", true); return; }
+    html += `<label>For each</label><input type="text" id="aVar" value="item" spellcheck="false"><label>In the list</label><select id="aList">${opt(lists, lists[lists.length - 1])}</select>`;
+  } else if (kind === "receive") {
+    html += `<label>Message</label><select id="aMsg">${opt(state.last.messages.map((m) => m.name))}</select><label>About (what the person decides on)</label><select id="aAbout"><option value="">(nothing)</option>${opt(vis, vis[vis.length - 1])}</select><label>Timeout</label><input type="text" id="aTimeout" value="3 days" spellcheck="false"><label>On timeout</label><select id="aOnTimeout"></select>`;
+  }
+  $("addFields").innerHTML = html;
+  $("addTitle").textContent = { model: "Add a model call", tool: "Add a tool call", each: "Add a for each", receive: "Wait for a message" }[kind];
+  $("addWhere").textContent = at.after ? `Goes after ${at.after}.` : "Goes before return. Select a step to add after it.";
+  $("addErr").textContent = "";
+  const args = (decl) => {
+    const ps = decl ? decl.params : [], ts = decl ? decl.types || [] : [];
+    $("aArgs").innerHTML = ps.map((p, i) => `<label>${esc(p)} <span class="ty">${esc(ts[i] || "")}</span></label><input type="text" data-arg="${esc(p)}" value="${esc(guess(p, ts[i]))}" spellcheck="false">`).join("");
+  };
+  const refresh = () => {
+    if (kind === "model") args(d.prompts.find((p) => p.name === $("aPrompt").value));
+    if (kind === "tool") args(d.tools.find((t) => t.name === $("aTool").value));
+    if (kind === "receive") {
+      const m = state.last.messages.find((x) => x.name === $("aMsg").value);
+      $("aOnTimeout").innerHTML = timeoutChoices(m).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+    }
+    preview();
+  };
+  for (const el of $("addFields").querySelectorAll("select")) el.onchange = refresh;
+  $("addFields").oninput = preview;
+  refresh();
+  $("addDlg").showModal(); $("aName").select();
+}
+// Values of a message's type, for `on timeout`: each variant, its text
+// fields filled in.
+function timeoutChoices(m) {
+  const fill = (props) => Object.entries(props || {}).filter(([k]) => k !== "kind").map(([k, t]) =>
+    `${k} = ${t.type === "string" ? '"no answer in time"' : t.type === "boolean" ? "false" : t.type === "number" || t.type === "integer" ? "0" : "[]"}`);
+  const s = m && m.schema;
+  if (s && s.anyOf) return s.anyOf.map((v) => { const k = v.properties.kind.enum[0], f = fill(v.properties); return f.length ? `${k}(${f.join(", ")})` : k; }).reverse();
+  if (s && s.properties) return [`${m.name}(${fill(s.properties).join(", ")})`];
+  return [m ? m.name : ""];
+}
+function addLines() {
+  const g = cur(), ind = indentOf(g), name = $("aName").value.trim();
+  const argv = [...$("addFields").querySelectorAll("[data-arg]")].map((el) => el.value.trim() || '""').join(", ");
+  if (addKind === "model") return [`${ind}${name} = ${$("aModel").value}(${$("aPrompt").value}(${argv}))`];
+  if (addKind === "tool") return [`${ind}${name} = ${$("aTool").value}(${argv})`];
+  if (addKind === "each") { const v = $("aVar").value.trim() || "item"; return [`${ind}${name} = for each ${v} in ${$("aList").value}:`, `${ind}    ${v}`]; }
+  if (addKind === "receive") {
+    const about = $("aAbout").value, t = $("aTimeout").value.trim() || "3 days";
+    return [`${ind}${name} = receive ${$("aMsg").value}${about ? ` about ${about}` : ""}, timeout ${t}:`, `${ind}    on timeout: ${$("aOnTimeout").value}`];
+  }
+  return [];
+}
+function preview() { $("addPreview").textContent = addLines().join("\n"); }
+$("addCancel").onclick = () => $("addDlg").close();
+$("addForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const g = cur(), name = $("aName").value.trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) { $("addErr").textContent = "A name is letters, digits and _, not starting with a digit."; return; }
+  if (namesIn(g).has(name)) { $("addErr").textContent = `\`${name}\` is already used here.`; return; }
+  const at = insertLine(g), text = addLines().join("\n") + "\n", off = offsetOf(at.line);
+  $("addDlg").close();
+  state.sel = null;
+  replaceRange(off, off, text, off + text.indexOf(name));
+});
+function paintInspector() {
+  paletteState();
+  const g = cur(), n = g && state.sel != null ? g.nodes.find((m) => m.id === state.sel) : null;
+  const ins = $("inspector");
+  if (!n || !(g.steps || []).some((s) => s.name === n.name) || n.name === "return") { ins.hidden = true; return; }
+  ins.hidden = false;
+  if (document.activeElement !== $("insName")) $("insName").value = n.name;
+  const editable = state.last && state.last.ok;
+  for (const b of ins.querySelectorAll("button")) b.disabled = !editable;
+  $("insNote").textContent = editable ? "Rename also changes where the graph uses it." : "Fix the errors to edit from the graph.";
+}
+$("inspector").addEventListener("pointerdown", (e) => e.stopPropagation());
+$("palette").addEventListener("pointerdown", (e) => e.stopPropagation());
+$("insAdd").onclick = () => openAdd(state.last.decls && state.last.decls.models.length && state.last.decls.prompts.length ? "model" : "each");
+$("insDelete").onclick = () => {
+  const g = cur(), n = g && g.nodes.find((m) => m.id === state.sel); if (!n) return;
+  const r = stepRange(g, n.name); if (!r) return;
+  const from = offsetOf(r.start), to = offsetOf(r.end + 1);
+  state.sel = null;
+  replaceRange(from, Math.min(to, state.text.length), "", from);
+  toast(`Deleted ${n.name}: Ctrl+Z brings it back`);
+};
+$("insName").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("insRename").click(); } });
+$("insRename").onclick = () => {
+  const g = cur(), n = g && g.nodes.find((m) => m.id === state.sel); if (!n) return;
+  const to = $("insName").value.trim(), from = n.name;
+  if (to === from) return;
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(to)) { toast("A name is letters, digits and _, not starting with a digit.", true); return; }
+  if (namesIn(g).has(to)) { toast(`\`${to}\` is already used here.`, true); return; }
+  const ls = lines(), body = ls.slice(g.line, g.end_line + 1).map((l) => renameInLine(l, from, to));
+  const a = offsetOf(g.line), b = offsetOf(g.end_line) + ls[g.end_line].length;
+  replaceRange(a, b, body.join("\n"), a + body.join("\n").length);
+  toast(`Renamed ${from} to ${to}`);
+};
+// `from` as a name (not a field after `.`) becomes `to`, outside strings and
+// comments, and inside `{...}` in strings.
+function renameInLine(line, from, to) {
+  const word = new RegExp(`(?<![\\w.])${from}(?!\\w)`, "g");
+  let out = "", i = 0;
+  while (i < line.length) {
+    const c = line[i];
+    if (c === "#") { out += line.slice(i); break; }
+    if (c === '"') {
+      let j = i + 1;
+      while (j < line.length && line[j] !== '"') j += line[j] === "\\" ? 2 : 1;
+      out += line.slice(i, j + 1).replace(/\{[^{}"]*\}/g, (m) => m.replace(word, to));
+      i = j + 1; continue;
+    }
+    let j = i;
+    while (j < line.length && line[j] !== '"' && line[j] !== "#") j++;
+    out += line.slice(i, j).replace(word, to); i = j;
+  }
+  return out;
+}
+
 /* ---------- past runs ---------- */
 const when = (t) => t ? new Date(t * 1000).toLocaleString() : "";
 async function loadRuns() {
@@ -1181,7 +1429,8 @@ function fit() {
   // Fit the width; a tall graph stays readable and scrolls (wheel, drag).
   const k = Math.max(0.8, Math.min(1, (cw - 2 * pad) / (maxX - minX || 1), (ch - 2 * pad - 30) / (maxY - minY || 1)));
   const k2 = Math.min(k, (cw - 2 * pad) / (maxX - minX || 1));
-  state.view = { k: Math.max(0.3, k2), x: (cw - (maxX - minX) * Math.max(0.3, k2)) / 2 - minX * Math.max(0.3, k2), y: pad - minY * Math.max(0.3, k2) };
+  // Below the palette at the top.
+  state.view = { k: Math.max(0.3, k2), x: (cw - (maxX - minX) * Math.max(0.3, k2)) / 2 - minX * Math.max(0.3, k2), y: pad + 24 - minY * Math.max(0.3, k2) };
   applyView();
 }
 function zoom(f, cx, cy) {

@@ -591,3 +591,69 @@ graph approve(request: Text) -> Text:
         400
     );
 }
+
+#[test]
+fn the_page_gets_what_edits_from_the_graph_need() {
+    let s = Studio::start("edits", &[]);
+    std::fs::write(
+        s.ws("e.clyx"),
+        r#"model gemini = "gemini-3.5-flash-lite"
+
+tool lookup(q: Text, n: Nat) -> Text:
+    effect read
+
+prompt summarize(text: Text) -> Text:
+    """Summarize: {text}"""
+
+graph main(question: Text, items: List[Text]) -> Text:
+    found = lookup(question, 3)
+    all = for each item in items:
+        one = gemini(summarize(item))
+        one
+
+    return gemini(summarize(found))
+"#,
+    )
+    .unwrap();
+    let p = json(&s.get("/api/program?path=e.clyx").1);
+    assert_eq!(p["ok"], true, "{p}");
+    // What the program declares, with the types of the parameters.
+    assert_eq!(p["decls"]["models"], serde_json::json!(["gemini"]));
+    assert_eq!(
+        p["decls"]["tools"][0]["params"],
+        serde_json::json!(["q", "n"])
+    );
+    assert_eq!(
+        p["decls"]["tools"][0]["types"],
+        serde_json::json!(["Text", "Nat"])
+    );
+    assert_eq!(
+        p["decls"]["prompts"][0]["types"],
+        serde_json::json!(["Text"])
+    );
+    // Each step as written, with its first and last lines, `return` too.
+    let g = &p["graphs"][0];
+    assert_eq!(
+        (g["line"].as_u64(), g["end_line"].as_u64()),
+        (Some(8), Some(14))
+    );
+    let steps: Vec<(String, u64, u64)> = g["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["name"].as_str().unwrap().to_owned(),
+                s["line"].as_u64().unwrap(),
+                s["end_line"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(steps[0], ("found".into(), 9, 9));
+    assert_eq!((steps[1].0.as_str(), steps[1].1), ("all", 10));
+    assert!(
+        (12..=13).contains(&steps[1].2),
+        "the for each ends after its body: {steps:?}"
+    );
+    assert_eq!(steps[2], ("return".into(), 14, 14));
+}
