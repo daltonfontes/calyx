@@ -7,6 +7,14 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.23.0 (2026-11-19)
+
+- `a if cond else b` on one line, as in Python, anywhere an expression
+  goes: a step, a `def`, a handler, a text's `{...}`; chained too. Only
+  the chosen branch is computed, so `xs[0] if len(xs) > 0 else fallback`
+  never fails on the index. Without `else` it is `E0114`. In a list
+  comprehension, the `if` after `in list` is still the filter.
+
 ## 0.22.0 (2026-11-19)
 
 - A text's `{...}` takes any pure expression, not only a name or a field:

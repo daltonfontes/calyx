@@ -1,0 +1,14 @@
+error[E0114]: an `if` in an expression needs its `else`
+- expected : `a if cond else b`: the value when `cond` is false
+- observed : end of line
+Location: inline_if_errors.clyx:5:21
+
+error[E0614]: condition is not a `Bool`
+- expected : `Bool`
+- observed : `Nat`
+Location: inline_if_errors.clyx:9:16
+
+error[E0615]: branches give different types
+- expected : `Text`
+- observed : `Int`
+Location: inline_if_errors.clyx:10:27

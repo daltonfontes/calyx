@@ -1,0 +1,6 @@
+graph main(xs: List[Nat]) -> Text [pure]
+  %0 labels: List[Text] = pure [pure]
+  %1 word: Text = if [pure]
+  %2 listed: Text = if [pure] <- %0
+  %3 return: Text = pure [pure] <- %1 %2 %0 %0 %1
+  return %3
