@@ -1,0 +1,5 @@
+graph main(xs: List[Text], orders: List[Order], n: Nat) -> Text [llm]
+  %0 a: Text = model gemini(p) [llm]
+  %1 total: Float = pure [pure]
+  %2 return: Text = pure [pure] <- %0 %1
+  return %2

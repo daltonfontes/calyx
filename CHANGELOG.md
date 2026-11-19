@@ -7,6 +7,18 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.22.0 (2026-11-19)
+
+- A text's `{...}` takes any pure expression, not only a name or a field:
+  `"{len(items)} items, the first is {items[0]}"`, `"{total * 2}"`,
+  `"{orders[0].customer}"`, `"{label(xs)}"` with a `def`. A call with
+  effects inside `{...}` is refused (`E0403`): it is a step, with a name
+  the journal records, and the text uses the name. Inside `{...}` there
+  are no quotes or braces (`E0402`). A prompt's template still takes only
+  names and fields: compute in the graph, pass the value.
+- Programs that used only `{name}` and `{name.field}` compile to the same
+  IR as before (their hashes do not change).
+
 ## 0.21.0 (2026-11-19)
 
 - Calyx Studio edits from the graph. A bar over the graph adds a step: a

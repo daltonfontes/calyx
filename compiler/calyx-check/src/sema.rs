@@ -1901,15 +1901,35 @@ impl<'p> Cx<'_, 'p> {
         lit: &StrLit,
         lookup: &dyn Fn(&str) -> Option<Ty>,
     ) -> Vec<String> {
+        self.check_interpolations_skipping(lit, lookup, &[], false)
+    }
+
+    /// `{...}` that are names or fields; `skip` are the ones already typed
+    /// as expressions. `exprs`: expressions are allowed here (a text in a
+    /// graph or a `def`, not a prompt's template).
+    fn check_interpolations_skipping(
+        &mut self,
+        lit: &StrLit,
+        lookup: &dyn Fn(&str) -> Option<Ty>,
+        skip: &[usize],
+        exprs: bool,
+    ) -> Vec<String> {
         let mut roots = Vec::new();
-        for (path, start, end) in interpolations(lit) {
+        for (k, (path, start, end)) in interpolations(lit).into_iter().enumerate() {
+            if skip.contains(&k) {
+                continue;
+            }
             let span = Span::new(start, end);
             let mut segments = path.split('.').map(str::trim);
             let root = segments.next().unwrap_or_default();
             if root.is_empty() || !root.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 self.push(
                     err("E0402", "invalid interpolation", span)
-                        .expected("`{name}` or `{name.field}`")
+                        .expected(if exprs {
+                            "a name, a field, or an expression such as `{len(items)}` (no quotes or braces inside)"
+                        } else {
+                            "`{name}` or `{name.field}`: in a prompt, compute the value in the graph and pass it"
+                        })
                         .observed(format!("`{{{path}}}`")),
                 );
                 continue;
@@ -3134,7 +3154,26 @@ impl<'p> Cx<'_, 'p> {
                 Typed::pure(Ty::Error)
             }
             ExprKind::Str(lit) => {
-                self.check_interpolations(lit, &|n| gc.scope.get(n).cloned());
+                // `{name}` and `{name.field}` as before; any other `{...}`
+                // is an expression, typed here. It computes, it does not
+                // call: a call is a step, with a name, in the journal.
+                let mut skip = Vec::new();
+                for (k, part) in lit.parts.iter().enumerate() {
+                    let Some(e) = part else { continue };
+                    if is_path(e) {
+                        continue;
+                    }
+                    skip.push(k);
+                    let t = self.expr(e, gc);
+                    if t.effect != Effect::Pure {
+                        self.push(
+                            err("E0403", "a `{...}` in a text computes; it does not call", e.span)
+                                .expected("the call as a step with a name (`x = ...`), then `{x}` in the text")
+                                .observed("a call with effects"),
+                        );
+                    }
+                }
+                self.check_interpolations_skipping(lit, &|n| gc.scope.get(n).cloned(), &skip, true);
                 Typed::pure(Ty::Text)
             }
             ExprKind::Int { unit, .. } => Typed::pure(Ty::of_unit(unit.as_deref(), true)),
@@ -4746,6 +4785,7 @@ fn visit(e: &Expr, f: &mut dyn FnMut(&Expr)) {
     f(e);
     let kids: Vec<&Expr> = match &e.kind {
         ExprKind::List(items) => items.iter().collect(),
+        ExprKind::Str(lit) => lit.parts.iter().flatten().filter(|e| !is_path(e)).collect(),
         ExprKind::Field { base, .. } => vec![base],
         ExprKind::Call { callee, args } => std::iter::once(callee.as_ref())
             .chain(args.iter().map(|a| &a.value))
@@ -4902,9 +4942,17 @@ fn collect_refs(e: &Expr, bound: Option<&str>, index: &HashMap<&str, usize>, out
     match &e.kind {
         ExprKind::Ident(n) => add(n),
         ExprKind::Str(lit) => {
-            for (path, _, _) in interpolations(lit) {
-                if let Some(root) = path.split('.').next() {
-                    add(root.trim());
+            for (k, (path, _, _)) in interpolations(lit).into_iter().enumerate() {
+                match lit.parts.get(k) {
+                    Some(Some(e)) => collect_refs(e, bound, index, out),
+                    _ => {
+                        let root = path.split('.').next().unwrap_or("").trim();
+                        if Some(root) != bound
+                            && let Some(&i) = index.get(root)
+                        {
+                            out.push(i);
+                        }
+                    }
                 }
             }
         }
@@ -5073,6 +5121,15 @@ fn mentions_any(e: &Expr, names: &HashSet<String>) -> bool {
         _ => {}
     });
     hit
+}
+
+/// A name, or fields of one (`{order.customer}`): what `{...}` always took.
+fn is_path(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Ident(_) => true,
+        ExprKind::Field { base, .. } => is_path(base),
+        _ => false,
+    }
 }
 
 /// Finds `{...}` in a text literal: `(content, start, end)` with byte offsets

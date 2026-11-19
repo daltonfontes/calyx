@@ -2354,11 +2354,57 @@ impl Parser<'_> {
         } else {
             ""
         };
+        let content_offset = t.span.start + quote as u32;
         StrLit {
             text: inner.to_owned(),
-            content_offset: t.span.start + quote as u32,
+            content_offset,
             span: t.span,
+            parts: self.interpolated(inner, content_offset as usize),
         }
+    }
+
+    /// Each `{...}` of a text (`\{` is a brace, not one) as an expression.
+    fn interpolated(&self, inner: &str, base: usize) -> Vec<Option<Expr>> {
+        let bytes = inner.as_bytes();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\\' => i += 2,
+                b'{' => match inner[i + 1..].find('}') {
+                    Some(len) => {
+                        let (start, end) = (base + i + 1, base + i + 1 + len);
+                        out.push(self.sub_expr(start, end));
+                        i += len + 2;
+                    }
+                    None => break,
+                },
+                _ => i += 1,
+            }
+        }
+        out
+    }
+
+    /// `self.text[start..end]` as one whole expression, or `None`.
+    fn sub_expr(&self, start: usize, end: usize) -> Option<Expr> {
+        if self.depth > 8 || self.text[start..end].trim().is_empty() {
+            return None;
+        }
+        let (tokens, diags) = crate::lexer::lex_at(self.text, start, end);
+        if !diags.is_empty() {
+            return None;
+        }
+        let mut p = Parser {
+            text: self.text,
+            tokens,
+            pos: 0,
+            depth: self.depth + 1,
+            broken: None,
+            sends: 0,
+            diags: Vec::new(),
+        };
+        let e = p.expr().ok()?;
+        (p.kind() == TokenKind::Eof && p.diags.is_empty()).then_some(e)
     }
 }
 
