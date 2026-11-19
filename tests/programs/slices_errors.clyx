@@ -1,0 +1,7 @@
+# Only lists and texts are cut, at whole-number positions.
+
+graph g(xs: List[Int], n: Int, f: Float) -> Bool:
+    a = n[1:]
+    b = xs[f:]
+    c = xs[:"2"]
+    return true

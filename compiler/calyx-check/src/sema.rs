@@ -133,6 +133,10 @@ const BUILTINS: &[(&str, &str)] = &[
         "`{key: value, ...}`: keys are texts (or variants without fields), the values of one type",
     ),
     (
+        calyx_syntax::SLICE,
+        "`x[a:b]`: the items (or characters) from position `a` up to, not including, `b`; a negative position counts from the end",
+    ),
+    (
         calyx_syntax::INDEX,
         "`map[key]`: the value of a key in a map; `list[n]`: the item at position `n`, from 0",
     ),
@@ -1527,6 +1531,13 @@ impl<'p> Cx<'_, 'p> {
             }
             (n, [Ty::List(t, _), i]) if n == calyx_syntax::INDEX && int(i) => Some((**t).clone()),
             (n, [Ty::Error, _]) if n == calyx_syntax::INDEX => Some(Ty::Error),
+            (n, [x @ (Ty::List(..) | Ty::Text | Ty::Error), bounds @ ..])
+                if n == calyx_syntax::SLICE
+                    && matches!(bounds.len(), 1 | 2)
+                    && bounds.iter().all(int) =>
+            {
+                Some(x.clone())
+            }
             (n, kv) if n == calyx_syntax::MAP && kv.len() % 2 == 0 => self.map_type(kv, args),
             ("take", [l @ (Ty::List(..) | Ty::Error), n]) if int(n) => Some(l.clone()),
             ("sum", [Ty::List(t, _)])
@@ -1599,6 +1610,14 @@ impl<'p> Cx<'_, 'p> {
                 err("E0662", "a list's items are numbered", span)
                     .expected("a whole number, from 0: `list[0]` is the first item")
                     .observed(format!("a `{i}`"))
+            } else if name == calyx_syntax::SLICE {
+                err(
+                    "E0662",
+                    "`[a:b]` cuts a list or a text, at whole-number positions",
+                    span,
+                )
+                .expected("a list or a text, and whole numbers for the positions")
+                .observed(observed.join(", "))
             } else if name == calyx_syntax::INDEX {
                 // `x[k]`, not a call anyone wrote.
                 err("E0662", "only a map or a list is read by `[...]`", span)

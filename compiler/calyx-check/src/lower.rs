@@ -246,6 +246,7 @@ const BUILTINS: &[&str] = &[
     "get",
     calyx_syntax::MAP,
     calyx_syntax::INDEX,
+    calyx_syntax::SLICE,
     "split",
     "replace",
     "starts_with",

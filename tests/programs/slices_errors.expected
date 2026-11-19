@@ -1,0 +1,14 @@
+error[E0662]: `[a:b]` cuts a list or a text, at whole-number positions
+- expected : a list or a text, and whole numbers for the positions
+- observed : `Int`, `Int`
+Location: slices_errors.clyx:4:9
+
+error[E0662]: `[a:b]` cuts a list or a text, at whole-number positions
+- expected : a list or a text, and whole numbers for the positions
+- observed : `List[Int]`, `Float`
+Location: slices_errors.clyx:5:9
+
+error[E0662]: `[a:b]` cuts a list or a text, at whole-number positions
+- expected : a list or a text, and whole numbers for the positions
+- observed : `List[Int]`, `Int`, `Text`
+Location: slices_errors.clyx:6:9

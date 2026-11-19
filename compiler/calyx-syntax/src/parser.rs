@@ -34,6 +34,9 @@ pub fn parse(text: &str) -> (Program, Vec<Diagnostic>) {
 /// can write these names.
 pub const MAP: &str = "{}";
 pub const INDEX: &str = "[]";
+/// `x[a:b]`, `x[a:]`, `x[:b]`: a call of `[:]` with the start (0 when left
+/// out) and, when written, the end.
+pub const SLICE: &str = "[:]";
 
 /// Units accepted after a number literal.
 const UNITS: &[&str] = &[
@@ -1578,25 +1581,46 @@ impl Parser<'_> {
                 // `m[k]`: a call of the built-in `[]`, as `{...}` is of `{}`.
                 TokenKind::LBracket => {
                     let open = self.advance().span;
-                    let key = self.expr()?;
+                    let key = if self.kind() == TokenKind::Colon {
+                        Expr {
+                            kind: ExprKind::Int {
+                                value: 0,
+                                unit: None,
+                            },
+                            span: self.tok().span,
+                        }
+                    } else {
+                        self.expr()?
+                    };
+                    let mut args = vec![
+                        Arg {
+                            name: None,
+                            value: e,
+                        },
+                        Arg {
+                            name: None,
+                            value: key,
+                        },
+                    ];
+                    let mut callee = INDEX;
+                    if self.eat(TokenKind::Colon) {
+                        callee = SLICE;
+                        if self.kind() != TokenKind::RBracket {
+                            args.push(Arg {
+                                name: None,
+                                value: self.expr()?,
+                            });
+                        }
+                    }
                     self.expect(TokenKind::RBracket, "`]`")?;
-                    let span = self.span_from(e.span);
+                    let span = self.span_from(args[0].value.span);
                     e = Expr {
                         kind: ExprKind::Call {
                             callee: Box::new(Expr {
-                                kind: ExprKind::Ident(INDEX.into()),
+                                kind: ExprKind::Ident(callee.into()),
                                 span: open,
                             }),
-                            args: vec![
-                                Arg {
-                                    name: None,
-                                    value: e,
-                                },
-                                Arg {
-                                    name: None,
-                                    value: key,
-                                },
-                            ],
+                            args,
                         },
                         span,
                     };
