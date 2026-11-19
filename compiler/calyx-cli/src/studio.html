@@ -190,6 +190,11 @@ dialog pre.preview { margin: 10px 0 0; padding: 8px 10px; border-radius: 6px; ba
 .area pre .ln.wline { background: rgba(242, 193, 78, .10); }
 .area textarea { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; outline: none; background: transparent; color: transparent;
   caret-color: var(--text); overflow: auto; }
+.complete { position: absolute; z-index: 4; min-width: 220px; max-width: 360px; max-height: 220px; overflow: auto; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.3); font: 12.5px/1.2 var(--mono); padding: 4px 0; }
+.complete div { display: flex; gap: 10px; align-items: baseline; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+.complete div.on { background: var(--sel); }
+.complete b { font-weight: 500; color: var(--text); }
+.complete span { color: var(--faint); font-size: 11px; margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
 .area textarea::selection { background: rgba(124, 199, 255, .28); color: transparent; }
 .t-kw { color: var(--k-kw); } .t-str { color: var(--k-str); } .t-num { color: var(--k-num); } .t-ty { color: var(--k-ty); } .t-fn { color: var(--k-fn); }
 .t-cm { color: var(--k-cm); font-style: italic; } .t-in { color: var(--k-ty); }
@@ -369,7 +374,7 @@ dialog .check small { color: var(--muted); }
       <span class="disk" id="disk">The file changed on disk. <button id="reload">Load it</button></span></div>
     <div class="code-wrap">
       <div class="gutter" id="gutter"></div>
-      <div class="area"><pre id="hl" aria-hidden="true"></pre><textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Program"></textarea></div>
+      <div class="area"><pre id="hl" aria-hidden="true"></pre><textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Program"></textarea><div class="complete" id="complete" role="listbox" hidden></div></div>
     </div>
   </section>
 </main>
@@ -557,6 +562,7 @@ function gotoLine(n) {
   onCaret();
 }
 code.addEventListener("keydown", (e) => {
+  if (completeKey(e)) return;
   if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); return; }
   const v = code.value, a = code.selectionStart, b = code.selectionEnd;
   if (e.key === "Tab" && !e.shiftKey && a === b) { e.preventDefault(); insert("    "); return; }
@@ -577,8 +583,11 @@ function insert(s) {
   }
 }
 let checkTimer = null;
-code.addEventListener("input", () => {
+code.addEventListener("input", (e) => {
   state.text = code.value; markDirty(true);
+  if (comp.accepted) comp.accepted = false;
+  else if (e && e.inputType && /^(insertText|deleteContentBackward)$/.test(e.inputType)) suggest();
+  else hideComplete();
   paintEditor(); clearTimeout(checkTimer); checkTimer = setTimeout(check, 250);
 });
 function markDirty(d) {
@@ -592,6 +601,124 @@ function onCaret() {
   if (node !== state.sel) { state.sel = node; drawSelection(); paintRunPanel(); }
   paintEditor();
 }
+
+/* ---------- completion ---------- */
+// Names that fit where the caret is: keywords, built-ins, what the file
+// declares, the graph's parameters and steps; after `x.`, the fields of
+// `x`'s type. From the syntax, so it works while the code does not check.
+const BUILTINS = ["len", "take", "sum", "join", "lower", "upper", "trim", "keys", "values", "get", "try"];
+const comp = { items: [], sel: 0, from: 0 };
+function caretContext() {
+  const pos = code.selectionStart, before = code.value.slice(0, pos);
+  const lineStart = before.lastIndexOf("\n") + 1, lineText = before.slice(lineStart);
+  // Not in a comment, nor in a text (except inside its `{...}`).
+  let i = 0, inText = false;
+  while (i < lineText.length) {
+    const c = lineText[i];
+    if (!inText && c === "#") return null;
+    if (c === '"') {
+      const j = stringEnd(lineText, i);
+      if (j >= lineText.length) { inText = true; break; }
+      i = j + 1; continue;
+    }
+    i++;
+  }
+  if (inText) {
+    const open = lineText.lastIndexOf("{");
+    if (open < 0 || interpEnd(lineText, open) >= 0) return null;
+  }
+  const m = /([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)?$/.exec(lineText);
+  if (m) return { member: m[1], prefix: m[2] || "", from: pos - (m[2] || "").length, line: before.split("\n").length - 1 };
+  const w = /[A-Za-z_][A-Za-z0-9_]*$/.exec(lineText);
+  if (!w) return null;
+  return { prefix: w[0], from: pos - w[0].length, line: before.split("\n").length - 1 };
+}
+// The graph or `def` the line is in, from the outline.
+function scopeAt(line) {
+  const o = state.last && state.last.outline;
+  return o ? o.graphs.find((g) => g.line <= line && line <= g.end_line + 1) : null;
+}
+function typeNamed(t) {
+  const o = state.last && state.last.outline;
+  return o && t ? o.types.find((x) => x.name === t.replace(/\s+max\s+\d+$/, "")) : null;
+}
+function candidates(ctx) {
+  const o = (state.last && state.last.outline) || { decls: [], types: [], graphs: [] };
+  const sc = scopeAt(ctx.line), out = [];
+  const add = (name, kind) => { if (!out.some((x) => x.name === name)) out.push({ name, kind }); };
+  if (ctx.member) {
+    // A parameter's type as written, or a step's from the last check.
+    let t = sc && (sc.params.find((p) => p[0] === ctx.member) || [])[1];
+    if (!t) { const g = cur(); const n = g && g.nodes.find((x) => x.name === ctx.member); t = n && n.type; }
+    const ty = typeNamed(t);
+    for (const [f, ft] of (ty && ty.fields) || []) add(f, ft);
+    if (/^List\[/.test(t || "")) add("length", "Nat");
+    return out.filter((x) => x.name.startsWith(ctx.prefix));
+  }
+  if (sc) {
+    for (const [p, t] of sc.params) add(p, t);
+    // Steps written above the caret in this graph (`name = ...`).
+    const ls = state.text.split("\n");
+    for (let l = sc.line + 1; l < ctx.line; l++) {
+      const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)/.exec(ls[l] || "");
+      if (m) { const g = cur(), n = g && g.nodes.find((x) => x.name === m[1]); add(m[1], n ? n.type : "step"); }
+    }
+  }
+  for (const d of o.decls) add(d.name, d.kind);
+  for (const t of o.types) for (const v of t.variants || []) add(v, t.name);
+  for (const b of BUILTINS) add(b, "built-in");
+  for (const k of KW) add(k, "keyword");
+  return out.filter((x) => x.name.startsWith(ctx.prefix) && x.name !== ctx.prefix);
+}
+function suggest() {
+  const ctx = caretContext();
+  if (!ctx || (!ctx.member && ctx.prefix.length < 1)) { hideComplete(); return; }
+  const items = candidates(ctx).slice(0, 40);
+  if (!items.length) { hideComplete(); return; }
+  comp.items = items; comp.sel = 0; comp.from = ctx.from;
+  const el = $("complete");
+  el.innerHTML = items.map((x, i) => `<div class="${i === 0 ? "on" : ""}" data-i="${i}" role="option"><b>${esc(x.name)}</b><span>${esc(x.kind)}</span></div>`).join("");
+  for (const d of el.querySelectorAll("div")) d.onmousedown = (e) => { e.preventDefault(); comp.sel = +d.dataset.i; accept(); };
+  // Under the caret.
+  const before = code.value.slice(0, ctx.from), line = before.split("\n").length - 1;
+  const col = before.length - before.lastIndexOf("\n") - 1;
+  el.style.left = Math.max(4, Math.min(code.clientWidth - 230, 14 + col * charWidth() - code.scrollLeft)) + "px";
+  el.style.top = "0px"; el.hidden = false;
+  // Below the line, or above it when there is no room below.
+  const lineTop = 10 + line * 20 - code.scrollTop, h = el.offsetHeight;
+  el.style.top = (lineTop + 20 + h <= code.clientHeight ? lineTop + 20 : Math.max(0, lineTop - h)) + "px";
+}
+let cw = 0;
+function charWidth() {
+  if (!cw) { const c = document.createElement("canvas").getContext("2d"); c.font = getComputedStyle(code).font; cw = c.measureText("0000000000").width / 10 || 7.5; }
+  return cw;
+}
+function hideComplete() { $("complete").hidden = true; comp.items = []; }
+function accept() {
+  const x = comp.items[comp.sel]; if (!x) return;
+  code.selectionStart = comp.from; code.selectionEnd = code.selectionStart + (code.value.slice(comp.from).match(/^[A-Za-z0-9_]*/) || [""])[0].length;
+  hideComplete(); comp.accepted = true; insert(x.name);
+}
+function completeKey(e) {
+  if ($("complete").hidden) {
+    if (e.key === " " && e.ctrlKey) { e.preventDefault(); suggest(); return true; }
+    return false;
+  }
+  const n = comp.items.length;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault(); comp.sel = (comp.sel + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
+    $("complete").querySelectorAll("div").forEach((d, i) => d.classList.toggle("on", i === comp.sel));
+    const on = $("complete").querySelector(".on"); if (on) on.scrollIntoView({ block: "nearest" });
+    return true;
+  }
+  if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); accept(); return true; }
+  if (e.key === "Escape") { e.preventDefault(); hideComplete(); return true; }
+  return false;
+}
+code.addEventListener("blur", () => setTimeout(hideComplete, 100));
+// Typing near the bottom scrolls the editor: the list follows the caret.
+code.addEventListener("scroll", () => { if (!$("complete").hidden) suggest(); });
+code.addEventListener("click", hideComplete);
 
 /* ---------- server ---------- */
 const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "text/plain", "X-Calyx-Studio": "1" }, body });
