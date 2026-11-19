@@ -606,7 +606,7 @@ function onCaret() {
 // Names that fit where the caret is: keywords, built-ins, what the file
 // declares, the graph's parameters and steps; after `x.`, the fields of
 // `x`'s type. From the syntax, so it works while the code does not check.
-const BUILTINS = ["len", "take", "sum", "join", "lower", "upper", "trim", "keys", "values", "get", "try"];
+const BUILTINS = ["len", "take", "sum", "join", "split", "replace", "starts_with", "ends_with", "lower", "upper", "trim", "round", "abs", "min", "max", "sort", "reverse", "keys", "values", "get", "try"];
 const comp = { items: [], sel: 0, from: 0 };
 function caretContext() {
   const pos = code.selectionStart, before = code.value.slice(0, pos);

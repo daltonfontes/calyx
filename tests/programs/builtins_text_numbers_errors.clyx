@@ -1,0 +1,8 @@
+# Each new built-in refuses what it does not take.
+
+graph g(xs: List[Bool]) -> Bool:
+    a = sort(xs)
+    b = min(1, "a")
+    c = round("x")
+    d = split(xs, ",")
+    return true

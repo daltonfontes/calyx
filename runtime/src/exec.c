@@ -507,12 +507,31 @@ static void tel_uncertain(const char *tool, const char *key, const char *how) {
 /* ----- rendering values into prompts ------------------------------------ */
 
 /* Text as is; lists one item per line; records as JSON. */
+/* A number in a text: the shortest form that reads back as the same number
+ * (`99.46`, not `99.459999999999994`), as Python prints it. Only for texts:
+ * what goes to the journal keeps `cx_write`'s form. */
+static void render_num(cx_buf *b, double n) {
+    if (!isfinite(n) || (n == floor(n) && fabs(n) < 9007199254740992.0)) {
+        cx_buf tmp = {0};
+        cx_write(&tmp, &(cx_value){.kind = CX_NUM, .u.num = n});
+        cx_buf_put(b, tmp.data, tmp.len);
+        cx_buf_free(&tmp);
+        return;
+    }
+    char s[40];
+    for (int digits = 15; digits <= 17; digits++) {
+        snprintf(s, sizeof s, "%.*g", digits, n);
+        if (strtod(s, NULL) == n) break;
+    }
+    cx_buf_puts(b, s);
+}
+
 static void render(cx_buf *b, const cx_value *v) {
     if (!v) return;
     switch (v->kind) {
     case CX_NULL: break;
     case CX_STR: cx_buf_put(b, v->u.str.s, v->u.str.len); break;
-    case CX_NUM:
+    case CX_NUM: render_num(b, v->u.num); break;
     case CX_REC: cx_write(b, v); break;
     case CX_BOOL: cx_buf_puts(b, v->u.b ? "true" : "false"); break;
     case CX_LIST:
@@ -2438,7 +2457,8 @@ static int is_space(int ch) {
 
 /*
  * `len`, `take`, `sum`, `join`, `lower`, `upper`, `trim`, `keys`, `values`,
- * `get`, and the two a program writes as syntax: `{}` for `{k: v, ...}`
+ * `get`, `split`, `replace`, `starts_with`, `ends_with`, `round`, `abs`,
+ * `min`, `max`, `sort`, `reverse`, and the two a program writes as syntax: `{}` for `{k: v, ...}`
  * (keys and values in turn) and `[]` for `m[k]`.
  */
 static cx_value *builtin(ctx *c, cx_value *e) {
@@ -2519,6 +2539,105 @@ static cx_value *builtin(ctx *c, cx_value *e) {
         cx_value *r = cx_str(a, b.data ? b.data : "", b.len);
         cx_buf_free(&b);
         return r;
+    }
+    if (strcmp(name, "split") == 0 && n == 2 && x->kind == CX_STR && v[1]->kind == CX_STR) {
+        const char *sep = v[1]->u.str.s;
+        size_t sl = v[1]->u.str.len;
+        if (sl == 0) return failf(c, "`split` needs a separator that is not empty");
+        size_t cap = 8, m = 0;
+        cx_value **items = cx_alloc(a, cap * sizeof *items);
+        const char *p = x->u.str.s, *end = x->u.str.s + x->u.str.len;
+        for (;;) {
+            const char *hit = p <= end ? strstr(p, sep) : NULL;
+            const char *stop = hit ? hit : end;
+            if (m == cap) {
+                cx_value **more = cx_alloc(a, 2 * cap * sizeof *more);
+                memcpy(more, items, cap * sizeof *items);
+                items = more;
+                cap *= 2;
+            }
+            items[m++] = cx_str(a, p, (size_t)(stop - p));
+            if (!hit) break;
+            p = hit + sl;
+        }
+        return cx_list(a, items, m);
+    }
+    if (strcmp(name, "replace") == 0 && n == 3 && x->kind == CX_STR && v[1]->kind == CX_STR &&
+        v[2]->kind == CX_STR) {
+        const char *old = v[1]->u.str.s;
+        size_t ol = v[1]->u.str.len;
+        if (ol == 0) return x; /* nothing to find */
+        cx_buf b = {0};
+        const char *p = x->u.str.s, *hit;
+        while ((hit = strstr(p, old)) != NULL) {
+            cx_buf_put(&b, p, (size_t)(hit - p));
+            cx_buf_put(&b, v[2]->u.str.s, v[2]->u.str.len);
+            p = hit + ol;
+        }
+        cx_buf_put(&b, p, strlen(p));
+        cx_value *r = cx_str(a, b.data ? b.data : "", b.len);
+        cx_buf_free(&b);
+        return r;
+    }
+    if ((strcmp(name, "starts_with") == 0 || strcmp(name, "ends_with") == 0) && n == 2 &&
+        x->kind == CX_STR && v[1]->kind == CX_STR) {
+        size_t xl = x->u.str.len, pl = v[1]->u.str.len;
+        if (pl > xl) return cx_bool(a, 0);
+        const char *at_ = name[0] == 's' ? x->u.str.s : x->u.str.s + (xl - pl);
+        return cx_bool(a, memcmp(at_, v[1]->u.str.s, pl) == 0);
+    }
+    if (strcmp(name, "round") == 0 && x->kind == CX_NUM) {
+        /* Halves away from zero: round(2.5) is 3. */
+        if (n == 1) return cx_num(a, round(x->u.num));
+        if (n == 2 && v[1]->kind == CX_NUM) {
+            double d = v[1]->u.num < 0 ? 0 : v[1]->u.num > 15 ? 15 : v[1]->u.num;
+            double p = pow(10, floor(d));
+            return cx_num(a, round(x->u.num * p) / p);
+        }
+    }
+    if (strcmp(name, "abs") == 0 && x->kind == CX_NUM) return cx_num(a, fabs(x->u.num));
+    if (strcmp(name, "min") == 0 || strcmp(name, "max") == 0) {
+        /* One list, or the values themselves. */
+        cx_value **items = v;
+        size_t m = n;
+        if (n == 1 && x->kind == CX_LIST) {
+            items = x->u.list.items;
+            m = x->u.list.len;
+        }
+        if (m == 0) return failf(c, "`%s` of an empty list", name);
+        int want = strcmp(name, "max") == 0 ? 1 : -1;
+        cx_value *best = items[0];
+        for (size_t i = 1; i < m; i++) {
+            if (items[i]->kind != best->kind || (best->kind != CX_NUM && best->kind != CX_STR))
+                return failf(c, "`%s` compares numbers or texts", name);
+            if (compare(items[i], best) * want > 0) best = items[i];
+        }
+        return best;
+    }
+    if (strcmp(name, "sort") == 0 && x->kind == CX_LIST) {
+        size_t m = x->u.list.len;
+        cx_value **items = cx_alloc(a, (m ? m : 1) * sizeof *items);
+        if (m) memcpy(items, x->u.list.items, m * sizeof *items);
+        for (size_t i = 0; i < m; i++)
+            if (items[i]->kind != items[0]->kind || (items[0]->kind != CX_NUM && items[0]->kind != CX_STR))
+                return failf(c, "`sort` orders numbers or texts");
+        /* Insertion sort: stable, and lists in a program are small. */
+        for (size_t i = 1; i < m; i++) {
+            cx_value *it = items[i];
+            size_t j = i;
+            while (j > 0 && compare(items[j - 1], it) > 0) {
+                items[j] = items[j - 1];
+                j--;
+            }
+            items[j] = it;
+        }
+        return cx_list(a, items, m);
+    }
+    if (strcmp(name, "reverse") == 0 && x->kind == CX_LIST) {
+        size_t m = x->u.list.len;
+        cx_value **items = cx_alloc(a, (m ? m : 1) * sizeof *items);
+        for (size_t i = 0; i < m; i++) items[i] = x->u.list.items[m - 1 - i];
+        return cx_list(a, items, m);
     }
     if (x->kind == CX_STR) {
         if (strcmp(name, "lower") == 0) return text_case(a, x, 0);

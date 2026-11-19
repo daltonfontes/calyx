@@ -1,0 +1,6 @@
+graph main(csv: Text, scores: List[Nat], price: Float) -> Text [pure]
+  %0 best: Nat = pure [pure]
+  %1 cleaned: Text = pure [pure]
+  %2 flag: Text = if [pure] <- %1
+  %3 return: Text = pure [pure] <- %2 %1 %0
+  return %3

@@ -246,6 +246,16 @@ const BUILTINS: &[&str] = &[
     "get",
     calyx_syntax::MAP,
     calyx_syntax::INDEX,
+    "split",
+    "replace",
+    "starts_with",
+    "ends_with",
+    "round",
+    "abs",
+    "min",
+    "max",
+    "sort",
+    "reverse",
 ];
 
 /// The names `stmts` give values to, including inside `if`s.

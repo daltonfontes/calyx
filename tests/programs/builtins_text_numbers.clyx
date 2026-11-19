@@ -1,0 +1,14 @@
+# Built-ins for texts and numbers: split, replace, starts_with, ends_with,
+# round, abs, min, max, sort, reverse. A `def` of the same name wins.
+
+def max(a: Nat, b: Nat) -> Nat:
+    return a if a > b else b
+
+def tags(csv: Text) -> List[Text]:
+    return sort([trim(t) for t in split(csv, ",") if trim(t) != ""])
+
+graph main(csv: Text, scores: List[Nat], price: Float) -> Text:
+    best = max(min(scores), 3)
+    cleaned = replace(csv, ";", ",")
+    flag = "#" if starts_with(cleaned, "#") or ends_with(cleaned, "!") else ""
+    return "{flag}{join(reverse(tags(cleaned)), "|")}: {best}, {round(price, 2)}, {round(price)}, {abs(price - 100.0)}"

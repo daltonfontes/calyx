@@ -255,3 +255,39 @@ graph g(names: List[Text]) -> Text:
         json!("2 done; ana, bia; 1; many; {as is}; a { b")
     );
 }
+
+#[test]
+fn built_ins_for_texts_and_numbers() {
+    let src = r#"
+type Out:
+    parts: List[Text]
+    replaced: Text
+    starts: Bool
+    ends: Bool
+    rounded: Int
+    cents: Float
+    distance: Nat
+    low: Nat
+    high: Float
+    first: Text
+    sorted: List[Nat]
+    backwards: List[Text]
+
+graph g(csv: Text, scores: List[Nat], names: List[Text]) -> Out:
+    return Out(parts = split(csv, ","), replaced = replace(csv, ",", "; "), starts = starts_with(csv, "a,"), ends = ends_with(csv, "x"), rounded = round(2.5), cents = round(12.34567, 2), distance = abs(-7), low = min(scores), high = max(1, 2.5, 2), first = min(names), sorted = sort(scores), backwards = reverse(names))
+"#;
+    assert_eq!(
+        eval(
+            src,
+            json!({"csv": "a,b,,c", "scores": [5, 3, 9, 1], "names": ["bia", "ana", "caio"]})
+        ),
+        json!({
+            "parts": ["a", "b", "", "c"], "replaced": "a; b; ; c", "starts": true, "ends": false,
+            "rounded": 3, "cents": 12.35, "distance": 7, "low": 1, "high": 2.5, "first": "ana",
+            "sorted": [1, 3, 5, 9], "backwards": ["caio", "ana", "bia"],
+        })
+    );
+    // The smallest of nothing is a failure, which `try` catches.
+    let src = "graph g(xs: List[Nat]) -> Nat:\n    x = try:\n        min(xs)\n    return match x:\n        case Ok(v): v\n        case Failed(e): 0\n";
+    assert_eq!(eval(src, json!({"xs": []})), json!(0));
+}
