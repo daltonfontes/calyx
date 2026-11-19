@@ -7,6 +7,17 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.19.0 (2026-11-19)
+
+- Calyx Studio runs programs. **Run** asks for the graph's parameters (a
+  field for each, by its type) and whether to use fake models, saves the
+  file if it changed, and runs it with `calyx run` in the file's folder
+  (its `calyx.toml`, its journal). Each step's card shows whether it is
+  running, done or failed, with its calls, tokens and time; the Run panel
+  shows the output (or the failure), the trace, and every call from the
+  journal (step, item, effect, answer, tokens, time, cost), or only the
+  selected step's. **Stop** ends the run and the tools it started.
+
 ## 0.18.0 (2026-11-19)
 
 - `calyx studio`, with no file, opens the browser on the current folder

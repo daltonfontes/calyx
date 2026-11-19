@@ -356,3 +356,131 @@ fn only_clyx_files_inside_the_folder() {
         );
     }
 }
+
+/// Runs `body` as `POST /api/run`, then waits until it is no longer running.
+fn run_until_done(s: &Studio, path: &str, body: &str) -> Value {
+    let (status, out) = s.post(&format!("/api/run?path={path}"), body);
+    assert_eq!(status, 200, "{out}");
+    let key = json(&out)["key"].as_u64().unwrap();
+    for _ in 0..300 {
+        let state = json(&s.get(&format!("/api/run?key={key}")).1);
+        if state["status"] != "running" {
+            return state;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("the run did not end");
+}
+
+#[test]
+fn runs_a_graph_and_shows_each_call_from_the_journal() {
+    let s = Studio::start("run", &[]);
+    let state = run_until_done(
+        &s,
+        "sub/q.clyx",
+        r#"{"graph": "main", "args": {"goal": "plan a trip"}, "fake": true}"#,
+    );
+    assert_eq!(state["status"], "finished", "{state}");
+    assert_eq!(state["exit"], 0);
+    let id = state["id"].as_str().unwrap();
+    assert!(
+        s.ws(&format!("sub/.calyx/runs/{id}/journal.jsonl"))
+            .is_file(),
+        "the run is in the file's folder"
+    );
+    let output: Value = serde_json::from_str(state["output"].as_str().unwrap()).unwrap();
+    assert!(output.is_array());
+    let calls = state["calls"].as_array().unwrap();
+    assert_eq!(calls[0]["step"], "parts");
+    assert_eq!(calls[0]["effect"], "llm");
+    assert!(calls[0]["input_tokens"].is_number());
+    let items: Vec<&Value> = calls.iter().filter(|c| c["step"] == "answers").collect();
+    assert_eq!(
+        items.len(),
+        2 * output.as_array().unwrap().len(),
+        "two calls per item"
+    );
+    assert!(items.iter().all(|c| c["item"].is_string()));
+    assert!(
+        state["trace"]
+            .as_str()
+            .unwrap()
+            .contains("running graph `main`")
+    );
+}
+
+#[test]
+fn a_failed_run_names_its_step_and_a_run_can_be_stopped() {
+    let s = Studio::start("fail", &[]);
+    std::fs::write(
+        s.ws("bad.clyx"),
+        "graph main(xs: List[Text]) -> Text:\n    first = xs[3]\n    return first\n",
+    )
+    .unwrap();
+    let state = run_until_done(&s, "bad.clyx", r#"{"args": {"xs": ["a"]}}"#);
+    assert_eq!(state["status"], "failed", "{state}");
+    assert_eq!(state["failed_step"], "first");
+    assert!(state["trace"].as_str().unwrap().contains("no item 3"));
+
+    // A run whose tool never answers: stopped from the page.
+    #[cfg(unix)]
+    {
+        std::fs::write(
+            s.ws("calyx.toml"),
+            "[tools.slow]\ncommand = [\"sleep\", \"30\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            s.ws("hang.clyx"),
+            "tool slow(x: Text) -> Text:\n    effect read\n    timeout 60 s\n\ngraph main() -> Text:\n    return slow(\"x\")\n",
+        )
+        .unwrap();
+        let (status, out) = s.post("/api/run?path=hang.clyx", "{}");
+        assert_eq!(status, 200, "{out}");
+        let key = json(&out)["key"].as_u64().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(
+            json(&s.get(&format!("/api/run?key={key}")).1)["status"],
+            "running"
+        );
+        assert_eq!(s.post(&format!("/api/stop?key={key}"), "").0, 200);
+        let mut stopped = false;
+        for _ in 0..100 {
+            if json(&s.get(&format!("/api/run?key={key}")).1)["status"] == "stopped" {
+                stopped = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(stopped, "Stop ends the run");
+        // And the tool's server it started.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let left = Command::new("pgrep")
+            .args(["-f", "^sleep 30$"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&left.stdout).trim().is_empty(),
+            "the tool's server is still running"
+        );
+        std::fs::remove_file(s.ws("calyx.toml")).unwrap();
+    }
+
+    // A run that waits for a message ends its process.
+    std::fs::write(
+        s.ws("slow.clyx"),
+        "message Go:\n    ok: Bool\n\ngraph main() -> Bool:\n    go = receive Go, timeout 1 days:\n        on timeout: Go(ok = false)\n    return go.ok\n",
+    )
+    .unwrap();
+    let state = run_until_done(&s, "slow.clyx", "{}");
+    assert_eq!(state["status"], "waiting", "{state}");
+
+    // Parameters are names, never options.
+    let (status, _) = s.post(
+        "/api/run?path=p.clyx",
+        r#"{"args": {"config=/etc/x": "y"}}"#,
+    );
+    assert_eq!(status, 400);
+    assert_eq!(s.post("/api/run?path=../secret.clyx", "{}").0, 400);
+    assert_eq!(s.get("/api/run?key=99").0, 404);
+}

@@ -210,6 +210,8 @@ calyx run 4_many.clyx --fake-models --orders '["A100", "A200", "A300"]'
 Para vê-lo como grafo, ao lado do código, rode `calyx studio 4_many.clyx`
 (o navegador abre nesta pasta, com este programa): `lines` é um cartão, com os dois passos dentro
 e `each id in orders` em cima. Clique num passo para achar o código dele.
+Aperte **Run**, dê `["A100", "A200", "A300"]` e veja `lines` terminar com
+as seis chamadas; clique nele para ver a resposta de cada chamada.
 
 ## 5. Com um modelo de verdade
 

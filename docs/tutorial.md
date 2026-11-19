@@ -209,6 +209,8 @@ calyx run 4_many.clyx --fake-models --orders '["A100", "A200", "A300"]'
 To see it as a graph, next to its code, run `calyx studio 4_many.clyx`
 (the browser opens on this folder, with this program): `lines` is one card, with its two steps
 inside and `each id in orders` on top. Click a step to find its code.
+Press **Run**, give `["A100", "A200", "A300"]`, and watch `lines` finish
+with its six calls; click it to see each call's answer.
 
 ## 5. With a real model
 
