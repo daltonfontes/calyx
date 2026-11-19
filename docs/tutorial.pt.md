@@ -207,8 +207,8 @@ graph status_report(orders: List[Text]) -> Report:
 calyx run 4_many.clyx --fake-models --orders '["A100", "A200", "A300"]'
 ```
 
-Para vê-lo como grafo, ao lado do código, rode `calyx studio 4_many.clyx` e
-abra http://127.0.0.1:4180/: `lines` é um cartão, com os dois passos dentro
+Para vê-lo como grafo, ao lado do código, rode `calyx studio 4_many.clyx`
+(o navegador abre nesta pasta, com este programa): `lines` é um cartão, com os dois passos dentro
 e `each id in orders` em cima. Clique num passo para achar o código dele.
 
 ## 5. Com um modelo de verdade

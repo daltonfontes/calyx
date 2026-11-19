@@ -66,12 +66,14 @@ commands:
       `sandboxes`.
       With `tls_cert` and `tls_key` (PEM files) in [serve], over HTTPS;
       without them, plain HTTP: use 127.0.0.1, or a proxy with TLS.
-  studio <file.clyx> [--port N]
-      Open the program in the browser: its code next to its graphs (each
-      step, what it calls, its effect, what it waits for), with its problems
-      as you type. Edit there or in your editor: the page follows the file.
+  studio [folder | file.clyx] [--port N] [--no-open]
+      Open Calyx Studio in the browser, on a folder (the current one by
+      default): create programs (from examples), import, rename, delete and
+      download them, and see each one's graphs next to its code (each step,
+      what it calls, its effect, what it waits for), with its problems as
+      you type. Edit there or in your editor: the page follows the files.
       Serves http://127.0.0.1:4180/ (or the next free port), for this
-      machine only.
+      machine only, and touches only the .clyx files inside the folder.
   worker [--fake-models] [--quiet] [--config FILE] [--every SECONDS] [--max N]
          [--once]
       With the journal in PostgreSQL (CALYX_DATABASE_URL), several machines
@@ -966,7 +968,7 @@ fn login(args: &[String], login: bool) -> ExitCode {
 
 /// Opens `url` in the default browser, if there is one; the address is
 /// printed anyway.
-fn open_browser(url: &str) {
+pub(crate) fn open_browser(url: &str) {
     let mut cmd = if cfg!(target_os = "macos") {
         let mut c = std::process::Command::new("open");
         c.arg(url);
