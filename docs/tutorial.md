@@ -188,12 +188,17 @@ def tally(lines: List[Line]) -> Map[Text, Nat]:
     other = len([l for l in lines if l.status != Delivered])
     return {"delivered": delivered, "other": other}
 
+def headline(lines: List[Line]) -> Text:
+    late = [l for l in lines if l.status != Delivered]
+    word = "order" if len(lines) == 1 else "orders"
+    return "{len(lines)} {word}, {len(late)} not delivered yet"
+
 graph status_report(orders: List[Text]) -> Report:
     lines = for each id in orders:
         found = get_order(id)
         text = gemini(note(found))
         Line(order = id, status = found.status, note = text)
-    return Report(lines = lines, counts = tally(lines))
+    return Report(headline = headline(lines), lines = lines, counts = tally(lines))
 ```
 
 - `for each` runs the items at the same time and the steps of each item in
@@ -201,6 +206,10 @@ graph status_report(orders: List[Text]) -> Report:
   first.
 - `def` is the pure layer: no effects, no recursion, always ends. Maps,
   list comprehensions and `len` live there.
+- `a if cond else b` picks a value on one line, and a text's `{...}` takes
+  any pure expression: the report opens with `3 orders, 1 not delivered
+  yet`. A call (a model, a tool) is never inside `{...}`: it is a step with
+  a name, so the journal has it.
 
 ```bash
 calyx run 4_many.clyx --fake-models --orders '["A100", "A200", "A300"]'

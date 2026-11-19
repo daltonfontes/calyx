@@ -32,7 +32,15 @@ def tally(lines: List[Line]) -> Map[Text, Nat]:
     other = len([l for l in lines if l.status != Delivered])
     return {"delivered": delivered, "other": other}
 
+# A line for the top of the report: an `if` on one line, and expressions
+# inside `{...}`.
+def headline(lines: List[Line]) -> Text:
+    late = [l for l in lines if l.status != Delivered]
+    word = "order" if len(lines) == 1 else "orders"
+    return "{len(lines)} {word}, {len(late)} not delivered yet"
+
 type Report:
+    headline: Text
     lines: List[Line]
     counts: Map[Text, Nat]
 
@@ -41,4 +49,4 @@ graph status_report(orders: List[Text]) -> Report:
         found = get_order(id)
         text = gemini(note(found))
         Line(order = id, status = found.status, note = text)
-    return Report(lines = lines, counts = tally(lines))
+    return Report(headline = headline(lines), lines = lines, counts = tally(lines))
