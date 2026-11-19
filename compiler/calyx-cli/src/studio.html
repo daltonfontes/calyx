@@ -183,6 +183,45 @@ footer .fbar { display: flex; align-items: center; gap: 10px; padding: 6px 12px;
 footer .fbar b { color: var(--text); font-weight: 600; }
 footer .list { overflow: auto; }
 footer.closed .list { display: none; }
+footer.wide { max-height: 46vh; }
+.ftab { border: 0; background: none; padding: 2px 8px; border-radius: 6px; color: var(--muted); font-size: 12px; }
+.ftab.on { color: var(--text); background: var(--panel2); font-weight: 600; }
+button.run { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.rhead { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.rhead code { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.rstatus { font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.rs-running { color: var(--read); } .rs-finished { color: var(--accent); } .rs-failed, .rs-stopped { color: var(--err); } .rs-waiting { color: var(--warn); }
+.rbody { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 0; border-top: 1px solid var(--line); min-height: 0; }
+.rbody > div { min-width: 0; padding: 8px 12px; }
+.rbody > div + div { border-left: 1px solid var(--line); }
+.rbody h4 { margin: 0 0 6px; font-size: 11px; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.rbody pre { margin: 0; font: 12px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 30vh; overflow: auto; }
+.rbody pre.trace { color: var(--muted); margin-top: 10px; }
+.calls { font: 12px var(--mono); }
+.call { display: grid; grid-template-columns: auto auto 1fr auto; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); align-items: baseline; cursor: pointer; }
+.call:hover { background: var(--panel2); }
+.call .st { font-weight: 600; }
+.call .an { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call.open .an { white-space: pre-wrap; word-break: break-word; }
+.call .mt { color: var(--faint); font-size: 11px; white-space: nowrap; }
+.node .rs { margin-left: auto; font-size: 10.5px; white-space: nowrap; color: var(--faint); }
+.node.run-done { border-color: var(--accent); }
+.node.run-done .rs { color: var(--accent); }
+.node.run-active { border-color: var(--read); animation: pulse 1.1s ease-in-out infinite; }
+.node.run-active .rs { color: var(--read); }
+.node.run-failed { border-color: var(--err); box-shadow: 0 0 0 3px rgba(255, 107, 107, .18); }
+.node.run-failed .rs { color: var(--err); }
+.node.run-idle { opacity: .55; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 4px rgba(108, 182, 255, .25); } }
+@media (prefers-reduced-motion: reduce) { .node.run-active { animation: none; } }
+dialog .params { display: grid; gap: 2px; max-height: 50vh; overflow: auto; }
+dialog textarea { width: 100%; min-height: 64px; font: 12.5px var(--mono); padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line2); background: var(--bg); color: var(--text); resize: vertical; outline: none; }
+dialog textarea:focus, dialog input[type=number]:focus { border-color: var(--accent); }
+dialog input[type=number] { width: 100%; font: 13px var(--mono); padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line2); background: var(--bg); color: var(--text); outline: none; }
+dialog .ty { color: var(--faint); font-family: var(--mono); }
+dialog .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--text); font-size: 13px; }
+dialog .check small { color: var(--muted); }
+@media (max-width: 760px) { .rbody { grid-template-columns: 1fr; } .rbody > div + div { border-left: 0; border-top: 1px solid var(--line); } }
 .prob { display: grid; grid-template-columns: 16px auto 1fr auto; gap: 8px; padding: 5px 12px; border-top: 1px solid var(--line); cursor: pointer; align-items: baseline; }
 .prob:hover { background: var(--panel2); }
 .prob .ic { width: 8px; height: 8px; border-radius: 50%; background: var(--err); align-self: start; margin-top: 5px; }
@@ -216,6 +255,7 @@ footer.closed .list { display: none; }
   <div class="tabs" id="tabs" role="tablist" aria-label="Graphs"></div>
   <div class="spacer"></div>
   <div class="status" id="status"><span class="dot"></span><span id="statusText">Checking…</span></div>
+  <button class="run" id="runBtn" title="Run a graph of this program" hidden>▶ Run</button>
   <button id="download" title="Download this file" hidden>Download</button>
   <button class="primary" id="save" disabled title="Save (Ctrl+S)" hidden>Save</button>
 </header>
@@ -280,9 +320,20 @@ footer.closed .list { display: none; }
 <div class="drop" id="drop">Drop .clyx files to add them to the workspace</div>
 <div class="toast" id="toast" role="status"></div>
 
+<dialog id="runDlg">
+  <form method="dialog" id="runForm">
+    <h3 id="runTitle">Run</h3>
+    <div class="params" id="runParams"></div>
+    <label class="check"><input type="checkbox" id="runFake" checked> Fake models <small>no API key, no cost: answers of the right type, made up</small></label>
+    <div class="err" id="runErr"></div>
+    <div class="row"><button type="button" id="runCancel">Cancel</button><button class="primary" type="submit">▶ Run</button></div>
+  </form>
+</dialog>
+
 <footer id="problems">
-  <div class="fbar" id="fbar"><b>Problems</b><span id="pcount"></span><span class="spacer"></span><span id="ptoggle">▾</span></div>
+  <div class="fbar" id="fbar"><button class="ftab on" data-tab="p">Problems <span id="pcount"></span></button><button class="ftab" data-tab="r" id="runTab" hidden>Run <span id="rstat"></span></button><span class="spacer"></span><span id="ptoggle">▾</span></div>
   <div class="list" id="plist"></div>
+  <div class="list" id="rlist" hidden></div>
 </footer>
 
 <script>
@@ -411,7 +462,7 @@ function onCaret() {
   const n = caretLine();
   $("cursor").textContent = `Ln ${n + 1}`;
   const node = nodeAtLine(n);
-  if (node !== state.sel) { state.sel = node; drawSelection(); }
+  if (node !== state.sel) { state.sel = node; drawSelection(); paintRunPanel(); }
   paintEditor();
 }
 
@@ -557,12 +608,12 @@ function closeFile() {
 }
 function showProgram() {
   document.body.classList.remove("nofile");
-  $("welcome").hidden = true; $("main").hidden = false; $("save").hidden = false; $("download").hidden = false;
+  $("welcome").hidden = true; $("main").hidden = false; $("save").hidden = false; $("download").hidden = false; $("runBtn").hidden = false;
   renderFiles();
 }
 function showWelcome() {
   document.body.classList.add("nofile");
-  $("welcome").hidden = false; $("main").hidden = true; $("save").hidden = true; $("download").hidden = true;
+  $("welcome").hidden = false; $("main").hidden = true; $("save").hidden = true; $("download").hidden = true; $("runBtn").hidden = true;
   $("file").textContent = ""; $("tabs").innerHTML = ""; document.title = "Calyx Studio";
   wsStatus(); renderFiles(); renderWelcome();
 }
@@ -684,7 +735,17 @@ function render() {
   for (const p of $("plist").querySelectorAll(".prob")) p.onclick = () => gotoLine(a.diagnostics[+p.dataset.i].start.line);
   drawGraph(); paintEditor();
 }
-$("fbar").onclick = () => { $("problems").classList.toggle("closed"); $("ptoggle").textContent = $("problems").classList.contains("closed") ? "▸" : "▾"; };
+$("fbar").onclick = (e) => {
+  const t = e.target.closest(".ftab");
+  if (t) { showTab(t.dataset.tab); return; }
+  $("problems").classList.toggle("closed"); $("ptoggle").textContent = $("problems").classList.contains("closed") ? "▸" : "▾";
+};
+function showTab(tab) {
+  for (const b of document.querySelectorAll(".ftab")) b.classList.toggle("on", b.dataset.tab === tab);
+  $("plist").hidden = tab !== "p"; $("rlist").hidden = tab !== "r";
+  $("problems").classList.toggle("wide", tab === "r");
+  $("problems").classList.remove("closed"); $("ptoggle").textContent = "▾";
+}
 const cur = () => state.graphs.find((g) => g.name === state.graph);
 
 /* ---------- graph ---------- */
@@ -754,7 +815,7 @@ function drawGraph() {
   }
   $("edges").innerHTML = svg;
   if (!state.fitted) { fit(); state.fitted = true; } else applyView();
-  drawSelection();
+  drawSelection(); paintRunNodes();
 }
 function term(id, box, html, end) {
   const el = document.createElement("div");
@@ -777,12 +838,12 @@ function nodeEl(n, box) {
     ${n.code || !n.fan_out ? `<div class="code" title="${esc(n.code || n.kind)}">${esc(n.code || n.kind)}</div>` : ""}
     ${n.inner.length ? `<div class="inner">${shown.map((s, i) => `<div class="step" data-i="${i}" style="padding-left:${8 + s.depth * 12}px" title="${esc(s.name + " = " + s.code)}"><span class="n">${esc(s.name)}</span><span class="c">${esc(s.code)}</span></div>`).join("")}
       ${n.inner.length > MAXINNER ? `<div class="step"><span class="c">… ${n.inner.length - MAXINNER} more</span></div>` : ""}</div>` : ""}
-    <div class="foot"><span class="pill e-${eff}">${esc(label)}</span><span class="ty" title="${esc(n.type)}">${esc(n.type)}</span></div>`;
+    <div class="foot"><span class="pill e-${eff}">${esc(label)}</span><span class="ty" title="${esc(n.type)}">${esc(n.type)}</span><span class="rs"></span></div>`;
   el.onclick = (e) => {
     e.stopPropagation();
     const st = e.target.closest(".step[data-i]");
     if (st) { gotoLine(n.inner[+st.dataset.i].line); return; }
-    state.sel = n.id; if (n.line != null) gotoLine(n.line); drawSelection();
+    state.sel = n.id; if (n.line != null) gotoLine(n.line); drawSelection(); paintRunPanel();
   };
   return el;
 }
@@ -826,6 +887,143 @@ function hotLines() {
   return hot;
 }
 
+/* ---------- run ---------- */
+state.run = null; state.args = new Map();
+$("runBtn").onclick = async () => {
+  const g = cur();
+  if (!g) { toast(state.last && !state.last.ok ? "Fix the errors first: only a program that checks runs." : "This file has no graph to run.", true); return; }
+  if (state.last && !state.last.ok) { toast("Fix the errors first: only a program that checks runs.", true); return; }
+  const saved = state.args.get(state.path + "/" + g.name) || {};
+  $("runTitle").textContent = `Run ${g.name}`;
+  $("runParams").innerHTML = g.params.length ? g.params.map(([n, t]) => {
+    const v = saved[n];
+    let input;
+    if (t === "Bool") input = `<label class="check" style="margin:0"><input type="checkbox" data-p="${esc(n)}"${v ? " checked" : ""}> ${esc(n)}</label>`;
+    else if (/^(Nat|Int|Float)$/.test(t)) input = `<input type="number" step="${t === "Float" ? "any" : "1"}" data-p="${esc(n)}" value="${v != null ? esc(v) : ""}">`;
+    else if (t === "Text") input = `<input type="text" data-p="${esc(n)}" value="${v != null ? esc(v) : ""}">`;
+    else input = `<textarea data-p="${esc(n)}" placeholder="${esc(example(t))}">${v != null ? esc(JSON.stringify(v)) : ""}</textarea>`;
+    return t === "Bool" ? `<div>${input}</div>` : `<label>${esc(n)} <span class="ty">${esc(t)}</span></label>${input}`;
+  }).join("") : `<p style="color:var(--muted);margin:0">This graph takes no parameters.</p>`;
+  $("runErr").textContent = "";
+  $("runDlg").showModal();
+  const first = $("runParams").querySelector("[data-p]"); if (first) first.focus();
+};
+function example(t) {
+  if (/^List\[Text\]/.test(t)) return '["first", "second"]';
+  if (/^List\[/.test(t)) return "[...] as JSON";
+  if (/^Map\[/.test(t)) return '{"key": value} as JSON';
+  return "JSON, e.g. {\"field\": \"value\"}";
+}
+$("runCancel").onclick = () => $("runDlg").close();
+$("runForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const g = cur(); if (!g) return;
+  const args = {};
+  for (const [n, t] of g.params) {
+    const el = $("runParams").querySelector(`[data-p="${CSS.escape(n)}"]`);
+    if (!el) continue;
+    if (t === "Bool") { args[n] = el.checked; continue; }
+    const raw = el.value;
+    if (t === "Text") { args[n] = raw; continue; }
+    if (raw.trim() === "") { $("runErr").textContent = `\`${n}\` needs a value.`; el.focus(); return; }
+    if (/^(Nat|Int|Float)$/.test(t)) { args[n] = Number(raw); continue; }
+    try { args[n] = JSON.parse(raw); } catch (_) { $("runErr").textContent = `\`${n}\` is not valid JSON.`; el.focus(); return; }
+  }
+  state.args.set(state.path + "/" + g.name, args);
+  if (state.dirty) await save();
+  const fake = $("runFake").checked;
+  const r = await post("/api/run?path=" + enc(state.path), JSON.stringify({ graph: g.name, args, fake }));
+  if (!r.ok) { $("runErr").textContent = await r.text(); return; }
+  const { key } = await r.json();
+  $("runDlg").close();
+  state.run = { key, path: state.path, graph: g.name, fake, data: null, open: new Set() };
+  $("runTab").hidden = false; showTab("r");
+  pollRun(key);
+});
+async function pollRun(key) {
+  if (!state.run || state.run.key !== key) return;
+  try {
+    const r = await fetch("/api/run?key=" + key);
+    if (r.ok) { state.run.data = await r.json(); paintRun(); }
+  } catch (_) { offline(); }
+  if (state.run && state.run.key === key && (!state.run.data || state.run.data.status === "running")) setTimeout(() => pollRun(key), 400);
+}
+function paintRun() { paintRunNodes(); paintRunPanel(); }
+// Each step's calls, and whether the trace says it is done.
+function runSteps() {
+  const d = state.run && state.run.data; if (!d) return null;
+  const by = new Map();
+  for (const c of d.calls) { if (!by.has(c.step)) by.set(c.step, []); by.get(c.step).push(c); }
+  const done = new Set();
+  for (const m of d.trace.matchAll(/^\s*[\d.]+s\s+([A-Za-z_][\w]*)(?:\[\d+\])?\s+done\b/gm)) done.add(m[1]);
+  return { by, done, d };
+}
+function stepState(n, info, g) {
+  const { by, done, d } = info, calls = by.get(n.name) || [];
+  if (d.failed_step === n.name) return "failed";
+  if (d.status === "finished") return "done";
+  if (done.has(n.name)) return "done";
+  const downstream = g.nodes.some((m) => m.inputs.includes(n.id) && ((by.get(m.name) || []).length || done.has(m.name)));
+  if (downstream) return "done";
+  if (calls.length) return d.status === "running" ? "active" : "done";
+  if (d.status !== "running") return "idle";
+  const ready = n.inputs.every((i) => { const m = g.nodes.find((x) => x.id === i); return m && (done.has(m.name) || (by.get(m.name) || []).length || m.effect === "pure"); });
+  return ready ? "active" : "idle";
+}
+function paintRunNodes() {
+  const g = cur(), info = runSteps();
+  const mine = info && state.run.path === state.path && g && state.run.graph === g.name;
+  for (const el of document.querySelectorAll(".node")) {
+    el.classList.remove("run-done", "run-active", "run-failed", "run-idle");
+    const rs = el.querySelector(".rs"); if (rs) rs.textContent = "";
+    if (!mine) continue;
+    const n = g.nodes.find((m) => m.id === +el.dataset.id); if (!n) continue;
+    const st = stepState(n, info, g);
+    el.classList.add("run-" + st);
+    const calls = info.by.get(n.name) || [];
+    const tin = calls.reduce((s, c) => s + (c.input_tokens || 0), 0), tout = calls.reduce((s, c) => s + (c.output_tokens || 0), 0);
+    const ms = calls.reduce((s, c) => s + (c.ms || 0), 0);
+    const parts = [st === "done" ? "✓" : st === "failed" ? "✗ failed" : st === "active" ? "running…" : ""];
+    if (calls.length) parts.push(`${calls.length} call${calls.length > 1 ? "s" : ""}`);
+    if (tin || tout) parts.push(`${tin}→${tout} tok`);
+    if (calls.length) parts.push(ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
+    if (rs) rs.textContent = parts.filter(Boolean).join(" · ");
+  }
+}
+function paintRunPanel() {
+  const run = state.run; if (!run) return;
+  const d = run.data;
+  const st = d ? d.status : "running";
+  $("rstat").innerHTML = `<span class="rs-${st}">●</span>`;
+  const g = cur(), sel = g && state.sel != null && run.path === state.path && run.graph === g.name ? g.nodes.find((m) => m.id === state.sel) : null;
+  const calls = d ? d.calls.filter((c) => !sel || c.step === sel.name) : [];
+  let out = d ? d.output.trim() : "";
+  try { if (out) out = JSON.stringify(JSON.parse(out), null, 2); } catch (_) { /* text */ }
+  const waiting = st === "waiting" && d && d.id ? `<div style="color:var(--warn);font-size:12px">Waiting for a message: give it with <code>calyx deliver ${esc(d.id)} ...</code>, then <code>calyx resume ${esc(d.id)}</code>.</div>` : "";
+  const failure = d && st === "failed" ? (d.trace.split("\n").find((l) => l.includes("execution failed")) || "").replace(/^calyx: /, "") : "";
+  $("rlist").innerHTML = `
+    <div class="rhead"><span class="rstatus rs-${st}">${esc(st)}</span><b>${esc(run.graph)}</b><code>${esc(run.path)}</code>
+      ${d && d.id ? `<code>run ${esc(d.id)}</code>` : ""}<code>${run.fake ? "fake models" : "real models"}</code><span class="spacer"></span>
+      ${st === "running" ? `<button id="stopRun">Stop</button>` : `<button id="againRun">Run again</button>`}</div>
+    ${waiting}
+    <div class="rbody">
+      <div><h4>${st === "failed" ? "Failure" : "Output"}</h4><pre>${esc(failure || out || (st === "running" ? "…" : "(nothing)"))}</pre>
+        <pre class="trace">${esc(d ? d.trace.trim() : "")}</pre></div>
+      <div><h4>Calls${sel ? ` of ${esc(sel.name)}` : ""} (${calls.length})</h4>
+        <div class="calls">${calls.map((c, i) => `<div class="call${run.open.has(c.key) ? " open" : ""}" data-k="${esc(c.key)}">
+          <span class="st e-${esc(c.effect)}">${esc(c.step)}${c.item != null ? `[${esc(c.item)}]` : ""}</span>
+          <span class="mt">${esc(c.effect === "llm" ? "model" : c.effect)}</span>
+          <span class="an" title="Click to see it all">${esc(c.error ? "error: " + JSON.stringify(c.error) : c.answer || "")}</span>
+          <span class="mt">${c.input_tokens != null ? `${c.input_tokens}→${c.output_tokens} tok · ` : ""}${c.ms != null ? c.ms + " ms" : ""}${c.cost_usd != null ? ` · $${Number(c.cost_usd).toFixed(4)}` : ""}</span></div>`).join("") || `<div class="mt" style="padding:4px 0">${st === "running" ? "No calls yet." : sel ? "This step made no calls (it computes, it does not call)." : "No calls."}</div>`}</div></div>
+    </div>`;
+  for (const c of $("rlist").querySelectorAll(".call")) c.onclick = () => { const k = c.dataset.k; run.open.has(k) ? run.open.delete(k) : run.open.add(k); paintRunPanel(); };
+  const stop = $("stopRun"); if (stop) stop.onclick = () => post("/api/stop?key=" + run.key, "");
+  const again = $("againRun"); if (again) again.onclick = async () => {
+    if (run.path !== state.path) await openFile(run.path);
+    state.graph = run.graph; render(); $("runBtn").click();
+  };
+}
+
 /* ---------- pan and zoom ---------- */
 const canvas = $("canvas");
 function applyView() { $("world").style.transform = `translate(${state.view.x}px, ${state.view.y}px) scale(${state.view.k})`; }
@@ -866,7 +1064,7 @@ canvas.addEventListener("pointermove", (e) => {
   state.view.x = drag.vx + e.clientX - drag.x; state.view.y = drag.vy + e.clientY - drag.y; applyView();
 });
 canvas.addEventListener("pointerup", () => {
-  if (drag && !drag.moved) { state.sel = null; drawSelection(); paintEditor(); }
+  if (drag && !drag.moved) { state.sel = null; drawSelection(); paintEditor(); paintRunPanel(); }
   drag = null; canvas.classList.remove("panning");
 });
 

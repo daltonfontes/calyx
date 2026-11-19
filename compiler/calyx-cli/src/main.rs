@@ -71,7 +71,8 @@ commands:
       default): create programs (from examples), import, rename, delete and
       download them, and see each one's graphs next to its code (each step,
       what it calls, its effect, what it waits for), with its problems as
-      you type. Edit there or in your editor: the page follows the files.
+      you type. Run a graph from there and see each step's calls, tokens
+      and answers. Edit there or in your editor: the page follows the files.
       Serves http://127.0.0.1:4180/ (or the next free port), for this
       machine only, and touches only the .clyx files inside the folder.
   worker [--fake-models] [--quiet] [--config FILE] [--every SECONDS] [--max N]

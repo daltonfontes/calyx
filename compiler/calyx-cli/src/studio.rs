@@ -19,6 +19,12 @@
 //! - `POST /api/save?path=P[&new=1]`: writes the text to the file (with
 //!   `new`, only if there is none yet), and checks it.
 //! - `POST /api/rename?path=P&to=Q`, `POST /api/delete?path=P`.
+//! - `POST /api/run?path=P` (`{"graph", "args", "fake"}`): runs a graph of
+//!   the file as it is on disk, with this same `calyx` (`calyx run`, in the
+//!   file's folder, so its `calyx.toml` and journal are the usual ones).
+//!   `GET /api/run?key=K`: how it goes: running, finished, failed or
+//!   waiting; its output, its trace, and each call from its journal (step,
+//!   item, effect, time, tokens, cost, answer). `POST /api/stop?key=K`.
 //!
 //! The code is the source of truth: the graph is drawn from it, never the
 //! other way round.
@@ -34,6 +40,7 @@ use std::io::Write;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use calyx_syntax::Severity;
@@ -64,6 +71,17 @@ const TEMPLATES: &[(&str, &str, &str, &str)] = &[
         include_str!("../../../examples/team.clyx"),
     ),
 ];
+
+/// A run started from the page.
+struct Run {
+    /// The file's folder, where its journal is.
+    dir: PathBuf,
+    child: Mutex<std::process::Child>,
+    stdout: Arc<Mutex<String>>,
+    stderr: Arc<Mutex<String>>,
+}
+
+static RUNS: Mutex<Vec<Arc<Run>>> = Mutex::new(Vec::new());
 
 struct Workspace {
     /// The folder, canonical.
@@ -402,8 +420,239 @@ fn handle(mut stream: TcpStream, ws: &Workspace) {
                 Err(e) => fail(&mut stream, 500, format!("`{rel}`: {e}")),
             }
         }
+        ("POST", "/api/run") => {
+            let file = match resolve(ws, &rel, false) {
+                Ok(f) => f,
+                Err(e) => return fail(&mut stream, 400, e),
+            };
+            let Ok(req) = serde_json::from_slice::<Value>(&req.body) else {
+                return fail(&mut stream, 400, "expected {graph, args, fake}".into());
+            };
+            match start_run(&file, &req) {
+                Ok(key) => respond(
+                    &mut stream,
+                    200,
+                    "application/json",
+                    &json!({"key": key}).to_string(),
+                ),
+                Err(e) => fail(&mut stream, 400, e),
+            }
+        }
+        ("GET", "/api/run") => {
+            let run = param(query, "key")
+                .and_then(|k| k.parse::<usize>().ok())
+                .and_then(|k| RUNS.lock().ok()?.get(k).cloned());
+            match run {
+                Some(r) => respond(
+                    &mut stream,
+                    200,
+                    "application/json",
+                    &run_state(&r).to_string(),
+                ),
+                None => fail(&mut stream, 404, "no such run".into()),
+            }
+        }
+        ("POST", "/api/stop") => {
+            let run = param(query, "key")
+                .and_then(|k| k.parse::<usize>().ok())
+                .and_then(|k| RUNS.lock().ok()?.get(k).cloned());
+            match run {
+                Some(r) => {
+                    if let Ok(mut c) = r.child.lock()
+                        && c.try_wait().ok().flatten().is_none()
+                    {
+                        // The run and every process it started.
+                        #[cfg(unix)]
+                        let _ = std::process::Command::new("kill")
+                            .args(["-KILL", "--", &format!("-{}", c.id())])
+                            .status();
+                        let _ = c.kill();
+                    }
+                    respond(&mut stream, 200, "application/json", "{}")
+                }
+                None => fail(&mut stream, 404, "no such run".into()),
+            }
+        }
         _ => respond(&mut stream, 404, "text/plain", "not found"),
     }
+}
+
+/// Starts `calyx run` on `file` (`{"graph", "args", "fake"}`): its key.
+fn start_run(file: &Path, req: &Value) -> Result<usize, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("calyx: {e}"))?;
+    let dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("run")
+        .arg(file.file_name().unwrap_or_default())
+        .current_dir(&dir);
+    if let Some(g) = req["graph"].as_str() {
+        cmd.args(["--graph", g]);
+    }
+    if req["fake"].as_bool().unwrap_or(true) {
+        cmd.arg("--fake-models");
+    }
+    if let Some(args) = req["args"].as_object() {
+        for (name, value) in args {
+            if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return Err(format!("`{name}` is not a parameter"));
+            }
+            // Texts as they are; anything else as JSON.
+            let v = match value {
+                Value::String(t) => t.clone(),
+                other => other.to_string(),
+            };
+            cmd.arg(format!("--{name}")).arg(v);
+        }
+    }
+    // Its own process group, so Stop also ends the tools it started.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot start calyx run: {e}"))?;
+    // Read both outputs as they come, so the page sees the trace live.
+    let collect = |from: Box<dyn std::io::Read + Send>| {
+        let buf = Arc::new(Mutex::new(String::new()));
+        let into = Arc::clone(&buf);
+        std::thread::spawn(move || {
+            let mut r = std::io::BufReader::new(from);
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = std::io::Read::read(&mut r, &mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                if let Ok(mut b) = into.lock()
+                    && b.len() < 4 << 20
+                {
+                    b.push_str(&String::from_utf8_lossy(&chunk[..n]));
+                }
+            }
+        });
+        buf
+    };
+    let stdout = collect(Box::new(child.stdout.take().expect("piped")));
+    let stderr = collect(Box::new(child.stderr.take().expect("piped")));
+    let run = Arc::new(Run {
+        dir,
+        child: Mutex::new(child),
+        stdout,
+        stderr,
+    });
+    let mut runs = RUNS.lock().map_err(|_| "studio: runs".to_owned())?;
+    runs.push(run);
+    Ok(runs.len() - 1)
+}
+
+/// A run as the page shows it.
+fn run_state(r: &Run) -> Value {
+    let exit = r
+        .child
+        .lock()
+        .ok()
+        .and_then(|mut c| c.try_wait().ok().flatten());
+    let stderr = r.stderr.lock().map(|s| s.clone()).unwrap_or_default();
+    let stdout = r.stdout.lock().map(|s| s.clone()).unwrap_or_default();
+    let id = stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("calyx: run "))
+        .map(|s| s.trim().to_owned());
+    let status = match exit.map(|e| e.code()) {
+        None => "running",
+        Some(Some(0)) => "finished",
+        Some(Some(4)) => "waiting",
+        Some(None) => "stopped",
+        Some(Some(_)) => "failed",
+    };
+    // The step that failed, from `... node `x`: ...`.
+    let failed_step = stderr
+        .lines()
+        .find(|l| l.contains("execution failed"))
+        .and_then(|l| l.split("node `").nth(1))
+        .and_then(|r| r.split('`').next())
+        .map(|n| n.split(['[', '#']).next().unwrap_or(n).to_owned());
+    let mut calls = Vec::new();
+    if let Some(id) = &id
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && let Ok(text) =
+            std::fs::read_to_string(r.dir.join(".calyx/runs").join(id).join("journal.jsonl"))
+    {
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            if v["type"] == "call" {
+                calls.push(call_summary(&v));
+            }
+        }
+    }
+    let short = |s: &str| {
+        if s.len() > 200_000 {
+            let mut end = 200_000;
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}\n…", &s[..end])
+        } else {
+            s.to_owned()
+        }
+    };
+    json!({
+        "status": status,
+        "id": id,
+        "exit": exit.and_then(|e| e.code()),
+        "output": short(&stdout),
+        "trace": short(&stderr),
+        "failed_step": failed_step,
+        "calls": calls,
+    })
+}
+
+/// One journaled call: its step (`graph/step[item]#n`), what it did and
+/// gave, its answer cut to a size a page can show.
+fn call_summary(v: &Value) -> Value {
+    let key = v["key"].as_str().unwrap_or("");
+    let path = key.split_once('/').map_or(key, |(_, rest)| rest);
+    let step = path.split(['[', '#', '/']).next().unwrap_or(path);
+    let item = path
+        .split_once('[')
+        .and_then(|(_, r)| r.split(']').next())
+        .map(str::to_owned);
+    let ok = &v["ok"];
+    let answer = if ok.is_null() {
+        Value::Null
+    } else if !ok["json"].is_null() {
+        ok["json"].clone()
+    } else if ok["text"].is_string() {
+        ok["text"].clone()
+    } else if ok["value"].is_null() {
+        ok.clone()
+    } else {
+        ok["value"].clone()
+    };
+    let mut answer = answer.to_string();
+    if answer.len() > 4000 {
+        let mut end = 4000;
+        while !answer.is_char_boundary(end) {
+            end -= 1;
+        }
+        answer.truncate(end);
+        answer.push('…');
+    }
+    json!({
+        "key": key,
+        "step": step,
+        "item": item,
+        "effect": v["effect"],
+        "ms": ok["ms"],
+        "input_tokens": ok["input_tokens"],
+        "output_tokens": ok["output_tokens"],
+        "cost_usd": ok["cost_usd"],
+        "answer": if ok.is_null() { Value::Null } else { Value::String(answer) },
+        "error": v.get("err").cloned().unwrap_or(Value::Null),
+    })
 }
 
 fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &str) {
