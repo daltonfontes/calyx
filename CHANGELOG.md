@@ -7,6 +7,16 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.23.1 (2026-11-19)
+
+- The examples use what 0.22 and 0.23 added: `examples/team.clyx` picks
+  values with `a if cond else b` (its three `def`s lost their `if`
+  blocks), and the tutorial's report opens with a `headline` written with
+  both (`"{len(lines)} {word}, {len(late)} not delivered yet"`). The
+  tutorial explains them in step 4. `team.clyx` is a new program, so its
+  pinned hash changed; a run of it started by an older version resumes
+  with that version, as always.
+
 ## 0.23.0 (2026-11-19)
 
 - `a if cond else b` on one line, as in Python, anywhere an expression

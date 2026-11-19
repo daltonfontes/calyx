@@ -31,26 +31,17 @@ def open(t: Task) -> Bool:
 
 # `t` with `helper` as its owner, if it is the task being given out.
 def given(t: Task, first: List[Task], helper: Text) -> Task:
-    owner = t.owner
-    if t in first:
-        owner = helper
-    return Task(id = t.id, what = t.what, owner = owner, answer = t.answer)
+    return Task(id = t.id, what = t.what, owner = helper if t in first else t.owner, answer = t.answer)
 
 def answered(t: Task, id: Text, answer: Text) -> Task:
-    text = t.answer
-    if t.id == id:
-        text = answer
-    return Task(id = t.id, what = t.what, owner = t.owner, answer = text)
+    return Task(id = t.id, what = t.what, owner = t.owner, answer = answer if t.id == id else t.answer)
 
 def mine(tasks: List[Task], helper: Text) -> List[Task]:
     return [t for t in tasks if t.owner == helper and t.answer == ""]
 
 # The first open task becomes `helper`'s, unless it is still on one.
 def claimed(tasks: List[Task], helper: Text) -> List[Task]:
-    busy = mine(tasks, helper)
-    first = take([t for t in tasks if open(t)], 1)
-    if len(busy) > 0:
-        first = []
+    first = [] if len(mine(tasks, helper)) > 0 else take([t for t in tasks if open(t)], 1)
     return [given(t, first, helper) for t in tasks]
 
 entity Board(key project: Text):

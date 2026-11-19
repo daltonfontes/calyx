@@ -189,12 +189,17 @@ def tally(lines: List[Line]) -> Map[Text, Nat]:
     other = len([l for l in lines if l.status != Delivered])
     return {"delivered": delivered, "other": other}
 
+def headline(lines: List[Line]) -> Text:
+    late = [l for l in lines if l.status != Delivered]
+    word = "order" if len(lines) == 1 else "orders"
+    return "{len(lines)} {word}, {len(late)} not delivered yet"
+
 graph status_report(orders: List[Text]) -> Report:
     lines = for each id in orders:
         found = get_order(id)
         text = gemini(note(found))
         Line(order = id, status = found.status, note = text)
-    return Report(lines = lines, counts = tally(lines))
+    return Report(headline = headline(lines), lines = lines, counts = tally(lines))
 ```
 
 - `for each` roda os itens ao mesmo tempo, e os passos de cada item em
@@ -202,6 +207,10 @@ graph status_report(orders: List[Text]) -> Report:
   primeiro.
 - `def` é a camada pura: sem efeitos, sem recursão, sempre termina. Mapas,
   listas por compreensão e `len` ficam aí.
+- `a if cond else b` escolhe um valor numa linha, e o `{...}` de um texto
+  aceita qualquer expressão pura: o relatório começa com `3 orders, 1 not
+  delivered yet`. Uma chamada (um modelo, uma tool) nunca fica dentro de
+  `{...}`: ela é um passo com nome, então o diário a registra.
 
 ```bash
 calyx run 4_many.clyx --fake-models --orders '["A100", "A200", "A300"]'
