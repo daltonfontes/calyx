@@ -1,0 +1,11 @@
+# An inline `if` needs its `else`, a `Bool` condition, and branches of one
+# type.
+
+graph a(n: Nat) -> Text:
+    x = "x" if n > 1
+    return x
+
+graph b(n: Nat) -> Text:
+    y = "y" if n else "z"
+    z = "x" if n > 1 else 3
+    return y

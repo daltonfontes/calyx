@@ -1,0 +1,11 @@
+# `a if cond else b` on one line, as in Python; chained, in a `def`, in a
+# step, in a text. A comprehension's `if` is still its filter.
+
+def grade(score: Nat) -> Text:
+    return "high" if score >= 80 else "mid" if score >= 50 else "low"
+
+graph main(xs: List[Nat]) -> Text:
+    labels = [grade(x) for x in xs if x > 0]
+    word = "item" if len(xs) == 1 else "items"
+    listed = join(labels, ", ") if len(labels) > 0 else "none"
+    return "{len(xs)} {word}: {listed}; first {labels[0] if len(labels) > 0 else word}"

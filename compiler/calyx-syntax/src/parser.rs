@@ -1355,7 +1355,32 @@ impl Parser<'_> {
                 kind: ExprKind::Borrow { mode, target },
             });
         }
-        self.or_expr()
+        let value = self.or_expr()?;
+        // `a if cond else b`, on one line, as in Python. (A list
+        // comprehension's `in list if cond` reads the list with `or_expr`,
+        // so its `if` is the filter.)
+        if self.is_word("if") {
+            self.advance();
+            let cond = self.or_expr()?;
+            if !self.is_word("else") {
+                return Err(self.error_here(
+                    "E0114",
+                    "an `if` in an expression needs its `else`",
+                    "`a if cond else b`: the value when `cond` is false",
+                ));
+            }
+            self.advance();
+            let els = self.expr()?;
+            return Ok(Expr {
+                span: Span::new(value.span.start as usize, els.span.end as usize),
+                kind: ExprKind::If {
+                    cond: Box::new(cond),
+                    then: Box::new(value),
+                    els: Box::new(els),
+                },
+            });
+        }
+        Ok(value)
     }
 
     /// Is the current word used as a keyword (followed by what it applies
