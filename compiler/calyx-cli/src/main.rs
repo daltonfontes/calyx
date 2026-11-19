@@ -7,6 +7,7 @@ mod bundle;
 mod lsp;
 mod runs;
 mod serve;
+mod studio;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -65,6 +66,12 @@ commands:
       `sandboxes`.
       With `tls_cert` and `tls_key` (PEM files) in [serve], over HTTPS;
       without them, plain HTTP: use 127.0.0.1, or a proxy with TLS.
+  studio <file.clyx> [--port N]
+      Open the program in the browser: its code next to its graphs (each
+      step, what it calls, its effect, what it waits for), with its problems
+      as you type. Edit there or in your editor: the page follows the file.
+      Serves http://127.0.0.1:4180/ (or the next free port), for this
+      machine only.
   worker [--fake-models] [--quiet] [--config FILE] [--every SECONDS] [--max N]
          [--once]
       With the journal in PostgreSQL (CALYX_DATABASE_URL), several machines
@@ -173,6 +180,7 @@ fn main() -> ExitCode {
         Some("tick") => tick(&args[1..]),
         Some("serve") => serve::serve(&args[1..]),
         Some("lsp") => lsp::lsp(&args[1..]),
+        Some("studio") => studio::studio(&args[1..]),
         Some("worker") => worker(&args[1..]),
         Some("version" | "--version" | "-V") => {
             println!("calyx {}", env!("CARGO_PKG_VERSION"));

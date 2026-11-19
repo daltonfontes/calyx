@@ -7,6 +7,19 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.17.0 (2026-11-19)
+
+- `calyx studio <file.clyx>`: the program in the browser, its code next to
+  its graphs. Each step is a card with what it calls, its effect (pure,
+  read, model, write), its type, and for a `for each` or a loop the steps
+  inside it; arrows are what each step waits for. Clicking a step shows its
+  code, and moving in the code shows its step. The errors appear as you
+  type, and the graph keeps the last version that checked. Edit there
+  (Ctrl+S saves) or in another editor: the page follows the file. The page
+  is inside the binary and loads nothing from the network; the server
+  answers only on 127.0.0.1, only to its own page, and writes only the file
+  it was started with.
+
 ## 0.16.0 (2026-11-13)
 
 - An entity's handler may change the state **and** answer (`next` lines

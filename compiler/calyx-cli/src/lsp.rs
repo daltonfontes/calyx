@@ -192,7 +192,7 @@ fn publish(out: &mut impl Write, uri: &str, text: &str) {
 }
 
 /// A byte offset as an LSP position: 0-based line, UTF-16 column.
-fn position(src: &Source, offset: u32) -> Value {
+pub(crate) fn position(src: &Source, offset: u32) -> Value {
     let at = src.line_col(offset);
     let line_start = src.text[..offset as usize].rfind('\n').map_or(0, |i| i + 1);
     let col: usize = src.text[line_start..offset as usize]

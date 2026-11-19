@@ -309,11 +309,11 @@ struct Http {
     sessions: Mutex<Map<String, Value>>,
 }
 
-struct Request {
-    method: String,
-    path: String,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
+pub(crate) struct Request {
+    pub(crate) method: String,
+    pub(crate) path: String,
+    pub(crate) headers: Vec<(String, String)>,
+    pub(crate) body: Vec<u8>,
 }
 
 impl Request {
@@ -325,7 +325,7 @@ impl Request {
     }
 }
 
-fn read_request(stream: &mut impl Read) -> Option<Request> {
+pub(crate) fn read_request(stream: &mut impl Read) -> Option<Request> {
     let mut r = BufReader::new(stream);
     let mut line = String::new();
     r.read_line(&mut line).ok()?;
