@@ -1926,7 +1926,7 @@ impl<'p> Cx<'_, 'p> {
                 self.push(
                     err("E0402", "invalid interpolation", span)
                         .expected(if exprs {
-                            "a name, a field, or an expression such as `{len(items)}` (no quotes or braces inside)"
+                            "a name, a field, or a whole expression, such as `{len(items)}` or `{counts[\"done\"]}`"
                         } else {
                             "`{name}` or `{name.field}`: in a prompt, compute the value in the graph and pass it"
                         })
@@ -5144,12 +5144,11 @@ fn interpolations(lit: &StrLit) -> Vec<(String, usize, usize)> {
             b'\\' => i += 2,
             b'{' => {
                 let start = i;
-                match lit.text[i + 1..].find('}') {
-                    Some(len) => {
-                        let content = lit.text[i + 1..i + 1 + len].trim().to_owned();
-                        let end = i + 1 + len + 1;
-                        out.push((content, base + start, base + end));
-                        i = end;
+                match calyx_syntax::interpolation_end(&lit.text, i) {
+                    Some(close) => {
+                        let content = lit.text[i + 1..close].trim().to_owned();
+                        out.push((content, base + start, base + close + 1));
+                        i = close + 1;
                     }
                     None => break,
                 }

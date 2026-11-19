@@ -1,0 +1,3 @@
+graph main(names: List[Text]) -> Text [pure]
+  %0 return: Text = pure [pure]
+  return %0

@@ -242,3 +242,16 @@ graph g(xs: List[Text], orders: List[Order], n: Nat) -> Text:
         json!("3 items, first a; 5; 25; A1; b; - 4\n- 4")
     );
 }
+
+#[test]
+fn a_texts_interpolation_may_hold_texts_and_braces() {
+    let src = r#"
+graph g(names: List[Text]) -> Text:
+    counts = {"done": 2}
+    return "{counts["done"]} done; {join(names, ", ")}; {get({"a": 1}, "a", 0)}; {"many" if len(names) > 1 else "one"}; \{as is\}; a { b"
+"#;
+    assert_eq!(
+        eval(src, json!({"names": ["ana", "bia"]})),
+        json!("2 done; ana, bia; 1; many; {as is}; a { b")
+    );
+}

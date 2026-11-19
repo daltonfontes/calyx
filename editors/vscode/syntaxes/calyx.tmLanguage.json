@@ -35,8 +35,21 @@
       ]
     },
     "interpolation": {
-      "match": "\\{[^{}\"]*\\}",
-      "name": "variable.other.interpolation.calyx"
+      "begin": "\\{(?=[^\\n]*\\})",
+      "end": "\\}",
+      "name": "variable.other.interpolation.calyx",
+      "patterns": [
+        { "include": "#string" },
+        { "include": "#braces" }
+      ]
+    },
+    "braces": {
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        { "include": "#string" },
+        { "include": "#braces" }
+      ]
     },
     "declaration": {
       "match": "^\\s*(model|tool|type|message|prompt|graph|entity|def|router|policy|skill)\\s+([A-Za-z_][A-Za-z0-9_]*)",

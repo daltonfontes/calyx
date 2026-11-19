@@ -2396,11 +2396,10 @@ impl Parser<'_> {
         while i < bytes.len() {
             match bytes[i] {
                 b'\\' => i += 2,
-                b'{' => match inner[i + 1..].find('}') {
-                    Some(len) => {
-                        let (start, end) = (base + i + 1, base + i + 1 + len);
-                        out.push(self.sub_expr(start, end));
-                        i += len + 2;
+                b'{' => match crate::interpolation_end(inner, i) {
+                    Some(close) => {
+                        out.push(self.sub_expr(base + i + 1, base + close));
+                        i = close + 1;
                     }
                     None => break,
                 },
