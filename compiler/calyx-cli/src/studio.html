@@ -212,8 +212,24 @@ button.run { border-color: var(--accent); color: var(--accent); font-weight: 600
 .node.run-failed { border-color: var(--err); box-shadow: 0 0 0 3px rgba(255, 107, 107, .18); }
 .node.run-failed .rs { color: var(--err); }
 .node.run-idle { opacity: .55; }
+.node.run-waiting { border-color: var(--warn); box-shadow: 0 0 0 3px rgba(242, 193, 78, .18); }
+.node.run-waiting .rs { color: var(--warn); }
 @keyframes pulse { 50% { box-shadow: 0 0 0 4px rgba(108, 182, 255, .25); } }
 @media (prefers-reduced-motion: reduce) { .node.run-active { animation: none; } }
+.runs { font-size: 12.5px; }
+.prun { display: grid; grid-template-columns: auto auto 1fr auto; gap: 10px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--line); cursor: pointer; }
+.prun:hover { background: var(--panel2); }
+.prun code { font-family: var(--mono); font-size: 12px; }
+.prun .meta { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prun .acts { display: flex; gap: 6px; }
+.prun .acts button { padding: 2px 9px; font-size: 12px; }
+.rs-interrupted { color: var(--warn); }
+.waitbox { margin: 8px 12px; padding: 8px 10px; border: 1px solid var(--warn); border-radius: 8px; font-size: 12.5px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.waitbox .about { color: var(--muted); flex: 1; min-width: 200px; }
+dialog .variants { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+dialog .variants label { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 5px 10px; border: 1px solid var(--line2); border-radius: 999px; color: var(--text); font-size: 13px; cursor: pointer; }
+dialog .variants label:has(input:checked) { border-color: var(--accent); background: var(--sel); }
+dialog .about { color: var(--muted); font-size: 12.5px; margin: -6px 0 8px; }
 dialog .params { display: grid; gap: 2px; max-height: 50vh; overflow: auto; }
 dialog textarea { width: 100%; min-height: 64px; font: 12.5px var(--mono); padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line2); background: var(--bg); color: var(--text); resize: vertical; outline: none; }
 dialog textarea:focus, dialog input[type=number]:focus { border-color: var(--accent); }
@@ -330,10 +346,23 @@ dialog .check small { color: var(--muted); }
   </form>
 </dialog>
 
+<dialog id="msgDlg">
+  <form method="dialog" id="msgForm">
+    <h3 id="msgTitle">Deliver</h3>
+    <div class="about" id="msgAbout"></div>
+    <div id="msgFields"></div>
+    <label class="check"><input type="checkbox" id="msgResume" checked> Resume the run now</label>
+    <label class="check"><input type="checkbox" id="msgFake" checked> Fake models <small>for the rest of the run</small></label>
+    <div class="err" id="msgErr"></div>
+    <div class="row"><button type="button" id="msgCancel">Cancel</button><button class="primary" type="submit">Deliver</button></div>
+  </form>
+</dialog>
+
 <footer id="problems">
-  <div class="fbar" id="fbar"><button class="ftab on" data-tab="p">Problems <span id="pcount"></span></button><button class="ftab" data-tab="r" id="runTab" hidden>Run <span id="rstat"></span></button><span class="spacer"></span><span id="ptoggle">▾</span></div>
+  <div class="fbar" id="fbar"><button class="ftab on" data-tab="p">Problems <span id="pcount"></span></button><button class="ftab" data-tab="r" id="runTab" hidden>Run <span id="rstat"></span></button><button class="ftab" data-tab="h" id="histTab">Runs <span id="hcount"></span></button><span class="spacer"></span><span id="ptoggle">▾</span></div>
   <div class="list" id="plist"></div>
   <div class="list" id="rlist" hidden></div>
+  <div class="list runs" id="hlist" hidden></div>
 </footer>
 
 <script>
@@ -598,6 +627,7 @@ async function openFile(path) {
   if (path !== state.path) return;
   if (!r.ok) { toast(await r.text(), true); closeFile(); return; }
   const a = await r.json();
+  loadRuns();
   state.diskHash = a.hash; setText(a.text, false);
   code.selectionStart = code.selectionEnd = 0; code.scrollTop = 0; $("cursor").textContent = "Ln 1"; apply(a);
   if (b) { code.scrollTop = b.scroll; syncScroll(); }
@@ -742,8 +772,9 @@ $("fbar").onclick = (e) => {
 };
 function showTab(tab) {
   for (const b of document.querySelectorAll(".ftab")) b.classList.toggle("on", b.dataset.tab === tab);
-  $("plist").hidden = tab !== "p"; $("rlist").hidden = tab !== "r";
-  $("problems").classList.toggle("wide", tab === "r");
+  $("plist").hidden = tab !== "p"; $("rlist").hidden = tab !== "r"; $("hlist").hidden = tab !== "h";
+  $("problems").classList.toggle("wide", tab === "r" || tab === "h");
+  if (tab === "h") loadRuns();
   $("problems").classList.remove("closed"); $("ptoggle").textContent = "▾";
 }
 const cur = () => state.graphs.find((g) => g.name === state.graph);
@@ -947,6 +978,7 @@ async function pollRun(key) {
     if (r.ok) { state.run.data = await r.json(); paintRun(); }
   } catch (_) { offline(); }
   if (state.run && state.run.key === key && (!state.run.data || state.run.data.status === "running")) setTimeout(() => pollRun(key), 400);
+  else loadRuns();
 }
 function paintRun() { paintRunNodes(); paintRunPanel(); }
 // Each step's calls, and whether the trace says it is done.
@@ -961,6 +993,8 @@ function runSteps() {
 function stepState(n, info, g) {
   const { by, done, d } = info, calls = by.get(n.name) || [];
   if (d.failed_step === n.name) return "failed";
+  const stepOf = (key) => (key.split("/")[1] || "").split(/[[#/]/)[0];
+  if ((d.waits || []).some((w) => !w.delivered && stepOf(w.key) === n.name)) return "waiting";
   if (d.status === "finished") return "done";
   if (done.has(n.name)) return "done";
   const downstream = g.nodes.some((m) => m.inputs.includes(n.id) && ((by.get(m.name) || []).length || done.has(m.name)));
@@ -974,7 +1008,7 @@ function paintRunNodes() {
   const g = cur(), info = runSteps();
   const mine = info && state.run.path === state.path && g && state.run.graph === g.name;
   for (const el of document.querySelectorAll(".node")) {
-    el.classList.remove("run-done", "run-active", "run-failed", "run-idle");
+    el.classList.remove("run-done", "run-active", "run-failed", "run-idle", "run-waiting");
     const rs = el.querySelector(".rs"); if (rs) rs.textContent = "";
     if (!mine) continue;
     const n = g.nodes.find((m) => m.id === +el.dataset.id); if (!n) continue;
@@ -983,7 +1017,7 @@ function paintRunNodes() {
     const calls = info.by.get(n.name) || [];
     const tin = calls.reduce((s, c) => s + (c.input_tokens || 0), 0), tout = calls.reduce((s, c) => s + (c.output_tokens || 0), 0);
     const ms = calls.reduce((s, c) => s + (c.ms || 0), 0);
-    const parts = [st === "done" ? "✓" : st === "failed" ? "✗ failed" : st === "active" ? "running…" : ""];
+    const parts = [st === "done" ? "✓" : st === "failed" ? "✗ failed" : st === "active" ? "running…" : st === "waiting" ? "⏸ waiting" : ""];
     if (calls.length) parts.push(`${calls.length} call${calls.length > 1 ? "s" : ""}`);
     if (tin || tout) parts.push(`${tin}→${tout} tok`);
     if (calls.length) parts.push(ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
@@ -999,12 +1033,14 @@ function paintRunPanel() {
   const calls = d ? d.calls.filter((c) => !sel || c.step === sel.name) : [];
   let out = d ? d.output.trim() : "";
   try { if (out) out = JSON.stringify(JSON.parse(out), null, 2); } catch (_) { /* text */ }
-  const waiting = st === "waiting" && d && d.id ? `<div style="color:var(--warn);font-size:12px">Waiting for a message: give it with <code>calyx deliver ${esc(d.id)} ...</code>, then <code>calyx resume ${esc(d.id)}</code>.</div>` : "";
+  const waiting = d && d.id ? (d.waits || []).map((w, i) => `<div class="waitbox"><b>Waiting for ${esc(w.message)}</b>
+      <span class="about">${w.about != null ? "about: " + esc(typeof w.about === "string" ? w.about : JSON.stringify(w.about)) : ""}${w.until ? ` · until ${esc(new Date(w.until * 1000).toLocaleString())}` : ""}</span>
+      ${w.delivered ? `<span>delivered</span><button data-resume="1">Resume</button>` : `<button class="primary" data-wait="${i}">Deliver ${esc(w.message)}…</button>`}</div>`).join("") : "";
   const failure = d && st === "failed" ? (d.trace.split("\n").find((l) => l.includes("execution failed")) || "").replace(/^calyx: /, "") : "";
   $("rlist").innerHTML = `
     <div class="rhead"><span class="rstatus rs-${st}">${esc(st)}</span><b>${esc(run.graph)}</b><code>${esc(run.path)}</code>
       ${d && d.id ? `<code>run ${esc(d.id)}</code>` : ""}<code>${run.fake ? "fake models" : "real models"}</code><span class="spacer"></span>
-      ${st === "running" ? `<button id="stopRun">Stop</button>` : `<button id="againRun">Run again</button>`}</div>
+      ${st === "running" ? `<button id="stopRun">Stop</button>` : `${st === "failed" || st === "interrupted" || st === "stopped" ? `<button data-resume="1" title="Continue it: the calls in its journal are not made again">Resume</button>` : ""}<button id="againRun">Run again</button>`}</div>
     ${waiting}
     <div class="rbody">
       <div><h4>${st === "failed" ? "Failure" : "Output"}</h4><pre>${esc(failure || out || (st === "running" ? "…" : "(nothing)"))}</pre>
@@ -1018,11 +1054,121 @@ function paintRunPanel() {
     </div>`;
   for (const c of $("rlist").querySelectorAll(".call")) c.onclick = () => { const k = c.dataset.k; run.open.has(k) ? run.open.delete(k) : run.open.add(k); paintRunPanel(); };
   const stop = $("stopRun"); if (stop) stop.onclick = () => post("/api/stop?key=" + run.key, "");
+  for (const b of $("rlist").querySelectorAll("[data-wait]")) b.onclick = () => deliverDialog(run.path, d.id, d.waits[+b.dataset.wait]);
+  for (const b of $("rlist").querySelectorAll("[data-resume]")) b.onclick = () => resumeRun(run.path, d.id, run.graph, run.fake);
   const again = $("againRun"); if (again) again.onclick = async () => {
     if (run.path !== state.path) await openFile(run.path);
     state.graph = run.graph; render(); $("runBtn").click();
   };
 }
+
+/* ---------- past runs ---------- */
+const when = (t) => t ? new Date(t * 1000).toLocaleString() : "";
+async function loadRuns() {
+  if (!state.path) { $("hlist").innerHTML = ""; return; }
+  const path = state.path;
+  const r = await fetch("/api/runs?path=" + enc(path));
+  if (!r.ok || path !== state.path) return;
+  const runs = await r.json();
+  state.pastRuns = runs;
+  $("hcount").textContent = runs.length ? `(${runs.length})` : "";
+  $("hlist").innerHTML = runs.length ? runs.map((x, i) => {
+    const w = (x.waits || []).find((w) => !w.delivered);
+    const resumable = ["failed", "interrupted"].includes(x.status) || (x.status === "waiting" && (x.waits || []).some((w) => w.delivered));
+    return `<div class="prun" data-i="${i}">
+      <span class="rstatus rs-${esc(x.status)}">${esc(x.status)}</span><code>${esc(x.graph)}</code>
+      <span class="meta">${esc(when(x.started))} · ${x.calls} call${x.calls === 1 ? "" : "s"}${x.resumes ? ` · resumed ${x.resumes}×` : ""} · <code>${esc(x.id)}</code>${w ? ` · waits for ${esc(w.message)}` : ""}</span>
+      <span class="acts">${w ? `<button class="primary" data-act="deliver">Deliver ${esc(w.message)}…</button>` : ""}${resumable ? `<button data-act="resume">Resume</button>` : ""}</span></div>`;
+  }).join("") : `<div class="none">No runs of this program yet. Press ▶ Run.</div>`;
+  for (const el of $("hlist").querySelectorAll(".prun")) el.onclick = (e) => {
+    const x = runs[+el.dataset.i], act = e.target.dataset.act;
+    if (act === "deliver") deliverDialog(path, x.id, x.waits.find((w) => !w.delivered));
+    else if (act === "resume") resumeRun(path, x.id, x.graph, true);
+    else openPastRun(path, x);
+  };
+}
+async function openPastRun(path, x) {
+  const r = await fetch(`/api/journal?path=${enc(path)}&id=${enc(x.id)}`);
+  if (!r.ok) { toast(await r.text(), true); return; }
+  const data = await r.json();
+  state.run = { key: null, path, graph: x.graph, fake: true, data, open: new Set(), past: true };
+  if (state.graph !== x.graph && state.graphs.some((g) => g.name === x.graph)) { state.graph = x.graph; state.fitted = false; render(); }
+  $("runTab").hidden = false; showTab("r"); paintRun();
+}
+async function resumeRun(path, id, graph, fake) {
+  const r = await post(`/api/resume?path=${enc(path)}&id=${enc(id)}`, JSON.stringify({ fake }));
+  if (!r.ok) { toast(await r.text(), true); return; }
+  const { key } = await r.json();
+  state.run = { key, path, graph, fake, data: null, open: new Set() };
+  $("runTab").hidden = false; showTab("r");
+  pollRun(key);
+}
+// A form for a message, from its JSON Schema: a choice of variants, then
+// a field for each of the chosen one's fields.
+let msgTarget = null;
+function deliverDialog(path, id, wait) {
+  if (!wait) return;
+  const m = (state.last && state.last.messages || []).find((x) => x.name === wait.message);
+  const schema = m ? m.schema : null;
+  msgTarget = { path, id, wait, schema };
+  $("msgTitle").textContent = `Deliver ${wait.message}`;
+  $("msgAbout").textContent = wait.about != null ? "About: " + (typeof wait.about === "string" ? wait.about : JSON.stringify(wait.about)) : `To run ${id}`;
+  const variants = schema && schema.anyOf && schema.anyOf.every((v) => v.properties && v.properties.kind && v.properties.kind.enum) ? schema.anyOf : null;
+  const fieldsOf = (obj) => Object.entries((obj && obj.properties) || {}).filter(([k]) => k !== "kind");
+  const fieldInput = ([k, t]) => {
+    const kind = t && t.type;
+    const input = kind === "boolean" ? `<input type="checkbox" data-f="${esc(k)}">`
+      : kind === "number" || kind === "integer" ? `<input type="number" step="${kind === "integer" ? 1 : "any"}" data-f="${esc(k)}">`
+      : kind === "string" ? `<input type="text" data-f="${esc(k)}">`
+      : `<textarea data-f="${esc(k)}" data-json="1" placeholder="JSON"></textarea>`;
+    return `<label>${esc(k)}</label>${input}`;
+  };
+  const draw = () => {
+    let html = "";
+    if (variants) {
+      const chosen = (new FormData($("msgForm")).get("variant")) || variants[0].properties.kind.enum[0];
+      html += `<div class="variants">${variants.map((v) => { const k = v.properties.kind.enum[0]; return `<label><input type="radio" name="variant" value="${esc(k)}"${k === chosen ? " checked" : ""}>${esc(k)}</label>`; }).join("")}</div>`;
+      const v = variants.find((x) => x.properties.kind.enum[0] === chosen);
+      html += fieldsOf(v).map(fieldInput).join("");
+    } else if (schema && schema.type === "object" && schema.properties) {
+      html += fieldsOf(schema).map(fieldInput).join("");
+    } else {
+      html += `<label>Value (JSON)</label><textarea data-raw="1" placeholder="JSON"></textarea>`;
+    }
+    $("msgFields").innerHTML = html;
+    for (const r of $("msgFields").querySelectorAll('input[name="variant"]')) r.onchange = draw;
+  };
+  $("msgFields").innerHTML = ""; draw();
+  $("msgErr").textContent = "";
+  $("msgDlg").showModal();
+}
+$("msgCancel").onclick = () => $("msgDlg").close();
+$("msgForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const t = msgTarget; if (!t) return;
+  let value;
+  const raw = $("msgFields").querySelector("[data-raw]");
+  try {
+    if (raw) value = JSON.parse(raw.value);
+    else {
+      value = {};
+      const v = new FormData($("msgForm")).get("variant");
+      if (v) value.kind = v;
+      for (const el of $("msgFields").querySelectorAll("[data-f]")) {
+        const k = el.dataset.f;
+        value[k] = el.type === "checkbox" ? el.checked : el.type === "number" ? Number(el.value) : el.dataset.json ? JSON.parse(el.value) : el.value;
+      }
+    }
+  } catch (_) { $("msgErr").textContent = "That is not valid JSON."; return; }
+  const r = await post(`/api/deliver?path=${enc(t.path)}&id=${enc(t.id)}&message=${enc(t.wait.message)}`, JSON.stringify(value));
+  if (!r.ok) { $("msgErr").textContent = await r.text(); return; }
+  $("msgDlg").close();
+  toast(`Delivered ${t.wait.message} to ${t.id}`);
+  const past = (state.pastRuns || []).find((x) => x.id === t.id);
+  const graph = past ? past.graph : (state.run && state.run.graph) || state.graph;
+  if ($("msgResume").checked) resumeRun(t.path, t.id, graph, $("msgFake").checked);
+  else loadRuns();
+});
 
 /* ---------- pan and zoom ---------- */
 const canvas = $("canvas");

@@ -25,6 +25,13 @@
 //!   `GET /api/run?key=K`: how it goes: running, finished, failed or
 //!   waiting; its output, its trace, and each call from its journal (step,
 //!   item, effect, time, tokens, cost, answer). `POST /api/stop?key=K`.
+//! - `GET /api/runs?path=P`: the file's past runs, newest first (from the
+//!   journals in its folder): status, calls, what each waits for.
+//!   `GET /api/journal?path=P&id=ID`: one of them, as `/api/run` shows a
+//!   run. `POST /api/resume?path=P&id=ID` (`{"fake"}`) continues one
+//!   (`calyx resume`); `POST /api/deliver?path=P&id=ID&message=M` (the
+//!   message as JSON) gives a waiting `receive` its message
+//!   (`calyx deliver`).
 //!
 //! The code is the source of truth: the graph is drawn from it, never the
 //! other way round.
@@ -76,6 +83,8 @@ const TEMPLATES: &[(&str, &str, &str, &str)] = &[
 struct Run {
     /// The file's folder, where its journal is.
     dir: PathBuf,
+    /// The run's id, when it is known before it starts (a resume).
+    id: Option<String>,
     child: Mutex<std::process::Child>,
     stdout: Arc<Mutex<String>>,
     stderr: Arc<Mutex<String>>,
@@ -452,6 +461,95 @@ fn handle(mut stream: TcpStream, ws: &Workspace) {
                 None => fail(&mut stream, 404, "no such run".into()),
             }
         }
+        ("GET", "/api/runs") => match resolve(ws, &rel, false) {
+            Ok(f) => respond(
+                &mut stream,
+                200,
+                "application/json",
+                &Value::from(past_runs(&f)).to_string(),
+            ),
+            Err(e) => fail(&mut stream, 400, e),
+        },
+        ("GET", "/api/journal") => {
+            let id = param(query, "id").unwrap_or_default();
+            match (resolve(ws, &rel, false), run_id(&id)) {
+                (Ok(f), Ok(id)) => match journal_state(&f, id) {
+                    Some(v) => respond(&mut stream, 200, "application/json", &v.to_string()),
+                    None => fail(&mut stream, 404, format!("no run `{id}` for this file")),
+                },
+                (Err(e), _) | (_, Err(e)) => fail(&mut stream, 400, e),
+            }
+        }
+        ("POST", "/api/resume") => {
+            let id = param(query, "id").unwrap_or_default();
+            let (file, id) = match (resolve(ws, &rel, false), run_id(&id)) {
+                (Ok(f), Ok(id)) => (f, id.to_owned()),
+                (Err(e), _) | (_, Err(e)) => return fail(&mut stream, 400, e),
+            };
+            if journal_state(&file, &id).is_none() {
+                return fail(&mut stream, 404, format!("no run `{id}` for this file"));
+            }
+            let fake = serde_json::from_slice::<Value>(&req.body)
+                .ok()
+                .and_then(|v| v["fake"].as_bool())
+                .unwrap_or(true);
+            let dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
+            match start_resume(dir, &id, fake) {
+                Ok(key) => respond(
+                    &mut stream,
+                    200,
+                    "application/json",
+                    &json!({"key": key}).to_string(),
+                ),
+                Err(e) => fail(&mut stream, 500, e),
+            }
+        }
+        ("POST", "/api/deliver") => {
+            let id = param(query, "id").unwrap_or_default();
+            let message = param(query, "message").unwrap_or_default();
+            let (file, id) = match (resolve(ws, &rel, false), run_id(&id)) {
+                (Ok(f), Ok(id)) => (f, id.to_owned()),
+                (Err(e), _) | (_, Err(e)) => return fail(&mut stream, 400, e),
+            };
+            if journal_state(&file, &id).is_none() {
+                return fail(&mut stream, 404, format!("no run `{id}` for this file"));
+            }
+            if message.is_empty() || !message.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return fail(
+                    &mut stream,
+                    400,
+                    format!("`{message}` is not a message type"),
+                );
+            }
+            let Ok(value) = serde_json::from_slice::<Value>(&req.body) else {
+                return fail(&mut stream, 400, "the message is not JSON".into());
+            };
+            let Ok(exe) = std::env::current_exe() else {
+                return fail(&mut stream, 500, "calyx: where is this binary?".into());
+            };
+            let out = std::process::Command::new(exe)
+                .args(["deliver", &id, &message, &value.to_string()])
+                .current_dir(file.parent().unwrap_or(Path::new(".")))
+                .stdin(std::process::Stdio::null())
+                .output();
+            match out {
+                Ok(o) if o.status.success() => respond(
+                    &mut stream,
+                    200,
+                    "application/json",
+                    &json!({"said": String::from_utf8_lossy(&o.stdout).trim()}).to_string(),
+                ),
+                Ok(o) => fail(
+                    &mut stream,
+                    400,
+                    String::from_utf8_lossy(&o.stderr)
+                        .trim()
+                        .trim_start_matches("calyx: ")
+                        .to_owned(),
+                ),
+                Err(e) => fail(&mut stream, 500, format!("calyx deliver: {e}")),
+            }
+        }
         ("POST", "/api/stop") => {
             let run = param(query, "key")
                 .and_then(|k| k.parse::<usize>().ok())
@@ -479,20 +577,22 @@ fn handle(mut stream: TcpStream, ws: &Workspace) {
 
 /// Starts `calyx run` on `file` (`{"graph", "args", "fake"}`): its key.
 fn start_run(file: &Path, req: &Value) -> Result<usize, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("calyx: {e}"))?;
     let dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let mut cmd = std::process::Command::new(exe);
-    cmd.arg("run")
-        .arg(file.file_name().unwrap_or_default())
-        .current_dir(&dir);
+    let mut args: Vec<String> = vec![
+        "run".into(),
+        file.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+    ];
     if let Some(g) = req["graph"].as_str() {
-        cmd.args(["--graph", g]);
+        args.extend(["--graph".into(), g.to_owned()]);
     }
     if req["fake"].as_bool().unwrap_or(true) {
-        cmd.arg("--fake-models");
+        args.push("--fake-models".into());
     }
-    if let Some(args) = req["args"].as_object() {
-        for (name, value) in args {
+    if let Some(params) = req["args"].as_object() {
+        for (name, value) in params {
             if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 return Err(format!("`{name}` is not a parameter"));
             }
@@ -501,9 +601,26 @@ fn start_run(file: &Path, req: &Value) -> Result<usize, String> {
                 Value::String(t) => t.clone(),
                 other => other.to_string(),
             };
-            cmd.arg(format!("--{name}")).arg(v);
+            args.extend([format!("--{name}"), v]);
         }
     }
+    spawn(dir, None, &args)
+}
+
+/// Starts `calyx resume ID` in `dir`: its key.
+fn start_resume(dir: PathBuf, id: &str, fake: bool) -> Result<usize, String> {
+    let mut args = vec!["resume".to_owned(), id.to_owned()];
+    if fake {
+        args.push("--fake-models".into());
+    }
+    spawn(dir, Some(id.to_owned()), &args)
+}
+
+/// Runs this same `calyx` with `args` in `dir`, its output read as it comes.
+fn spawn(dir: PathBuf, id: Option<String>, args: &[String]) -> Result<usize, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("calyx: {e}"))?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(args).current_dir(&dir);
     // Its own process group, so Stop also ends the tools it started.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
@@ -512,7 +629,7 @@ fn start_run(file: &Path, req: &Value) -> Result<usize, String> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("cannot start calyx run: {e}"))?;
+        .map_err(|e| format!("cannot start calyx {}: {e}", args[0]))?;
     // Read both outputs as they come, so the page sees the trace live.
     let collect = |from: Box<dyn std::io::Read + Send>| {
         let buf = Arc::new(Mutex::new(String::new()));
@@ -537,6 +654,7 @@ fn start_run(file: &Path, req: &Value) -> Result<usize, String> {
     let stderr = collect(Box::new(child.stderr.take().expect("piped")));
     let run = Arc::new(Run {
         dir,
+        id,
         child: Mutex::new(child),
         stdout,
         stderr,
@@ -544,6 +662,160 @@ fn start_run(file: &Path, req: &Value) -> Result<usize, String> {
     let mut runs = RUNS.lock().map_err(|_| "studio: runs".to_owned())?;
     runs.push(run);
     Ok(runs.len() - 1)
+}
+
+/// A run's id is a name of its folder: letters, digits and `-`.
+fn run_id(id: &str) -> Result<&str, String> {
+    if !id.is_empty() && id.len() < 100 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        Ok(id)
+    } else {
+        Err(format!("`{id}` is not a run"))
+    }
+}
+
+/// The lines of a run's journal (or another of its files), skipping a
+/// torn last line.
+fn journal(dir: &Path, id: &str, name: &str) -> Vec<Value> {
+    std::fs::read_to_string(dir.join(".calyx/runs").join(id).join(name))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+/// How a journal says its run ended: finished, failed, waiting, or
+/// interrupted (no end: a crash, or it is running now).
+fn journal_status(lines: &[Value]) -> &'static str {
+    match lines.last() {
+        Some(l) if l["type"] == "end" && l.get("ok").is_some() => "finished",
+        Some(l)
+            if l["type"] == "end"
+                && l["error"]
+                    .as_str()
+                    .is_some_and(|e| e.starts_with(crate::runs::WAITING)) =>
+        {
+            "waiting"
+        }
+        Some(l) if l["type"] == "end" => "failed",
+        _ => "interrupted",
+    }
+}
+
+/// What a run waits for: each `receive` not answered yet.
+fn waits(dir: &Path, id: &str, lines: &[Value]) -> Vec<Value> {
+    let done: std::collections::HashSet<&str> = lines
+        .iter()
+        .filter(|l| l["type"] == "call")
+        .filter_map(|l| l["key"].as_str())
+        .collect();
+    let inbox: Vec<String> = journal(dir, id, "inbox.jsonl")
+        .iter()
+        .filter_map(|l| l["key"].as_str().map(str::to_owned))
+        .collect();
+    journal(dir, id, "waits.jsonl")
+        .into_iter()
+        .filter(|w| w["key"].as_str().is_some_and(|k| !done.contains(k)))
+        .map(|w| {
+            let key = w["key"].as_str().unwrap_or("").to_owned();
+            json!({
+                "key": key,
+                "message": w["message"],
+                "until": w["until"],
+                "about": w["about"],
+                "delivered": inbox.contains(&key),
+            })
+        })
+        .collect()
+}
+
+/// The runs of `file`, newest first, from the journals in its folder.
+fn past_runs(file: &Path) -> Vec<Value> {
+    let dir = file.parent().unwrap_or(Path::new("."));
+    let Ok(entries) = std::fs::read_dir(dir.join(".calyx/runs")) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<String> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|id| run_id(id).is_ok())
+        .collect();
+    ids.sort();
+    ids.reverse();
+    let mut out = Vec::new();
+    for id in ids {
+        let lines = journal(dir, &id, "journal.jsonl");
+        let Some(head) = lines.first().filter(|h| h["type"] == "run") else {
+            continue;
+        };
+        // Only this file's runs.
+        let program = PathBuf::from(head["program"].as_str().unwrap_or(""));
+        if program.canonicalize().ok().as_deref() != Some(file) {
+            continue;
+        }
+        let count = |t: &str| lines.iter().filter(|l| l["type"] == t).count();
+        out.push(json!({
+            "id": id,
+            "graph": head["graph"],
+            "args": head["args"],
+            "started": head["started"],
+            "calyx": head["calyx"],
+            "status": journal_status(&lines),
+            "calls": count("call"),
+            "resumes": count("resume"),
+            "waits": waits(dir, &id, &lines),
+        }));
+        if out.len() >= 50 {
+            break;
+        }
+    }
+    out
+}
+
+/// A past run as `/api/run` shows a run: from its journal alone.
+fn journal_state(file: &Path, id: &str) -> Option<Value> {
+    let dir = file.parent().unwrap_or(Path::new("."));
+    let lines = journal(dir, id, "journal.jsonl");
+    let head = lines.first().filter(|h| h["type"] == "run")?;
+    let program = PathBuf::from(head["program"].as_str().unwrap_or(""));
+    if program.canonicalize().ok().as_deref() != Some(file) {
+        return None;
+    }
+    let status = journal_status(&lines);
+    let end = lines.last().filter(|l| l["type"] == "end");
+    let output = end
+        .and_then(|e| e.get("ok"))
+        .map(|v| match v {
+            Value::String(t) => t.clone(),
+            other => serde_json::to_string_pretty(other).unwrap_or_default(),
+        })
+        .unwrap_or_default();
+    let error = end
+        .and_then(|e| e["error"].as_str())
+        .filter(|_| status == "failed")
+        .map(|e| format!("calyx: execution failed: {e}"))
+        .unwrap_or_default();
+    Some(json!({
+        "status": status,
+        "id": id,
+        "graph": head["graph"],
+        "args": head["args"],
+        "exit": Value::Null,
+        "output": output,
+        "trace": error,
+        "failed_step": failed_step(&error),
+        "calls": lines.iter().filter(|l| l["type"] == "call").map(call_summary).collect::<Vec<_>>(),
+        "waits": waits(dir, id, &lines),
+    }))
+}
+
+/// The step a failure names (`... node `x`: ...`).
+fn failed_step(text: &str) -> Option<String> {
+    text.lines()
+        .find(|l| l.contains("execution failed"))
+        .and_then(|l| l.split("node `").nth(1))
+        .and_then(|r| r.split('`').next())
+        .map(|n| n.split(['[', '#']).next().unwrap_or(n).to_owned())
 }
 
 /// A run as the page shows it.
@@ -555,10 +827,12 @@ fn run_state(r: &Run) -> Value {
         .and_then(|mut c| c.try_wait().ok().flatten());
     let stderr = r.stderr.lock().map(|s| s.clone()).unwrap_or_default();
     let stdout = r.stdout.lock().map(|s| s.clone()).unwrap_or_default();
-    let id = stderr
-        .lines()
-        .find_map(|l| l.strip_prefix("calyx: run "))
-        .map(|s| s.trim().to_owned());
+    let id = r.id.clone().or_else(|| {
+        stderr
+            .lines()
+            .find_map(|l| l.strip_prefix("calyx: run "))
+            .map(|s| s.trim().to_owned())
+    });
     let status = match exit.map(|e| e.code()) {
         None => "running",
         Some(Some(0)) => "finished",
@@ -566,26 +840,18 @@ fn run_state(r: &Run) -> Value {
         Some(None) => "stopped",
         Some(Some(_)) => "failed",
     };
-    // The step that failed, from `... node `x`: ...`.
-    let failed_step = stderr
-        .lines()
-        .find(|l| l.contains("execution failed"))
-        .and_then(|l| l.split("node `").nth(1))
-        .and_then(|r| r.split('`').next())
-        .map(|n| n.split(['[', '#']).next().unwrap_or(n).to_owned());
+    let failed_step = failed_step(&stderr);
     let mut calls = Vec::new();
-    if let Some(id) = &id
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-        && let Ok(text) =
-            std::fs::read_to_string(r.dir.join(".calyx/runs").join(id).join("journal.jsonl"))
-    {
-        for line in text.lines() {
-            let Ok(v) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            if v["type"] == "call" {
-                calls.push(call_summary(&v));
-            }
+    let mut waiting = Vec::new();
+    if let Some(id) = id.as_deref().and_then(|i| run_id(i).ok()) {
+        let lines = journal(&r.dir, id, "journal.jsonl");
+        calls = lines
+            .iter()
+            .filter(|l| l["type"] == "call")
+            .map(call_summary)
+            .collect();
+        if status == "waiting" {
+            waiting = waits(&r.dir, id, &lines);
         }
     }
     let short = |s: &str| {
@@ -607,6 +873,7 @@ fn run_state(r: &Run) -> Value {
         "trace": short(&stderr),
         "failed_step": failed_step,
         "calls": calls,
+        "waits": waiting,
     })
 }
 
@@ -810,9 +1077,22 @@ pub(crate) fn analyze(name: &str, text: &str) -> Value {
     } else {
         Vec::new()
     };
+    let messages: Vec<Value> = if ok {
+        report
+            .ir
+            .messages
+            .iter()
+            .map(|(n, schema)| {
+                json!({"name": n, "schema": serde_json::from_str::<Value>(schema).unwrap_or(Value::Null)})
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     json!({
         "file": name,
         "hash": hash(text),
+        "messages": messages,
         "text": text,
         "ok": ok,
         "diagnostics": diagnostics,

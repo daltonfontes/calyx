@@ -484,3 +484,110 @@ fn a_failed_run_names_its_step_and_a_run_can_be_stopped() {
     assert_eq!(s.post("/api/run?path=../secret.clyx", "{}").0, 400);
     assert_eq!(s.get("/api/run?key=99").0, 404);
 }
+
+/// Waits until run `key` (from `/api/run` or `/api/resume`) is no longer running.
+fn wait_key(s: &Studio, key: u64) -> Value {
+    for _ in 0..300 {
+        let state = json(&s.get(&format!("/api/run?key={key}")).1);
+        if state["status"] != "running" {
+            return state;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("the run did not end");
+}
+
+#[test]
+fn past_runs_are_listed_reopened_given_their_message_and_resumed() {
+    let s = Studio::start("history", &[]);
+    std::fs::write(
+        s.ws("approve.clyx"),
+        r#"model m = "fake-model"
+
+message Approval = Approved | Denied(reason: Text)
+
+prompt propose(request: Text) -> Text:
+    """Propose: {request}"""
+
+graph approve(request: Text) -> Text:
+    proposal = m(propose(request))
+    approval = receive Approval about proposal, timeout 3 days:
+        on timeout: Denied(reason = "late")
+    return match approval:
+        case Approved: "approved"
+        case Denied(reason): "denied: {reason}"
+"#,
+    )
+    .unwrap();
+    // The message's type goes to the page, for its form.
+    let p = json(&s.get("/api/program?path=approve.clyx").1);
+    assert_eq!(p["messages"][0]["name"], "Approval");
+    assert!(p["messages"][0]["schema"]["anyOf"].is_array());
+
+    let state = run_until_done(&s, "approve.clyx", r#"{"args": {"request": "a refund"}}"#);
+    assert_eq!(state["status"], "waiting", "{state}");
+    let id = state["id"].as_str().unwrap().to_owned();
+    assert_eq!(state["waits"][0]["message"], "Approval");
+    assert_eq!(state["waits"][0]["delivered"], false);
+
+    // Listed with what it waits for; only this file's runs.
+    let _ = run_until_done(&s, "p.clyx", r#"{"args": {"goal": "x"}}"#);
+    let runs = json(&s.get("/api/runs?path=approve.clyx").1);
+    let runs = runs.as_array().unwrap();
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(runs[0]["id"], id.as_str());
+    assert_eq!(runs[0]["status"], "waiting");
+    assert_eq!(runs[0]["graph"], "approve");
+    assert_eq!(runs[0]["waits"][0]["message"], "Approval");
+
+    // Reopened from its journal.
+    let j = json(&s.get(&format!("/api/journal?path=approve.clyx&id={id}")).1);
+    assert_eq!(j["status"], "waiting");
+    assert_eq!(j["calls"][0]["step"], "proposal");
+    assert_eq!(
+        s.get(&format!("/api/journal?path=p.clyx&id={id}")).0,
+        404,
+        "not that file's run"
+    );
+
+    // A message that is not of its type is refused, and nothing changes.
+    let (status, why) = s.post(
+        &format!("/api/deliver?path=approve.clyx&id={id}&message=Approval"),
+        r#"{"kind": "Maybe"}"#,
+    );
+    assert_eq!(status, 400, "{why}");
+    // Delivered, then resumed: the proposal comes from the journal.
+    let (status, why) = s.post(
+        &format!("/api/deliver?path=approve.clyx&id={id}&message=Approval"),
+        r#"{"kind": "Denied", "reason": "too much"}"#,
+    );
+    assert_eq!(status, 200, "{why}");
+    let runs = json(&s.get("/api/runs?path=approve.clyx").1);
+    assert_eq!(runs[0]["waits"][0]["delivered"], true);
+    let (status, out) = s.post(
+        &format!("/api/resume?path=approve.clyx&id={id}"),
+        r#"{"fake": true}"#,
+    );
+    assert_eq!(status, 200, "{out}");
+    let state = wait_key(&s, json(&out)["key"].as_u64().unwrap());
+    assert_eq!(state["status"], "finished", "{state}");
+    assert_eq!(state["id"], id.as_str());
+    assert_eq!(state["output"].as_str().unwrap().trim(), "denied: too much");
+    let runs = json(&s.get("/api/runs?path=approve.clyx").1);
+    assert_eq!(runs[0]["status"], "finished");
+    assert_eq!(runs[0]["resumes"], 1);
+    let j = json(&s.get(&format!("/api/journal?path=approve.clyx&id={id}")).1);
+    assert_eq!(j["output"], "denied: too much");
+
+    // Names that are not runs or messages.
+    assert_eq!(s.get("/api/journal?path=approve.clyx&id=..%2F..").0, 400);
+    assert_eq!(s.post("/api/resume?path=approve.clyx&id=nope", "{}").0, 404);
+    assert_eq!(
+        s.post(
+            &format!("/api/deliver?path=approve.clyx&id={id}&message=--as"),
+            "{}"
+        )
+        .0,
+        400
+    );
+}
