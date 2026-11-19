@@ -7,6 +7,19 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.18.0 (2026-11-19)
+
+- `calyx studio`, with no file, opens the browser on the current folder
+  (or the folder given): a sidebar with its `.clyx` files, and a start page
+  to create a program from an example (empty, a typed answer, a team of
+  agents) or import files (a button, or dropping them on the page). Files
+  are renamed, deleted and downloaded there; unsaved edits are kept while
+  you move between files. `calyx studio file.clyx` opens its folder with
+  that file. `--no-open` does not open the browser.
+- The studio reads and writes only `.clyx` files inside the folder: no
+  `..`, no absolute paths, no hidden folders, no symbolic links out of it;
+  a new file never replaces one already there.
+
 ## 0.17.0 (2026-11-19)
 
 - `calyx studio <file.clyx>`: the program in the browser, its code next to

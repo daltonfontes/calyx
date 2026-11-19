@@ -1,17 +1,24 @@
-//! `calyx studio <file.clyx>`: the program as a graph, next to its code,
-//! in the browser.
+//! `calyx studio [folder | file.clyx]`: a workspace for Calyx programs in
+//! the browser. Each program's graphs are drawn next to its code, with its
+//! problems as you type; programs are created (from a template), imported,
+//! saved, renamed, deleted and downloaded there.
 //!
 //! A small web server on 127.0.0.1 serves one page (`studio.html`, inside
 //! the binary: nothing to install, nothing fetched from the network) and
-//! three calls:
+//! these calls, all on the workspace folder (the current one by default):
 //!
-//! - `GET /api/program[?since=HASH]`: the file as it is on disk, checked:
-//!   its text, its problems, and each graph's steps and how they depend on
-//!   each other (what `calyx check --ir` shows), with the line of each step.
-//!   With `since`, an empty answer (204) while the file has not changed, so
-//!   the page follows a file edited in another editor.
-//! - `POST /api/check`: the same for a text the page sends, as it is typed.
-//! - `POST /api/save`: writes that text to the file, and checks it.
+//! - `GET /api/workspace`: the folder, its `.clyx` files, the file to open
+//!   first, and the templates.
+//! - `GET /api/program?path=P[&since=HASH]`: a file as it is on disk,
+//!   checked: its text, its problems, and each graph's steps and how they
+//!   depend on each other (what `calyx check --ir` shows), with the line of
+//!   each step. With `since`, an empty answer (204) while the file has not
+//!   changed, so the page follows a file edited in another editor.
+//! - `POST /api/check?path=P`: the same for a text the page sends, as it is
+//!   typed. Nothing is written.
+//! - `POST /api/save?path=P[&new=1]`: writes the text to the file (with
+//!   `new`, only if there is none yet), and checks it.
+//! - `POST /api/rename?path=P&to=Q`, `POST /api/delete?path=P`.
 //!
 //! The code is the source of truth: the graph is drawn from it, never the
 //! other way round.
@@ -19,12 +26,13 @@
 //! Only this machine reaches it, and only the page it serves drives it: a
 //! request whose `Host` is not 127.0.0.1 or localhost (DNS rebinding) is
 //! refused, and so is a `POST` without the page's `Origin` and its header
-//! `X-Calyx-Studio` (another site in the same browser). It writes only the
-//! file it was started with.
+//! `X-Calyx-Studio` (another site in the same browser). It reads and writes
+//! only `.clyx` files inside the workspace: no `..`, no absolute paths, no
+//! hidden directories, and no symbolic link that leads out of it.
 
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -35,9 +43,40 @@ use serde_json::{Value, json};
 const PAGE: &str = include_str!("studio.html");
 const DEFAULT_PORT: u16 = 4180;
 
+/// Programs to start from: (id, title, what it shows, text).
+const TEMPLATES: &[(&str, &str, &str, &str)] = &[
+    (
+        "blank",
+        "Empty",
+        "A model and one graph that calls it.",
+        "model gemini = \"gemini-3.5-flash-lite\"\n\nprompt answer(question: Text) -> Text:\n    \"\"\"\n    Answer in one sentence: {question}\n    \"\"\"\n\ngraph main(question: Text) -> Text:\n    return gemini(answer(question))\n",
+    ),
+    (
+        "hello",
+        "Typed answer",
+        "A prompt whose answer is checked against a type.",
+        include_str!("../../../examples/readme/hello.clyx"),
+    ),
+    (
+        "team",
+        "Team of agents",
+        "Helpers at the same time around a task board (an entity).",
+        include_str!("../../../examples/team.clyx"),
+    ),
+];
+
+struct Workspace {
+    /// The folder, canonical.
+    root: PathBuf,
+    /// The file to open first, relative to the folder.
+    open: Option<String>,
+    port: u16,
+}
+
 pub fn studio(args: &[String]) -> ExitCode {
-    let mut file = None;
+    let mut target = None;
     let mut port = None;
+    let mut open_browser = true;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -45,17 +84,39 @@ pub fn studio(args: &[String]) -> ExitCode {
                 Some(p) => port = Some(p),
                 None => return usage("--port takes a number"),
             },
-            f if !f.starts_with('-') && file.is_none() => file = Some(PathBuf::from(f)),
+            "--no-open" => open_browser = false,
+            f if !f.starts_with('-') && target.is_none() => target = Some(PathBuf::from(f)),
             other => return usage(&format!("unknown option `{other}`")),
         }
     }
-    let Some(file) = file else {
-        return usage("which program? `calyx studio <file.clyx>`");
+    let target = target.unwrap_or_else(|| PathBuf::from("."));
+    // A file opens its folder, with it open; a folder opens as it is.
+    let (folder, open) = if target.is_dir() {
+        (target.clone(), None)
+    } else if target.extension().is_some_and(|e| e == "clyx") {
+        if !target.is_file() {
+            eprintln!("calyx: studio: no file {}", target.display());
+            return ExitCode::from(2);
+        }
+        let folder = match target.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        let name = target.file_name().map(|n| n.to_string_lossy().into_owned());
+        (folder, name)
+    } else {
+        return usage(&format!(
+            "{} is not a folder nor a .clyx file",
+            target.display()
+        ));
     };
-    if let Err(e) = std::fs::read_to_string(&file) {
-        eprintln!("calyx: {}: {e}", file.display());
-        return ExitCode::from(2);
-    }
+    let root = match folder.canonicalize() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("calyx: studio: {}: {e}", folder.display());
+            return ExitCode::from(2);
+        }
+    };
     // The port asked for, or the first free one from 4180.
     let listener = match port {
         Some(p) => TcpListener::bind(("127.0.0.1", p)).ok(),
@@ -68,24 +129,130 @@ pub fn studio(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     };
     let port = listener.local_addr().map_or(0, |a| a.port());
-    eprintln!(
-        "calyx: studio for {} at http://127.0.0.1:{port}/",
-        file.display()
+    let url = format!("http://127.0.0.1:{port}/");
+    // One write, and never a panic if nobody reads it any more.
+    let _ = write!(
+        std::io::stderr(),
+        "calyx: studio for {} at {url}\ncalyx: Ctrl+C stops it\n",
+        root.display()
     );
-    eprintln!("calyx: Ctrl+C stops it");
-    let file: &'static PathBuf = Box::leak(Box::new(file));
+    if open_browser {
+        crate::open_browser(&url);
+    }
+    let ws: &'static Workspace = Box::leak(Box::new(Workspace { root, open, port }));
     for stream in listener.incoming().flatten() {
-        std::thread::spawn(move || handle(stream, file, port));
+        std::thread::spawn(move || handle(stream, ws));
     }
     ExitCode::SUCCESS
 }
 
 fn usage(why: &str) -> ExitCode {
-    eprintln!("calyx: studio: {why}\nusage: calyx studio <file.clyx> [--port N]");
+    eprintln!(
+        "calyx: studio: {why}\nusage: calyx studio [folder | file.clyx] [--port N] [--no-open]"
+    );
     ExitCode::from(2)
 }
 
-fn handle(mut stream: TcpStream, file: &PathBuf, port: u16) {
+/// `%xx` and `+` decoded.
+fn decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < b.len() => {
+                let hex = |c: u8| (c as char).to_digit(16);
+                match (hex(b[i + 1]), hex(b[i + 2])) {
+                    (Some(h), Some(l)) => {
+                        out.push((h * 16 + l) as u8);
+                        i += 2;
+                    }
+                    _ => out.push(b'%'),
+                }
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn param(query: &str, name: &str) -> Option<String> {
+    query
+        .split('&')
+        .filter_map(|kv| kv.split_once('='))
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| decode(v))
+}
+
+/// The file `rel` names in the workspace, if it may be read or written
+/// there: a relative path to a `.clyx` file, with no `..`, no hidden part,
+/// and whose folder, links followed, is inside the workspace. With
+/// `create`, missing folders on the way are made.
+fn resolve(ws: &Workspace, rel: &str, create: bool) -> Result<PathBuf, String> {
+    let bad = |why: &str| Err(format!("`{rel}`: {why}"));
+    if rel.is_empty()
+        || rel.len() > 200
+        || rel.chars().any(|c| c.is_control() || c == '\\' || c == ':')
+    {
+        return bad("not a file name");
+    }
+    let p = Path::new(rel);
+    if p.extension().is_none_or(|e| e != "clyx") {
+        return bad("a program's name ends in .clyx");
+    }
+    for c in p.components() {
+        match c {
+            Component::Normal(n) if !n.to_string_lossy().starts_with('.') => {}
+            _ => return bad("only names inside the workspace, without `..` or hidden folders"),
+        }
+    }
+    let full = ws.root.join(p);
+    let parent = full.parent().unwrap_or(&ws.root);
+    if create && !parent.exists() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("`{rel}`: {e}"))?;
+    }
+    let real = parent.canonicalize().map_err(|e| format!("`{rel}`: {e}"))?;
+    if !real.starts_with(&ws.root) {
+        return bad("outside the workspace");
+    }
+    if std::fs::symlink_metadata(&full).is_ok_and(|m| m.file_type().is_symlink()) {
+        return bad("a symbolic link");
+    }
+    Ok(real.join(full.file_name().unwrap_or_default()))
+}
+
+/// The workspace's `.clyx` files, relative and sorted; not in hidden
+/// folders, `target` or `node_modules`, and not through links.
+fn list(ws: &Workspace) -> Vec<String> {
+    fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Ok(ty) = e.file_type() else { continue };
+            if name.starts_with('.') || out.len() >= 500 {
+                continue;
+            }
+            if ty.is_dir() && depth < 6 && name != "target" && name != "node_modules" {
+                walk(root, &e.path(), depth + 1, out);
+            } else if ty.is_file()
+                && name.ends_with(".clyx")
+                && let Ok(rel) = e.path().strip_prefix(root)
+            {
+                out.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&ws.root, &ws.root, 0, &mut out);
+    out.sort();
+    out
+}
+
+fn handle(mut stream: TcpStream, ws: &Workspace) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let Some(req) = crate::serve::read_request(&mut stream) else {
         return;
@@ -96,6 +263,7 @@ fn handle(mut stream: TcpStream, file: &PathBuf, port: u16) {
             .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.as_str())
     };
+    let port = ws.port;
     let ours = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     if !header("host").is_some_and(|h| ours.iter().any(|o| o == h)) {
         return respond(
@@ -118,36 +286,121 @@ fn handle(mut stream: TcpStream, file: &PathBuf, port: u16) {
             );
         }
     }
-    let name = file.display().to_string();
+    let rel = param(query, "path").unwrap_or_default();
+    let fail = |stream: &mut TcpStream, status: u16, why: String| {
+        respond(stream, status, "text/plain", &why)
+    };
     match (req.method.as_str(), path) {
         ("GET", "/") => respond(&mut stream, 200, "text/html; charset=utf-8", PAGE),
-        ("GET", "/api/program") => match std::fs::read_to_string(file) {
-            Ok(text) => {
-                let since = query.strip_prefix("since=").unwrap_or("");
-                if !since.is_empty() && since == hash(&text) {
-                    respond(&mut stream, 204, "text/plain", "")
-                } else {
-                    let a = analyze(&name, &text);
-                    respond(&mut stream, 200, "application/json", &a.to_string())
+        ("GET", "/api/workspace") => {
+            let body = json!({
+                "name": ws.root.file_name().map_or_else(|| ws.root.display().to_string(), |n| n.to_string_lossy().into_owned()),
+                "dir": ws.root.display().to_string(),
+                "files": list(ws),
+                "open": ws.open,
+                "templates": TEMPLATES.iter().map(|(id, title, about, text)| json!({
+                    "id": id, "title": title, "about": about, "text": text,
+                })).collect::<Vec<_>>(),
+            });
+            respond(&mut stream, 200, "application/json", &body.to_string());
+        }
+        ("GET", "/api/program") => {
+            let file = match resolve(ws, &rel, false) {
+                Ok(f) => f,
+                Err(e) => return fail(&mut stream, 400, e),
+            };
+            match std::fs::read_to_string(&file) {
+                Ok(text) => {
+                    let since = param(query, "since").unwrap_or_default();
+                    if !since.is_empty() && since == hash(&text) {
+                        respond(&mut stream, 204, "text/plain", "")
+                    } else {
+                        let a = analyze(&rel, &text);
+                        respond(&mut stream, 200, "application/json", &a.to_string())
+                    }
                 }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => fail(
+                    &mut stream,
+                    404,
+                    format!("`{rel}` is not in the workspace any more"),
+                ),
+                Err(e) => fail(&mut stream, 500, format!("`{rel}`: {e}")),
             }
-            Err(e) => respond(&mut stream, 500, "text/plain", &format!("{name}: {e}")),
-        },
+        }
         ("POST", "/api/check" | "/api/save") => {
             let Ok(text) = String::from_utf8(req.body) else {
-                return respond(&mut stream, 400, "text/plain", "the text is not UTF-8");
+                return fail(&mut stream, 400, "the text is not UTF-8".into());
             };
             if path == "/api/save" {
-                let tmp = file.with_extension("clyx.studio-tmp");
-                if let Err(e) =
-                    std::fs::write(&tmp, &text).and_then(|()| std::fs::rename(&tmp, file))
-                {
-                    let _ = std::fs::remove_file(&tmp);
-                    return respond(&mut stream, 500, "text/plain", &format!("{name}: {e}"));
+                let file = match resolve(ws, &rel, true) {
+                    Ok(f) => f,
+                    Err(e) => return fail(&mut stream, 400, e),
+                };
+                if param(query, "new").is_some() {
+                    // Only a new file: never over one already there.
+                    match std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&file)
+                    {
+                        Ok(mut f) => {
+                            if let Err(e) = f.write_all(text.as_bytes()) {
+                                return fail(&mut stream, 500, format!("`{rel}`: {e}"));
+                            }
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                            return fail(&mut stream, 409, format!("`{rel}` already exists"));
+                        }
+                        Err(e) => return fail(&mut stream, 500, format!("`{rel}`: {e}")),
+                    }
+                } else {
+                    let tmp = file.with_extension("clyx.studio-tmp");
+                    if let Err(e) =
+                        std::fs::write(&tmp, &text).and_then(|()| std::fs::rename(&tmp, &file))
+                    {
+                        let _ = std::fs::remove_file(&tmp);
+                        return fail(&mut stream, 500, format!("`{rel}`: {e}"));
+                    }
                 }
             }
-            let a = analyze(&name, &text);
+            let a = analyze(&rel, &text);
             respond(&mut stream, 200, "application/json", &a.to_string());
+        }
+        ("POST", "/api/rename") => {
+            let to = param(query, "to").unwrap_or_default();
+            let (from_file, to_file) = match (resolve(ws, &rel, false), resolve(ws, &to, true)) {
+                (Ok(a), Ok(b)) => (a, b),
+                (Err(e), _) | (_, Err(e)) => return fail(&mut stream, 400, e),
+            };
+            if !from_file.is_file() {
+                return fail(
+                    &mut stream,
+                    404,
+                    format!("`{rel}` is not in the workspace any more"),
+                );
+            }
+            if to_file.exists() {
+                return fail(&mut stream, 409, format!("`{to}` already exists"));
+            }
+            match std::fs::rename(&from_file, &to_file) {
+                Ok(()) => respond(
+                    &mut stream,
+                    200,
+                    "application/json",
+                    &json!({"path": to}).to_string(),
+                ),
+                Err(e) => fail(&mut stream, 500, format!("`{rel}`: {e}")),
+            }
+        }
+        ("POST", "/api/delete") => {
+            let file = match resolve(ws, &rel, false) {
+                Ok(f) => f,
+                Err(e) => return fail(&mut stream, 400, e),
+            };
+            match std::fs::remove_file(&file) {
+                Ok(()) => respond(&mut stream, 200, "application/json", "{}"),
+                Err(e) => fail(&mut stream, 500, format!("`{rel}`: {e}")),
+            }
         }
         _ => respond(&mut stream, 404, "text/plain", "not found"),
     }
@@ -157,6 +410,7 @@ fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &str) {
     let reason = match status {
         200 => "OK",
         204 => "No Content",
+        409 => "Conflict",
         400 => "Bad Request",
         403 => "Forbidden",
         404 => "Not Found",
@@ -221,12 +475,21 @@ pub(crate) fn analyze(name: &str, text: &str) -> Value {
                 .body
                 .iter()
                 .filter_map(|s| {
-                    let (name, at, value) = match s {
-                        Stmt::Node { name, value, .. } => {
-                            (name.name.clone(), name.span.start, value)
-                        }
-                        Stmt::Return(e) => ("return".to_owned(), e.span.start, e),
+                    let (name, at, value, each) = match s {
+                        Stmt::Node {
+                            name,
+                            value,
+                            fan_out,
+                        } => (name.name.clone(), name.span.start, value, fan_out.is_some()),
+                        Stmt::Return(e) => ("return".to_owned(), e.span.start, e, false),
                         _ => return None,
+                    };
+                    // A `for each` of steps: its steps are listed, not its
+                    // first line.
+                    let first = if each && matches!(value.kind, ExprKind::Block { .. }) {
+                        String::new()
+                    } else {
+                        code(value)
                     };
                     // Steps inside it (a `for each` or loop body, a `match`).
                     let mut inner = Vec::new();
@@ -241,7 +504,7 @@ pub(crate) fn analyze(name: &str, text: &str) -> Value {
                     Some(json!({
                         "name": name,
                         "line": line(at),
-                        "code": code(value),
+                        "code": first,
                         "inner": inner,
                     }))
                 })
