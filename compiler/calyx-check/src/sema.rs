@@ -142,6 +142,34 @@ const BUILTINS: &[(&str, &str)] = &[
     ("lower", "`lower(text)`"),
     ("upper", "`upper(text)`"),
     ("trim", "`trim(text)`"),
+    (
+        "split",
+        "`split(text, separator)`: the parts between separators",
+    ),
+    (
+        "replace",
+        "`replace(text, old, new)`: every `old` becomes `new`",
+    ),
+    ("starts_with", "`starts_with(text, prefix)`"),
+    ("ends_with", "`ends_with(text, suffix)`"),
+    (
+        "round",
+        "`round(number)`: the nearest whole number; `round(number, digits)`: to that many decimals",
+    ),
+    ("abs", "`abs(number)`"),
+    (
+        "min",
+        "`min(list)` or `min(a, b, ...)`: of numbers, money, durations or texts; an empty list is a failure",
+    ),
+    (
+        "max",
+        "`max(list)` or `max(a, b, ...)`: of numbers, money, durations or texts; an empty list is a failure",
+    ),
+    (
+        "sort",
+        "`sort(list)` of numbers, money, durations or texts, smallest first",
+    ),
+    ("reverse", "`reverse(list)`: its items, last first"),
 ];
 
 struct PromptSig {
@@ -1518,6 +1546,43 @@ impl<'p> Cx<'_, 'p> {
                 Some(Ty::Text)
             }
             ("lower" | "upper" | "trim", [Ty::Text | Ty::Error]) => Some(Ty::Text),
+            ("split", [Ty::Text | Ty::Error, Ty::Text | Ty::Error]) => {
+                Some(Ty::List(Box::new(Ty::Text), None))
+            }
+            (
+                "replace",
+                [
+                    Ty::Text | Ty::Error,
+                    Ty::Text | Ty::Error,
+                    Ty::Text | Ty::Error,
+                ],
+            ) => Some(Ty::Text),
+            ("starts_with" | "ends_with", [Ty::Text | Ty::Error, Ty::Text | Ty::Error]) => {
+                Some(Ty::Bool)
+            }
+            ("round", [t]) if is_number(t) || *t == Ty::Error => Some(Ty::Int),
+            ("round", [t, d]) if (is_number(t) || *t == Ty::Error) && int(d) => Some(Ty::Float),
+            ("abs", [t]) if is_number(t) || matches!(t, Ty::Money | Ty::Error) => Some(match t {
+                Ty::Int | Ty::IntLit => Ty::Nat,
+                other => other.clone(),
+            }),
+            ("min" | "max", [Ty::List(t, _)]) if ordered(t) => Some(widest(t)),
+            ("min" | "max", [Ty::Error]) => Some(Ty::Error),
+            ("min" | "max", [first, rest @ ..]) if !rest.is_empty() && ordered(first) => {
+                // All of one type; `min(1, 2.5)` is a `Float`.
+                let mut ty = Some(first.clone());
+                for t in rest {
+                    ty = match ty {
+                        Some(cur) if assignable(t, &cur) => Some(cur),
+                        Some(cur) if assignable(&cur, t) && ordered(t) => Some(t.clone()),
+                        _ => None,
+                    };
+                }
+                ty.map(|t| widest(&t))
+            }
+            ("sort", [l @ Ty::List(t, _)]) if ordered(t) => Some(l.clone()),
+            ("reverse", [l @ Ty::List(..)]) => Some(l.clone()),
+            ("sort" | "reverse", [Ty::Error]) => Some(Ty::Error),
             _ => None,
         };
         let ty = ty.unwrap_or_else(|| {
@@ -5067,6 +5132,16 @@ fn collect_refs(e: &Expr, bound: Option<&str>, index: &HashMap<&str, usize>, out
         | ExprKind::Error
         | ExprKind::Borrow { .. } => {}
     }
+}
+
+/// What `min`, `max` and `sort` compare: numbers, money, durations, texts.
+fn ordered(t: &Ty) -> bool {
+    is_number(t) || matches!(t, Ty::Money | Ty::Duration | Ty::Text | Ty::Error)
+}
+
+/// A literal's type as a value's: `1` is an `Int`.
+fn widest(t: &Ty) -> Ty {
+    if *t == Ty::IntLit { Ty::Int } else { t.clone() }
 }
 
 fn is_number(t: &Ty) -> bool {

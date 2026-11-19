@@ -1,0 +1,19 @@
+error[E0662]: `sort` does not take these arguments
+- expected : `sort(list)` of numbers, money, durations or texts, smallest first
+- observed : (`List[Bool]`)
+Location: builtins_text_numbers_errors.clyx:4:9
+
+error[E0662]: `min` does not take these arguments
+- expected : `min(list)` or `min(a, b, ...)`: of numbers, money, durations or texts; an empty list is a failure
+- observed : (`Int`, `Text`)
+Location: builtins_text_numbers_errors.clyx:5:9
+
+error[E0662]: `round` does not take these arguments
+- expected : `round(number)`: the nearest whole number; `round(number, digits)`: to that many decimals
+- observed : (`Text`)
+Location: builtins_text_numbers_errors.clyx:6:9
+
+error[E0662]: `split` does not take these arguments
+- expected : `split(text, separator)`: the parts between separators
+- observed : (`List[Bool]`, `Text`)
+Location: builtins_text_numbers_errors.clyx:7:9

@@ -7,6 +7,18 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.27.0 (2026-11-19)
+
+- New built-ins. For texts: `split(text, separator)`, `replace(text, old,
+  new)`, `starts_with(text, prefix)` and `ends_with(text, suffix)`. For
+  numbers: `round(x)` (an `Int`), `round(x, places)`, `abs`, and `min` and
+  `max`, of several values or of a list (an empty list is a failure that
+  `try` catches). For lists: `sort` (numbers or texts, stable) and
+  `reverse`. A name the program declares still wins over them; wrong
+  arguments are `E0662`. Calyx Studio completes them.
+- A number inside a text prints in its shortest exact form: `{price}` gives
+  `99.46`, not `99.459999999999994`. JSON and the journal are unchanged.
+
 ## 0.26.0 (2026-11-19)
 
 - Calyx Studio's editor completes names as you type: keywords, built-ins,
