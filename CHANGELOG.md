@@ -7,6 +7,20 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.20.0 (2026-11-19)
+
+- Calyx Studio keeps the runs. The **Runs** tab lists the open program's
+  runs, newest first (from the journals in its folder): status, when, how
+  many calls and resumes, and what each waits for. Click one to see it as
+  it ended: its steps on the graph, its calls and answers, its output.
+  **Resume** continues a run that failed, was interrupted or stopped
+  (`calyx resume`: what is in its journal is not done again).
+- A run waiting on `receive` shows what it waits for, and why (`about`),
+  and **Deliver** opens a form made from the message's type (a choice of
+  variants, a field for each field); the message is checked as
+  `calyx deliver` checks it, and the run resumes. The waiting step is
+  marked on the graph.
+
 ## 0.19.0 (2026-11-19)
 
 - Calyx Studio runs programs. **Run** asks for the graph's parameters (a
