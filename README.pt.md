@@ -2,7 +2,7 @@
 
 *In English: [README.md](README.md).*
 
-> **Beta pública (v0.24).** A Calyx funciona de ponta a ponta e é testada em
+> **Beta pública (v0.25).** A Calyx funciona de ponta a ponta e é testada em
 > Linux, macOS e Windows, mas é jovem: espere bugs e mudanças incompatíveis
 > antes da 1.0. Leia as [limitações](#limitações) antes de confiar nela com
 > dinheiro de verdade ou código desconhecido, e [relate o que quebrar](https://github.com/daltonfontes/calyx/issues).
@@ -248,7 +248,9 @@ resposta de cada chamada, tirada do diário. Adicione passos pelo grafo também
 renomeie ou apague um: cada ação é uma edição do código, que o Ctrl+Z
 desfaz. As execuções anteriores ficam listadas lá: reabra uma, retome uma que parou, ou entregue a uma execução
 que espera num `receive` a mensagem dela (uma aprovação, por exemplo) num
-formulário, e veja-a terminar. Edite lá ou no seu editor; a página segue os
+formulário, e veja-a terminar. A aba **MCP** do studio serve o programa como um agente o
+iniciaria (`calyx serve`): as tools dele, uma chamada e cada mensagem nos
+dois sentidos. Edite lá ou no seu editor; a página segue os
 arquivos. Roda só na sua máquina, do próprio binário
 `calyx`: nada para instalar.
 
@@ -372,7 +374,7 @@ modelos, em [`examples/`](examples).
 # Limitações
 
 ```
-- A Calyx é uma beta pública (v0.24). Espere bugs e mudanças incompatíveis antes da 1.0.
+- A Calyx é uma beta pública (v0.25). Espere bugs e mudanças incompatíveis antes da 1.0.
 - As mensagens do compilador e os nomes da linguagem são em inglês.
 - As garantias dependem de hipóteses declaradas: o serviço respeita a chave
   de idempotência, e o `verify` lê o estado atual. A Calyx não tem como

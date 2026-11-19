@@ -234,6 +234,31 @@ button.run { border-color: var(--accent); color: var(--accent); font-weight: 600
 @keyframes pulse { 50% { box-shadow: 0 0 0 4px rgba(108, 182, 255, .25); } }
 @media (prefers-reduced-motion: reduce) { .node.run-active { animation: none; } }
 .runs { font-size: 12.5px; }
+.mcp-intro { padding: 12px; color: var(--muted); font-size: 12.5px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.mcp-intro p { margin: 0; flex: 1; min-width: 260px; }
+.mcp-intro label { display: flex; gap: 6px; align-items: center; color: var(--text); }
+.mcp { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); border-top: 1px solid var(--line); }
+.mcp > div { min-width: 0; padding: 8px 12px; }
+.mcp > div + div { border-left: 1px solid var(--line); }
+.mcp h4 { margin: 4px 0 6px; font-size: 11px; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.mtool { border: 1px solid var(--line2); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; }
+.mtool.on { border-color: var(--accent); background: var(--sel); }
+.mtool b { font-family: var(--mono); }
+.mtool .badges { display: inline-flex; gap: 4px; margin-left: 8px; }
+.mtool .desc { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.badge { font-size: 10.5px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line2); color: var(--muted); }
+.badge.ro { color: var(--read); border-color: var(--read); } .badge.key { color: var(--write); border-color: var(--write); }
+.mform label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+.mform input[type=text], .mform input[type=number], .mform textarea { width: 100%; font: 12.5px var(--mono); padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line2); background: var(--bg); color: var(--text); outline: none; }
+.mform textarea { min-height: 54px; resize: vertical; }
+.mform .row { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.mresult pre { margin: 0 0 8px; font: 12px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 22vh; overflow: auto; padding: 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); }
+.mresult pre.err { border-color: var(--err); }
+.traffic .msg { font: 11.5px var(--mono); padding: 3px 0; border-bottom: 1px solid var(--line); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.traffic .msg.open { white-space: pre-wrap; word-break: break-word; }
+.traffic .dir { display: inline-block; width: 18px; font-weight: 700; }
+.traffic .out .dir { color: var(--read); } .traffic .in .dir { color: var(--accent); }
+@media (max-width: 760px) { .mcp { grid-template-columns: 1fr; } .mcp > div + div { border-left: 0; border-top: 1px solid var(--line); } }
 .prun { display: grid; grid-template-columns: auto auto 1fr auto; gap: 10px; align-items: center; padding: 6px 12px; border-top: 1px solid var(--line); cursor: pointer; }
 .prun:hover { background: var(--panel2); }
 .prun code { font-family: var(--mono); font-size: 12px; }
@@ -400,10 +425,11 @@ dialog .check small { color: var(--muted); }
 </dialog>
 
 <footer id="problems">
-  <div class="fbar" id="fbar"><button class="ftab on" data-tab="p">Problems <span id="pcount"></span></button><button class="ftab" data-tab="r" id="runTab" hidden>Run <span id="rstat"></span></button><button class="ftab" data-tab="h" id="histTab">Runs <span id="hcount"></span></button><span class="spacer"></span><span id="ptoggle">▾</span></div>
+  <div class="fbar" id="fbar"><button class="ftab on" data-tab="p">Problems <span id="pcount"></span></button><button class="ftab" data-tab="r" id="runTab" hidden>Run <span id="rstat"></span></button><button class="ftab" data-tab="h" id="histTab">Runs <span id="hcount"></span></button><button class="ftab" data-tab="m" id="mcpTab" title="This program as an MCP server: what an agent sees">MCP <span id="mstat"></span></button><span class="spacer"></span><span id="ptoggle">▾</span></div>
   <div class="list" id="plist"></div>
   <div class="list" id="rlist" hidden></div>
   <div class="list runs" id="hlist" hidden></div>
+  <div class="list" id="mlist" hidden></div>
 </footer>
 
 <script>
@@ -844,8 +870,9 @@ $("fbar").onclick = (e) => {
 };
 function showTab(tab) {
   for (const b of document.querySelectorAll(".ftab")) b.classList.toggle("on", b.dataset.tab === tab);
-  $("plist").hidden = tab !== "p"; $("rlist").hidden = tab !== "r"; $("hlist").hidden = tab !== "h";
-  $("problems").classList.toggle("wide", tab === "r" || tab === "h");
+  $("plist").hidden = tab !== "p"; $("rlist").hidden = tab !== "r"; $("hlist").hidden = tab !== "h"; $("mlist").hidden = tab !== "m";
+  $("problems").classList.toggle("wide", tab !== "p");
+  if (tab === "m") paintMcp();
   if (tab === "h") loadRuns();
   $("problems").classList.remove("closed"); $("ptoggle").textContent = "▾";
 }
@@ -1345,6 +1372,100 @@ function renameInLine(line, from, to) {
     out += line.slice(i, j).replace(word, to); i = j;
   }
   return out;
+}
+
+/* ---------- MCP bench ---------- */
+// The program as an agent sees it: `calyx serve`, its tools, a call, and
+// every message both ways.
+state.mcp = null;
+async function paintMcp() {
+  const m = state.mcp, el = $("mlist");
+  $("mstat").innerHTML = m && m.path ? `<span class="rs-finished">●</span>` : "";
+  if (!m || !m.path) {
+    el.innerHTML = `<div class="mcp-intro"><p>Serve this program as an MCP server, as Claude Desktop or another agent would start it (<code>calyx serve</code>): each graph is a tool. See its tools, call one, and read every message.</p>
+      <label><input type="checkbox" id="mFake" checked> Fake models</label><button class="primary" id="mStart">Serve ${esc(state.path ? base(state.path) : "")}</button></div>`;
+    $("mStart").onclick = startMcp;
+    return;
+  }
+  const tool = m.tools.find((t) => t.name === m.sel) || m.tools[0];
+  if (tool) m.sel = tool.name;
+  const badges = (t) => {
+    const a = t.annotations || {};
+    return `${a.readOnlyHint ? `<span class="badge ro" title="readOnlyHint: it changes nothing">read only</span>` : ""}${a.idempotencyKeyHint ? `<span class="badge key" title="idempotencyKeyHint: the same key returns the first call's answer">idempotency key</span>` : ""}`;
+  };
+  const field = ([k, sch]) => {
+    const t = sch && sch.type, v = (m.args[tool.name] || {})[k];
+    const val = v == null ? "" : typeof v === "string" ? v : JSON.stringify(v);
+    const input = t === "boolean" ? `<input type="checkbox" data-mf="${esc(k)}"${v ? " checked" : ""}>`
+      : t === "number" || t === "integer" ? `<input type="number" data-mf="${esc(k)}" value="${esc(val)}">`
+      : t === "string" ? `<input type="text" data-mf="${esc(k)}" value="${esc(val)}">`
+      : `<textarea data-mf="${esc(k)}" data-json="1" placeholder="JSON">${esc(val)}</textarea>`;
+    return `<label>${esc(k)} <span class="badge">${esc(t || "JSON")}</span></label>${input}`;
+  };
+  const props = tool ? Object.entries((tool.inputSchema && tool.inputSchema.properties) || {}) : [];
+  const r = m.result;
+  const resultHtml = r ? (r.error ? `<pre class="err">${esc(r.error)}</pre>` : (r.content || []).map((c) => `<pre class="${r.isError ? "err" : ""}">${esc(c.type === "text" ? c.text : JSON.stringify(c, null, 2))}</pre>`).join("")
+    + (r.replayed ? `<div class="waitbox" style="margin:0 0 8px;border-color:var(--accent)">Same idempotency key: the first call's answer, from its journal. Nothing ran again.</div>` : "")
+    + (r.run ? `<button id="mOpenRun">Open run ${esc(r.run)}</button>` : "")) : `<div class="none">Call a tool to see its answer.</div>`;
+  el.innerHTML = `
+    <div class="rhead"><span class="rstatus rs-finished">serving</span><code>${esc(m.path)}</code><code>${esc(m.server.serverInfo ? m.server.serverInfo.name + " " + m.server.serverInfo.version : "")}</code><code>${m.fake ? "fake models" : "real models"}</code><code>${m.tools.length} tool${m.tools.length === 1 ? "" : "s"}</code>
+      <span class="spacer"></span><button id="mRestart" title="Serve the file again, as it is saved now">Restart</button><button id="mStop">Stop</button></div>
+    <div class="mcp">
+      <div><h4>Tools</h4>${m.tools.map((t) => `<div class="mtool${t.name === m.sel ? " on" : ""}" data-t="${esc(t.name)}"><b>${esc(t.name)}</b><span class="badges">${badges(t)}</span><div class="desc">${esc(t.description || "")}</div></div>`).join("") || `<div class="none">No tools: this file has no graph.</div>`}
+        ${tool ? `<div class="mform"><h4>Call ${esc(tool.name)}</h4>${props.map(field).join("")}
+          ${(tool.annotations || {}).idempotencyKeyHint ? `<label>idempotencyKey <span class="badge">optional</span></label><input type="text" id="mKey" placeholder="the same key, the same answer" value="${esc(m.idem || "")}">` : ""}
+          <div class="row"><button class="primary" id="mCall"${m.busy ? " disabled" : ""}>${m.busy ? "Calling…" : "Call"}</button></div></div>` : ""}</div>
+      <div class="mresult"><h4>Answer</h4>${resultHtml}
+        <h4>Messages (${m.log.length})</h4><div class="traffic">${m.log.map((x, i) => `<div class="msg ${x.dir}${m.open.has(i) ? " open" : ""}" data-i="${i}"><span class="dir">${x.dir === "out" ? "→" : "←"}</span>${esc(m.open.has(i) ? JSON.stringify(x.msg, null, 2) : JSON.stringify(x.msg))}</div>`).join("")}</div></div>
+    </div>`;
+  for (const t of el.querySelectorAll(".mtool")) t.onclick = () => { m.sel = t.dataset.t; m.result = null; paintMcp(); };
+  for (const x of el.querySelectorAll(".traffic .msg")) x.onclick = () => { const i = +x.dataset.i; m.open.has(i) ? m.open.delete(i) : m.open.add(i); paintMcp(); };
+  $("mStop").onclick = stopMcp;
+  $("mRestart").onclick = async () => { const fake = m.fake; await stopMcp(); startMcp(fake); };
+  const call = $("mCall"); if (call) call.onclick = () => callMcp(tool, props);
+  const open = $("mOpenRun"); if (open) open.onclick = () => openPastRun(m.path, { id: r.run, graph: tool.name });
+}
+async function startMcp(fakeArg) {
+  if (!state.path) return;
+  if (state.dirty) await save();
+  const fake = typeof fakeArg === "boolean" ? fakeArg : ($("mFake") ? $("mFake").checked : true);
+  $("mlist").innerHTML = `<div class="none">Starting calyx serve…</div>`;
+  const r = await post("/api/mcp/start?path=" + enc(state.path), JSON.stringify({ fake }));
+  if (!r.ok) { toast(await r.text(), true); state.mcp = null; paintMcp(); return; }
+  const v = await r.json();
+  state.mcp = { key: v.key, path: state.path, fake, server: v.server || {}, tools: v.tools || [], sel: null, args: {}, result: null, log: [], open: new Set() };
+  await refreshMcpLog(); paintMcp();
+}
+async function stopMcp() {
+  const m = state.mcp; if (!m) return;
+  await post("/api/mcp/stop?key=" + m.key, "");
+  state.mcp = null; paintMcp();
+}
+async function refreshMcpLog() {
+  const m = state.mcp; if (!m) return;
+  const r = await fetch("/api/mcp/log?key=" + m.key);
+  if (r.ok) m.log = await r.json();
+}
+async function callMcp(tool, props) {
+  const m = state.mcp, args = {};
+  try {
+    for (const [k, sch] of props) {
+      const el = $("mlist").querySelector(`[data-mf="${CSS.escape(k)}"]`); if (!el) continue;
+      const t = sch && sch.type;
+      args[k] = t === "boolean" ? el.checked : t === "number" || t === "integer" ? Number(el.value) : t === "string" ? el.value : JSON.parse(el.value || "null");
+    }
+  } catch (_) { toast("A field is not valid JSON.", true); return; }
+  m.args[tool.name] = args; m.idem = $("mKey") ? $("mKey").value : "";
+  m.busy = true; paintMcp();
+  const r = await post("/api/mcp/call?key=" + m.key, JSON.stringify({ name: tool.name, arguments: args, idempotencyKey: m.idem || undefined }));
+  m.busy = false;
+  if (!r.ok) { m.result = { error: await r.text() }; }
+  else {
+    const v = await r.json();
+    const meta = (v.result && v.result._meta) || {};
+    m.result = v.error ? { error: JSON.stringify(v.error) } : { ...v.result, run: meta["calyx/run"] || null, replayed: !!meta["calyx/replayed"] };
+  }
+  await refreshMcpLog(); paintMcp(); loadRuns();
 }
 
 /* ---------- past runs ---------- */

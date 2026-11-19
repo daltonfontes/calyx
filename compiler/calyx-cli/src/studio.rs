@@ -32,6 +32,11 @@
 //!   (`calyx resume`); `POST /api/deliver?path=P&id=ID&message=M` (the
 //!   message as JSON) gives a waiting `receive` its message
 //!   (`calyx deliver`).
+//! - `POST /api/mcp/start?path=P` (`{"fake"}`): serves the file as an MCP
+//!   server (`calyx serve`, by stdio), as an agent would start it, and
+//!   gives its tools. `POST /api/mcp/call?key=K` (`{"name", "arguments",
+//!   "idempotencyKey"}`) calls one; `GET /api/mcp/log?key=K` is every
+//!   message both ways; `POST /api/mcp/stop?key=K`.
 //!
 //! The code is the source of truth: the graph is drawn from it, never the
 //! other way round.
@@ -550,6 +555,54 @@ fn handle(mut stream: TcpStream, ws: &Workspace) {
                 Err(e) => fail(&mut stream, 500, format!("calyx deliver: {e}")),
             }
         }
+        ("POST", "/api/mcp/start") => {
+            let file = match resolve(ws, &rel, false) {
+                Ok(f) => f,
+                Err(e) => return fail(&mut stream, 400, e),
+            };
+            let fake = serde_json::from_slice::<Value>(&req.body)
+                .ok()
+                .and_then(|v| v["fake"].as_bool())
+                .unwrap_or(true);
+            match start_mcp(&file, fake) {
+                Ok(v) => respond(&mut stream, 200, "application/json", &v.to_string()),
+                Err(e) => fail(&mut stream, 400, e),
+            }
+        }
+        ("POST", "/api/mcp/call") => {
+            let Some(m) = mcp_by_key(query) else {
+                return fail(&mut stream, 404, "no such server".into());
+            };
+            let Ok(body) = serde_json::from_slice::<Value>(&req.body) else {
+                return fail(&mut stream, 400, "expected {name, arguments}".into());
+            };
+            let mut params = json!({"name": body["name"], "arguments": body["arguments"]});
+            if let Some(k) = body["idempotencyKey"].as_str().filter(|k| !k.is_empty()) {
+                params["idempotencyKey"] = json!(k);
+            }
+            match m.rpc("tools/call", params, false) {
+                Ok(v) => respond(&mut stream, 200, "application/json", &v.to_string()),
+                Err(e) => fail(&mut stream, 502, e),
+            }
+        }
+        ("GET", "/api/mcp/log") => match mcp_by_key(query) {
+            Some(m) => {
+                let log = m
+                    .log
+                    .lock()
+                    .map(|l| Value::from(l.clone()))
+                    .unwrap_or_default();
+                respond(&mut stream, 200, "application/json", &log.to_string())
+            }
+            None => fail(&mut stream, 404, "no such server".into()),
+        },
+        ("POST", "/api/mcp/stop") => match mcp_by_key(query) {
+            Some(m) => {
+                stop_mcp(&m);
+                respond(&mut stream, 200, "application/json", "{}")
+            }
+            None => fail(&mut stream, 404, "no such server".into()),
+        },
         ("POST", "/api/stop") => {
             let run = param(query, "key")
                 .and_then(|k| k.parse::<usize>().ok())
@@ -573,6 +626,171 @@ fn handle(mut stream: TcpStream, ws: &Workspace) {
         }
         _ => respond(&mut stream, 404, "text/plain", "not found"),
     }
+}
+
+/// A program served over MCP for the page (`calyx serve`, by stdio): what
+/// an agent would see, and every message both ways.
+struct Mcp {
+    child: Mutex<std::process::Child>,
+    /// The two ends, used by one request at a time.
+    io: Mutex<(
+        std::process::ChildStdin,
+        std::io::BufReader<std::process::ChildStdout>,
+    )>,
+    log: Mutex<Vec<Value>>,
+    next_id: std::sync::atomic::AtomicU64,
+    stderr: Arc<Mutex<String>>,
+}
+
+static MCPS: Mutex<Vec<Arc<Mcp>>> = Mutex::new(Vec::new());
+
+impl Mcp {
+    fn note(&self, dir: &str, msg: Value) {
+        if let Ok(mut log) = self.log.lock()
+            && log.len() < 2000
+        {
+            log.push(json!({"dir": dir, "msg": msg}));
+        }
+    }
+
+    /// Sends `method` and waits for its answer (a notification, without
+    /// `id`, waits for nothing).
+    fn rpc(&self, method: &str, params: Value, notify: bool) -> Result<Value, String> {
+        use std::io::BufRead;
+        let mut msg = json!({"jsonrpc": "2.0", "method": method, "params": params});
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if !notify {
+            msg["id"] = json!(id);
+        }
+        let mut io = self.io.lock().map_err(|_| "studio: mcp".to_owned())?;
+        self.note("out", msg.clone());
+        writeln!(io.0, "{msg}")
+            .and_then(|()| io.0.flush())
+            .map_err(|e| format!("the server stopped: {e}"))?;
+        if notify {
+            return Ok(Value::Null);
+        }
+        loop {
+            let mut line = String::new();
+            match io.1.read_line(&mut line) {
+                Ok(0) | Err(_) => {
+                    let why = self
+                        .stderr
+                        .lock()
+                        .map(|s| s.trim().to_owned())
+                        .unwrap_or_default();
+                    return Err(if why.is_empty() {
+                        "the server stopped".into()
+                    } else {
+                        format!("the server stopped: {why}")
+                    });
+                }
+                Ok(_) => {}
+            }
+            let Ok(reply) = serde_json::from_str::<Value>(line.trim()) else {
+                continue;
+            };
+            self.note("in", reply.clone());
+            if reply["id"] == json!(id) {
+                return Ok(reply);
+            }
+        }
+    }
+}
+
+/// Serves `file` with `calyx serve` and says hello: its key, the server, its
+/// tools.
+fn start_mcp(file: &Path, fake: bool) -> Result<Value, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("calyx: {e}"))?;
+    let dir = file.parent().unwrap_or(Path::new("."));
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("serve").arg(file.file_name().unwrap_or_default());
+    if fake {
+        cmd.arg("--fake-models");
+    }
+    cmd.current_dir(dir);
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let mut child = cmd
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot start calyx serve: {e}"))?;
+    let stdin = child.stdin.take().ok_or("calyx serve: no stdin")?;
+    let stdout = std::io::BufReader::new(child.stdout.take().ok_or("calyx serve: no stdout")?);
+    let stderr = Arc::new(Mutex::new(String::new()));
+    if let Some(mut err) = child.stderr.take() {
+        let into = Arc::clone(&stderr);
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = std::io::Read::read(&mut err, &mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                if let Ok(mut b) = into.lock()
+                    && b.len() < 1 << 20
+                {
+                    b.push_str(&String::from_utf8_lossy(&chunk[..n]));
+                }
+            }
+        });
+    }
+    let mcp = Arc::new(Mcp {
+        child: Mutex::new(child),
+        io: Mutex::new((stdin, stdout)),
+        log: Mutex::new(Vec::new()),
+        next_id: std::sync::atomic::AtomicU64::new(1),
+        stderr,
+    });
+    let hello = mcp.rpc(
+        "initialize",
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "calyx-studio", "version": env!("CARGO_PKG_VERSION")},
+        }),
+        false,
+    );
+    let hello = match hello {
+        Ok(h) => h,
+        Err(e) => {
+            stop_mcp(&mcp);
+            return Err(e);
+        }
+    };
+    let _ = mcp.rpc("notifications/initialized", json!({}), true);
+    let tools = mcp.rpc("tools/list", json!({}), false)?;
+    let mut all = MCPS.lock().map_err(|_| "studio: mcp".to_owned())?;
+    all.push(Arc::clone(&mcp));
+    let key = all.len() - 1;
+    Ok(json!({
+        "key": key,
+        "server": hello["result"],
+        "tools": tools["result"]["tools"],
+    }))
+}
+
+/// Ends a served program and what it started.
+fn stop_mcp(m: &Mcp) {
+    if let Ok(mut c) = m.child.lock()
+        && c.try_wait().ok().flatten().is_none()
+    {
+        #[cfg(unix)]
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", "--", &format!("-{}", c.id())])
+            .status();
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+}
+
+fn mcp_by_key(query: &str) -> Option<Arc<Mcp>> {
+    param(query, "key")
+        .and_then(|k| k.parse::<usize>().ok())
+        .and_then(|k| MCPS.lock().ok()?.get(k).cloned())
 }
 
 /// Starts `calyx run` on `file` (`{"graph", "args", "fake"}`): its key.
@@ -930,6 +1148,7 @@ fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &str) {
         400 => "Bad Request",
         403 => "Forbidden",
         404 => "Not Found",
+        502 => "Bad Gateway",
         _ => "Error",
     };
     let head = format!(
