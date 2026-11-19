@@ -2,7 +2,7 @@
 
 *Em português: [README.pt.md](README.pt.md).*
 
-> **Public beta (v0.16).** Calyx works end to end and is tested on Linux, macOS
+> **Public beta (v0.17).** Calyx works end to end and is tested on Linux, macOS
 > and Windows, but it is young: expect bugs and breaking changes before 1.0.
 > Read the [limitations](#limitations) before trusting it with real money or
 > untrusted code, and [report what breaks](https://github.com/daltonfontes/calyx/issues).
@@ -268,6 +268,12 @@ installed with "Install from VSIX..."; see [editors/vscode](editors/vscode))
 shows the same errors as you type, with the outline of the file, go to definition and
 hover; any other editor with an LSP client can run `calyx lsp`.
 
+To see a program as a graph next to its code, run `calyx studio hello.clyx`
+and open http://127.0.0.1:4180/: each step, what it calls, its effect and
+what it waits for, with the errors as you type. Edit there or in your
+editor; the page follows the file. It runs on your machine only, from the
+`calyx` binary: nothing to install.
+
 For a whole agent, step by step (tools, an agent with skills, refunds that
 are never paid twice, a crash and a resume), see the
 [tutorial](docs/tutorial.md).
@@ -392,7 +398,7 @@ for code agents to per-user memory, debates and model routers, in
 # Limitations
 
 ```
-- Calyx is a public beta (v0.16). Expect bugs and breaking changes before 1.0.
+- Calyx is a public beta (v0.17). Expect bugs and breaking changes before 1.0.
 - The spec, docs and examples are mostly in Portuguese; the paper is in English.
 - The guarantees rest on stated hypotheses: the service honours the idempotency
   key, and `verify` reads fresh state. Calyx cannot check a service that ignores

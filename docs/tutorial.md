@@ -206,6 +206,10 @@ graph status_report(orders: List[Text]) -> Report:
 calyx run 4_many.clyx --fake-models --orders '["A100", "A200", "A300"]'
 ```
 
+To see it as a graph, next to its code, run `calyx studio 4_many.clyx` and
+open http://127.0.0.1:4180/: `lines` is one card, with its two steps
+inside and `each id in orders` on top. Click a step to find its code.
+
 ## 5. With a real model
 
 Set a key and drop `--fake-models`:

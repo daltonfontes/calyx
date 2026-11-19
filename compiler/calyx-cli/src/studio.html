@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calyx Studio</title>
+<style>
+:root {
+  --bg: #0e1014; --panel: #14171d; --panel2: #1a1e26; --line: #252a34; --line2: #303643;
+  --text: #d9dee7; --muted: #8b93a3; --faint: #5d6575;
+  --accent: #4fd1b0; --accent-ink: #062b22;
+  --pure: #8b93a3; --read: #6cb6ff; --llm: #c49bff; --write: #ffa95e;
+  --err: #ff6b6b; --warn: #f2c14e; --sel: rgba(79, 209, 176, .14);
+  --k-kw: #ff7ab2; --k-str: #9ee493; --k-num: #ffb86b; --k-ty: #7cc7ff; --k-fn: #e5c07b; --k-cm: #6b7385;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --panel2: #f1f3f6; --line: #e2e5ea; --line2: #d3d8e0;
+    --text: #1d232d; --muted: #5c6575; --faint: #8d95a3;
+    --accent: #0f9d7a; --accent-ink: #ffffff;
+    --pure: #6b7385; --read: #1f77d0; --llm: #8a4fd8; --write: #c96a12;
+    --err: #d63b3b; --warn: #b98500; --sel: rgba(15, 157, 122, .12);
+    --k-kw: #c2185b; --k-str: #2e7d32; --k-num: #b45309; --k-ty: #1565c0; --k-fn: #8a6100; --k-cm: #8d95a3;
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 var(--sans); }
+body { display: grid; grid-template-rows: auto 1fr auto; overflow: hidden; }
+button { font: inherit; color: inherit; background: var(--panel2); border: 1px solid var(--line2); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+
+/* top bar */
+header { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); min-width: 0; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: .2px; white-space: nowrap; }
+.brand svg { width: 20px; height: 20px; }
+.file { font-family: var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.file b { color: var(--text); font-weight: 500; }
+.tabs { display: flex; gap: 4px; overflow-x: auto; min-width: 0; }
+.tab { font-family: var(--mono); font-size: 12px; padding: 3px 9px; border-radius: 999px; background: transparent; border: 1px solid var(--line2); color: var(--muted); white-space: nowrap; }
+.tab.on { color: var(--text); border-color: var(--accent); background: var(--sel); }
+.spacer { flex: 1; }
+.status { display: flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.status.bad .dot { background: var(--err); }
+.status.warn .dot { background: var(--warn); }
+
+/* main split */
+main { display: grid; grid-template-columns: var(--left, 55%) 6px 1fr; min-height: 0; }
+.divider { cursor: col-resize; background: var(--line); }
+.divider:hover, .divider.drag { background: var(--accent); }
+
+/* graph canvas */
+.canvas { position: relative; overflow: hidden; background-color: var(--bg);
+  background-image: radial-gradient(var(--line2) 1px, transparent 1px); background-size: 22px 22px; cursor: grab; min-width: 0; }
+.canvas.panning { cursor: grabbing; }
+.world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.world svg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.edge { fill: none; stroke: var(--line2); stroke-width: 1.6; }
+.edge.hot { stroke: var(--accent); stroke-width: 2.2; }
+.node { position: absolute; width: 270px; background: var(--panel); border: 1px solid var(--line2); border-radius: 10px; cursor: pointer;
+  box-shadow: 0 1px 0 rgba(0,0,0,.25); transition: border-color .12s, box-shadow .12s; }
+.node:hover { border-color: var(--muted); }
+.node.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--sel); }
+.node.fan { box-shadow: 4px 4px 0 -1px var(--panel), 4px 4px 0 0 var(--line2); }
+.node.fan.sel { box-shadow: 0 0 0 3px var(--sel), 4px 4px 0 -1px var(--panel), 4px 4px 0 0 var(--accent); }
+.node .bar { height: 3px; border-radius: 10px 10px 0 0; }
+.node .head { display: flex; align-items: center; gap: 7px; padding: 8px 10px 2px; }
+.node .name { font-weight: 650; font-family: var(--mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node .each { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--muted); border: 1px solid var(--line2); border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+.node .code { font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding: 2px 10px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node .inner { margin: 0 8px 6px; border: 1px dashed var(--line2); border-radius: 7px; padding: 4px 0; }
+.node .step { display: flex; gap: 6px; padding: 2px 8px; font-family: var(--mono); font-size: 11px; white-space: nowrap; overflow: hidden; }
+.node .step:hover { background: var(--sel); }
+.node .step.sel { background: var(--sel); }
+.node .step .n { color: var(--text); }
+.node .step .c { color: var(--faint); overflow: hidden; text-overflow: ellipsis; }
+.node .foot { display: flex; align-items: center; gap: 6px; padding: 0 10px 8px; font-size: 11px; color: var(--faint); }
+.node .ty { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill { font-size: 10.5px; font-weight: 600; letter-spacing: .3px; padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.e-pure { color: var(--pure); } .e-read { color: var(--read); } .e-llm { color: var(--llm); } .e-write { color: var(--write); }
+.b-pure { background: var(--pure); } .b-read { background: var(--read); } .b-llm { background: var(--llm); } .b-write { background: var(--write); }
+.term { position: absolute; width: 270px; text-align: center; }
+.term .chip { display: inline-block; max-width: 270px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line2); background: var(--panel);
+  font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term .chip b { font-family: var(--sans); font-weight: 650; margin-right: 6px; }
+.term.end .chip { border-color: var(--accent); }
+.tools { position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column; gap: 4px; }
+.tools button { width: 30px; height: 30px; padding: 0; background: var(--panel); }
+.legend { position: absolute; left: 12px; bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--muted);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+.banner { position: absolute; left: 50%; bottom: 48px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--err);
+  color: var(--text); border-radius: 8px; padding: 6px 12px; font-size: 12px; max-width: 90%; display: none; z-index: 2; }
+.banner.on { display: block; }
+.empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); text-align: center; padding: 20px; pointer-events: none; }
+
+/* editor */
+.editor { position: relative; display: grid; grid-template-rows: auto 1fr; min-width: 0; min-height: 0; background: var(--panel); }
+.ebar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.ebar .disk { display: none; color: var(--warn); }
+.ebar .disk.on { display: inline; }
+.code-wrap { position: relative; display: grid; grid-template-columns: auto 1fr; overflow: hidden; min-height: 0; }
+.gutter { overflow: hidden; padding: 10px 0; text-align: right; font: 12.5px/20px var(--mono); color: var(--faint); background: var(--panel); user-select: none; border-right: 1px solid var(--line); }
+.gutter div { padding: 0 10px 0 14px; position: relative; }
+.gutter div.err { color: var(--err); } .gutter div.warn { color: var(--warn); }
+.gutter div.err::before, .gutter div.warn::before { content: ""; position: absolute; left: 4px; top: 7px; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.gutter div.cur { color: var(--text); }
+.area { position: relative; overflow: hidden; min-width: 0; }
+.area pre, .area textarea { margin: 0; padding: 10px 14px; font: 12.5px/20px var(--mono); tab-size: 4; white-space: pre; border: 0; }
+.area pre { position: absolute; inset: 0; pointer-events: none; overflow: hidden; color: var(--text); }
+.area pre .ln { display: block; min-height: 20px; }
+.area pre .ln.hl { background: var(--sel); }
+.area pre .ln.eline { background: rgba(255, 107, 107, .10); }
+.area pre .ln.wline { background: rgba(242, 193, 78, .10); }
+.area textarea { position: absolute; inset: 0; width: 100%; height: 100%; resize: none; outline: none; background: transparent; color: transparent;
+  caret-color: var(--text); overflow: auto; }
+.area textarea::selection { background: rgba(124, 199, 255, .28); color: transparent; }
+.t-kw { color: var(--k-kw); } .t-str { color: var(--k-str); } .t-num { color: var(--k-num); } .t-ty { color: var(--k-ty); } .t-fn { color: var(--k-fn); }
+.t-cm { color: var(--k-cm); font-style: italic; } .t-in { color: var(--k-ty); }
+
+/* problems */
+footer { border-top: 1px solid var(--line); background: var(--panel); max-height: 32vh; display: grid; grid-template-rows: auto 1fr; min-height: 0; }
+footer .fbar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; cursor: pointer; user-select: none; font-size: 12px; color: var(--muted); }
+footer .fbar b { color: var(--text); font-weight: 600; }
+footer .list { overflow: auto; }
+footer.closed .list { display: none; }
+.prob { display: grid; grid-template-columns: 16px auto 1fr auto; gap: 8px; padding: 5px 12px; border-top: 1px solid var(--line); cursor: pointer; align-items: baseline; }
+.prob:hover { background: var(--panel2); }
+.prob .ic { width: 8px; height: 8px; border-radius: 50%; background: var(--err); align-self: start; margin-top: 5px; }
+.prob.warning .ic { background: var(--warn); }
+.prob code { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.prob .msg div { color: var(--muted); font-size: 12px; }
+.prob .at { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+.none { padding: 6px 12px 10px; color: var(--muted); }
+
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 55% 1fr; }
+  .divider { display: none; }
+  .file { display: none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round">
+      <path d="M12 21V11"/><path d="M12 11C12 6 8 3 5 3c0 4 3 8 7 8z"/><path d="M12 11c0-5 4-8 7-8 0 4-3 8-7 8z"/><path d="M7 21h10"/></g></svg>
+    Calyx Studio
+  </div>
+  <div class="file" id="file"></div>
+  <div class="tabs" id="tabs" role="tablist" aria-label="Graphs"></div>
+  <div class="spacer"></div>
+  <div class="status" id="status"><span class="dot"></span><span id="statusText">Checking…</span></div>
+  <button class="primary" id="save" disabled title="Save (Ctrl+S)">Save</button>
+</header>
+
+<main id="main">
+  <section class="canvas" id="canvas" aria-label="Graph">
+    <div class="world" id="world"><svg id="edges"></svg></div>
+    <div class="banner" id="banner">The code has errors: the graph is the last version that checked.</div>
+    <div class="empty" id="empty"></div>
+    <div class="tools">
+      <button id="zin" title="Zoom in" aria-label="Zoom in">+</button>
+      <button id="zout" title="Zoom out" aria-label="Zoom out">−</button>
+      <button id="fit" title="Fit" aria-label="Fit">⤢</button>
+    </div>
+    <div class="legend" aria-label="Effects">
+      <span><i class="b-pure"></i>pure</span><span><i class="b-read"></i>read</span>
+      <span><i class="b-llm"></i>model</span><span><i class="b-write"></i>write</span>
+    </div>
+  </section>
+  <div class="divider" id="divider" role="separator" aria-orientation="vertical"></div>
+  <section class="editor" aria-label="Code">
+    <div class="ebar"><span id="cursor">Ln 1</span><span class="spacer"></span>
+      <span class="disk" id="disk">The file changed on disk. <button id="reload">Load it</button></span></div>
+    <div class="code-wrap">
+      <div class="gutter" id="gutter"></div>
+      <div class="area"><pre id="hl" aria-hidden="true"></pre><textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Program"></textarea></div>
+    </div>
+  </section>
+</main>
+
+<footer id="problems">
+  <div class="fbar" id="fbar"><b>Problems</b><span id="pcount"></span><span class="spacer"></span><span id="ptoggle">▾</span></div>
+  <div class="list" id="plist"></div>
+</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const state = {
+  text: "", diskHash: "", dirty: false, last: null, graphs: [], graph: null,
+  sel: null, view: { x: 40, y: 30, k: 1 }, fitted: false, boxes: new Map(),
+};
+
+/* ---------- syntax colors ---------- */
+const KW = new Set(("model tool type prompt graph def entity state on next return if elif else for each in loop max done match case " +
+  "send ask agent tools skills skill max_turns task compact with at limits threads budget effect read write once timeout " +
+  "on_uncertain verify idempotency_key checks requires after unordered try receive about router policy and or not true false " +
+  "description max_output turn_limit stuck final_answer last fail race first where none rounds carry reads edits decreases " +
+  "batch message key import is").split(" "));
+function highlightLine(line, inStr) {
+  // Returns [html, stillInTripleString].
+  let out = "", i = 0;
+  if (inStr) {
+    const end = line.indexOf('"""');
+    if (end < 0) return [`<span class="t-str">${interp(line)}</span>`, true];
+    out += `<span class="t-str">${interp(line.slice(0, end + 3))}</span>`;
+    i = end + 3;
+  }
+  while (i < line.length) {
+    const c = line[i], rest = line.slice(i);
+    if (c === "#") { out += `<span class="t-cm">${esc(rest)}</span>`; break; }
+    if (rest.startsWith('"""')) {
+      const end = line.indexOf('"""', i + 3);
+      if (end < 0) { out += `<span class="t-str">${interp(rest)}</span>`; return [out, true]; }
+      out += `<span class="t-str">${interp(line.slice(i, end + 3))}</span>`; i = end + 3; continue;
+    }
+    if (c === '"') {
+      let j = i + 1;
+      while (j < line.length && line[j] !== '"') j += line[j] === "\\" ? 2 : 1;
+      out += `<span class="t-str">${interp(line.slice(i, j + 1))}</span>`; i = j + 1; continue;
+    }
+    let m = /^[0-9][0-9_]*(\.[0-9]+)?/.exec(rest);
+    if (m) { out += `<span class="t-num">${m[0]}</span>`; i += m[0].length; continue; }
+    m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(rest);
+    if (m) {
+      const w = m[0], after = line.slice(i + w.length);
+      let cls = KW.has(w) ? "t-kw" : /^[A-Z]/.test(w) ? "t-ty" : /^\s*\(/.test(after) ? "t-fn" : "";
+      out += cls ? `<span class="${cls}">${w}</span>` : w; i += w.length; continue;
+    }
+    out += esc(c); i++;
+  }
+  return [out, false];
+}
+function interp(s) { return esc(s).replace(/\{[^{}"]*\}/g, (m) => `<span class="t-in">${m}</span>`); }
+
+/* ---------- editor ---------- */
+const code = $("code"), hl = $("hl"), gutter = $("gutter");
+function paintEditor() {
+  const lines = state.text.split("\n");
+  const marks = new Map();
+  for (const d of (state.last ? state.last.diagnostics : [])) {
+    for (let l = d.start.line; l <= d.end.line; l++) if (marks.get(l) !== "err") marks.set(l, d.severity === "error" ? "err" : "warn");
+  }
+  const cur = caretLine(), hot = hotLines();
+  let inStr = false, html = "", gut = "";
+  lines.forEach((line, n) => {
+    const [h, s] = highlightLine(line, inStr); inStr = s;
+    const mk = marks.get(n);
+    const cls = ["ln", hot.has(n) ? "hl" : "", mk === "err" ? "eline" : mk === "warn" ? "wline" : ""].join(" ");
+    html += `<span class="${cls}">${h || " "}</span>`;
+    gut += `<div class="${mk || ""}${n === cur ? " cur" : ""}">${n + 1}</div>`;
+  });
+  hl.innerHTML = html; gutter.innerHTML = gut;
+  syncScroll();
+}
+function syncScroll() {
+  hl.scrollTop = code.scrollTop; hl.scrollLeft = code.scrollLeft; gutter.scrollTop = code.scrollTop;
+}
+code.addEventListener("scroll", syncScroll);
+function caretLine() { return code.value.slice(0, code.selectionStart).split("\n").length - 1; }
+function setText(t, keepCaret) {
+  const pos = code.selectionStart, top = code.scrollTop;
+  state.text = t; code.value = t;
+  if (keepCaret) { code.selectionStart = code.selectionEnd = Math.min(pos, t.length); code.scrollTop = top; }
+}
+function gotoLine(n) {
+  const lines = state.text.split("\n"); let off = 0;
+  for (let i = 0; i < n && i < lines.length; i++) off += lines[i].length + 1;
+  code.focus({ preventScroll: true });
+  code.selectionStart = code.selectionEnd = off + (lines[n] || "").search(/\S|$/);
+  const target = n * 20 - code.clientHeight / 3;
+  code.scrollTop = Math.max(0, target);
+  onCaret();
+}
+code.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); return; }
+  const v = code.value, a = code.selectionStart, b = code.selectionEnd;
+  if (e.key === "Tab" && !e.shiftKey && a === b) { e.preventDefault(); insert("    "); return; }
+  if (e.key === "Enter" && a === b) {
+    const lineStart = v.lastIndexOf("\n", a - 1) + 1, line = v.slice(lineStart, a);
+    let ind = /^ */.exec(line)[0];
+    if (/:\s*(#.*)?$/.test(line)) ind += "    ";
+    e.preventDefault(); insert("\n" + ind);
+  }
+});
+function insert(s) {
+  // execCommand keeps the browser's undo history; fall back if it is gone.
+  if (!document.execCommand || !document.execCommand("insertText", false, s)) {
+    const a = code.selectionStart;
+    code.value = code.value.slice(0, a) + s + code.value.slice(code.selectionEnd);
+    code.selectionStart = code.selectionEnd = a + s.length;
+    code.dispatchEvent(new Event("input"));
+  }
+}
+let checkTimer = null;
+code.addEventListener("input", () => {
+  state.text = code.value; state.dirty = true; $("save").disabled = false;
+  paintEditor(); clearTimeout(checkTimer); checkTimer = setTimeout(check, 250);
+});
+for (const ev of ["click", "keyup", "select"]) code.addEventListener(ev, onCaret);
+function onCaret() {
+  const n = caretLine();
+  $("cursor").textContent = `Ln ${n + 1}`;
+  const node = nodeAtLine(n);
+  if (node !== state.sel) { state.sel = node; drawSelection(); }
+  paintEditor();
+}
+
+/* ---------- server ---------- */
+const post = (path, body) => fetch(path, { method: "POST", headers: { "Content-Type": "text/plain", "X-Calyx-Studio": "1" }, body });
+async function check() {
+  const sent = state.text;
+  try {
+    const r = await post("/api/check", sent);
+    if (r.ok && sent === state.text) apply(await r.json());
+  } catch (_) { offline(); }
+}
+async function save() {
+  if (!state.dirty) return;
+  const sent = state.text;
+  try {
+    const r = await post("/api/save", sent);
+    if (!r.ok) { alert(await r.text()); return; }
+    const a = await r.json();
+    state.diskHash = a.hash;
+    if (sent === state.text) { state.dirty = false; $("save").disabled = true; }
+    $("disk").classList.remove("on");
+    apply(a);
+  } catch (_) { offline(); }
+}
+let pending = null;
+async function poll() {
+  try {
+    const r = await fetch("/api/program" + (state.diskHash ? "?since=" + state.diskHash : ""));
+    if (r.status === 200) {
+      const a = await r.json();
+      state.diskHash = a.hash;
+      if (!state.dirty || a.text === state.text) {
+        if (a.text !== state.text) setText(a.text, true);
+        state.dirty = false; $("save").disabled = true; apply(a);
+      } else { pending = a; $("disk").classList.add("on"); }
+    }
+    online();
+  } catch (_) { offline(); }
+  setTimeout(poll, 1200);
+}
+$("reload").onclick = () => {
+  if (!pending) return;
+  setText(pending.text, true); state.dirty = false; $("save").disabled = true;
+  $("disk").classList.remove("on"); apply(pending); pending = null;
+};
+$("save").onclick = save;
+function offline() { $("status").className = "status bad"; $("statusText").textContent = "Studio stopped: run `calyx studio` again"; }
+function online() { if ($("statusText").textContent.startsWith("Studio stopped")) render(); }
+
+/* ---------- state from a check ---------- */
+function apply(a) {
+  state.last = a;
+  $("file").innerHTML = `<b>${esc(a.file.split(/[\\/]/).pop())}</b> ${a.file.includes("/") ? "· " + esc(a.file) : ""}`;
+  document.title = `${a.file.split(/[\\/]/).pop()} · Calyx Studio`;
+  const first = !state.graphs.length && a.ok && a.graphs.length;
+  if (a.ok) {
+    state.graphs = a.graphs;
+    if (!state.graphs.some((g) => g.name === state.graph)) state.graph = state.graphs.length ? state.graphs[0].name : null;
+  }
+  render();
+  // Opening a file: show the code of its first graph.
+  if (first && cur() && cur().line != null) { code.scrollTop = Math.max(0, cur().line * 20 - 40); syncScroll(); }
+}
+function render() {
+  const a = state.last; if (!a) return;
+  const errs = a.diagnostics.filter((d) => d.severity === "error").length, warns = a.diagnostics.length - errs;
+  $("status").className = "status" + (errs ? " bad" : warns ? " warn" : "");
+  $("statusText").textContent = errs ? `${errs} error${errs > 1 ? "s" : ""}` : warns ? `${warns} warning${warns > 1 ? "s" : ""}` : "No problems";
+  $("banner").classList.toggle("on", !a.ok && state.graphs.length > 0);
+  // tabs
+  $("tabs").innerHTML = state.graphs.map((g) =>
+    `<button class="tab${g.name === state.graph ? " on" : ""}" role="tab" data-g="${esc(g.name)}">${esc(g.name)}</button>`).join("");
+  for (const b of $("tabs").querySelectorAll(".tab")) b.onclick = () => { state.graph = b.dataset.g; state.fitted = false; state.sel = null; render(); const g = cur(); if (g && g.line != null) gotoLine(g.line); };
+  // problems
+  $("pcount").textContent = a.diagnostics.length ? `${errs} error${errs === 1 ? "" : "s"}, ${warns} warning${warns === 1 ? "" : "s"}` : "";
+  $("plist").innerHTML = a.diagnostics.length ? a.diagnostics.map((d, i) => `
+    <div class="prob ${d.severity}" data-i="${i}"><span class="ic"></span><code>${esc(d.code)}</code>
+      <div class="msg">${esc(d.message)}${d.expected ? `<div>expected: ${esc(d.expected)}</div>` : ""}${d.observed ? `<div>observed: ${esc(d.observed)}</div>` : ""}</div>
+      <span class="at">${d.start.line + 1}:${d.start.character + 1}</span></div>`).join("") : `<div class="none">No problems.</div>`;
+  for (const p of $("plist").querySelectorAll(".prob")) p.onclick = () => gotoLine(a.diagnostics[+p.dataset.i].start.line);
+  drawGraph(); paintEditor();
+}
+$("fbar").onclick = () => { $("problems").classList.toggle("closed"); $("ptoggle").textContent = $("problems").classList.contains("closed") ? "▸" : "▾"; };
+const cur = () => state.graphs.find((g) => g.name === state.graph);
+
+/* ---------- graph ---------- */
+const W = 270, GAPX = 44, GAPY = 64, MAXINNER = 8;
+function height(n) {
+  const inner = n.inner.length ? Math.min(n.inner.length, MAXINNER) * 19 + (n.inner.length > MAXINNER ? 19 : 0) + 14 : 0;
+  return 3 + 26 + 22 + inner + 26;
+}
+function layout(g) {
+  const byId = new Map(g.nodes.map((n) => [n.id, n]));
+  const level = new Map();
+  for (const n of g.nodes) level.set(n.id, 1 + Math.max(0, ...n.inputs.filter((i) => byId.has(i)).map((i) => level.get(i) || 0)));
+  const maxL = Math.max(0, ...level.values());
+  const rows = Array.from({ length: maxL + 2 }, () => []);
+  rows[0].push("start");
+  for (const n of g.nodes) rows[level.get(n.id)].push(n.id);
+  rows[maxL + 1].push("end");
+  const parents = (id) => id === "start" ? [] : id === "end" ? (g.output != null ? [g.output] : []) :
+    (byId.get(id).inputs.length ? byId.get(id).inputs : ["start"]);
+  const x = new Map(); x.set("start", 0);
+  for (let r = 1; r < rows.length; r++) {
+    const want = rows[r].map((id) => {
+      const ps = parents(id).filter((p) => x.has(p));
+      return [id, ps.length ? ps.reduce((s, p) => s + x.get(p), 0) / ps.length : 0];
+    }).sort((p, q) => p[1] - q[1]);
+    let pos = want.map((w) => w[1]);
+    for (let i = 1; i < pos.length; i++) pos[i] = Math.max(pos[i], pos[i - 1] + W + GAPX);
+    const shift = (want.reduce((s, w) => s + w[1], 0) - pos.reduce((s, p) => s + p, 0)) / (pos.length || 1);
+    want.forEach((w, i) => x.set(w[0], pos[i] + shift));
+  }
+  const boxes = new Map(); let y = 0;
+  for (const row of rows) {
+    const hs = row.map((id) => id === "start" || id === "end" ? 34 : height(byId.get(id)));
+    const h = Math.max(...hs);
+    row.forEach((id, i) => boxes.set(id, { x: x.get(id), y, w: W, h: hs[i] }));
+    y += h + GAPY;
+  }
+  return { boxes, parents, rows };
+}
+function drawGraph() {
+  const world = $("world"), g = cur();
+  for (const el of world.querySelectorAll(".node, .term")) el.remove();
+  $("edges").innerHTML = "";
+  if (!g) {
+    $("empty").textContent = state.last && !state.last.ok ? "Fix the errors to see the graph." : "This file has no graph yet. Write `graph name(...) -> T:` to see one.";
+    return;
+  }
+  $("empty").textContent = "";
+  const { boxes, parents, rows } = layout(g);
+  state.boxes = boxes;
+  const frag = document.createDocumentFragment();
+  // start and end
+  const params = g.params.map((p) => `${p[0]}: ${p[1]}`).join(", ");
+  frag.append(term("start", boxes.get("start"), `<b>${esc(g.name)}</b>${esc(params ? "(" + params + ")" : "()")}`));
+  frag.append(term("end", boxes.get("end"), `<b>returns</b>${esc(g.ret)}`, true));
+  for (const n of g.nodes) frag.append(nodeEl(n, boxes.get(n.id)));
+  world.append(frag);
+  // edges
+  let svg = `<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--line2)"/></marker>
+    <marker id="arh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker></defs>`;
+  for (const row of rows) for (const id of row) for (const p of parents(id)) {
+    const a = boxes.get(p), b = boxes.get(id); if (!a || !b) continue;
+    const x1 = a.x + W / 2, y1 = a.y + a.h, x2 = b.x + W / 2, y2 = b.y - 2, dy = Math.max(30, (y2 - y1) / 2);
+    svg += `<path class="edge" data-from="${p}" data-to="${id}" marker-end="url(#ar)" d="M${x1},${y1} C${x1},${y1 + dy} ${x2},${y2 - dy} ${x2},${y2}"/>`;
+  }
+  $("edges").innerHTML = svg;
+  if (!state.fitted) { fit(); state.fitted = true; } else applyView();
+  drawSelection();
+}
+function term(id, box, html, end) {
+  const el = document.createElement("div");
+  el.className = "term" + (end ? " end" : "");
+  el.style.left = box.x + "px"; el.style.top = box.y + "px";
+  el.innerHTML = `<span class="chip">${html}</span>`;
+  el.onclick = (e) => { e.stopPropagation(); const g = cur(); if (g && g.line != null) gotoLine(g.line); };
+  return el;
+}
+function nodeEl(n, box) {
+  const el = document.createElement("div");
+  el.className = "node" + (n.fan_out ? " fan" : "");
+  el.dataset.id = n.id;
+  el.style.left = box.x + "px"; el.style.top = box.y + "px";
+  const eff = n.effect, label = eff === "llm" ? "model" : eff;
+  const shown = n.inner.slice(0, MAXINNER);
+  el.innerHTML = `<div class="bar b-${eff}"></div>
+    <div class="head"><span class="name" title="${esc(n.name)}">${esc(n.name)}</span>
+      ${n.fan_out ? `<span class="each" title="for each ${esc(n.fan_out)} in ${esc(n.over || "…")}: one at a time per item, all items at once">each ${esc(n.fan_out)} in ${esc(n.over || "…")}</span>` : ""}</div>
+    <div class="code" title="${esc(n.code || n.kind)}">${esc(n.code || n.kind)}</div>
+    ${n.inner.length ? `<div class="inner">${shown.map((s, i) => `<div class="step" data-i="${i}" style="padding-left:${8 + s.depth * 12}px" title="${esc(s.name + " = " + s.code)}"><span class="n">${esc(s.name)}</span><span class="c">${esc(s.code)}</span></div>`).join("")}
+      ${n.inner.length > MAXINNER ? `<div class="step"><span class="c">… ${n.inner.length - MAXINNER} more</span></div>` : ""}</div>` : ""}
+    <div class="foot"><span class="pill e-${eff}">${esc(label)}</span><span class="ty" title="${esc(n.type)}">${esc(n.type)}</span></div>`;
+  el.onclick = (e) => {
+    e.stopPropagation();
+    const st = e.target.closest(".step[data-i]");
+    if (st) { gotoLine(n.inner[+st.dataset.i].line); return; }
+    state.sel = n.id; if (n.line != null) gotoLine(n.line); drawSelection();
+  };
+  return el;
+}
+function drawSelection() {
+  for (const el of document.querySelectorAll(".node")) el.classList.toggle("sel", state.sel != null && +el.dataset.id === state.sel);
+  const line = caretLine();
+  for (const el of document.querySelectorAll(".node .step[data-i]")) {
+    const n = cur() && cur().nodes.find((m) => m.id === +el.closest(".node").dataset.id);
+    el.classList.toggle("sel", !!n && n.inner[+el.dataset.i] && n.inner[+el.dataset.i].line === line);
+  }
+  for (const p of document.querySelectorAll(".edge")) {
+    const hot = state.sel != null && (p.dataset.from === String(state.sel) || p.dataset.to === String(state.sel));
+    p.classList.toggle("hot", hot); p.setAttribute("marker-end", hot ? "url(#arh)" : "url(#ar)");
+  }
+}
+// The step whose lines hold `line`: from its line to the next step's.
+function nodeAtLine(line) {
+  const g = cur(); if (!g) return null;
+  const starts = g.nodes.filter((n) => n.line != null).map((n) => [n.line, n.id]).sort((a, b) => a[0] - b[0]);
+  if (g.line == null || line < g.line) return null;
+  const end = graphEnd(g);
+  if (line > end) return null;
+  let found = null;
+  for (const [l, id] of starts) if (l <= line) found = id;
+  return found;
+}
+function graphEnd(g) {
+  const later = state.graphs.map((h) => h.line).filter((l) => l != null && l > g.line);
+  return later.length ? Math.min(...later) - 1 : Infinity;
+}
+function hotLines() {
+  const g = cur(), hot = new Set();
+  if (!g || state.sel == null) return hot;
+  const n = g.nodes.find((m) => m.id === state.sel);
+  if (!n || n.line == null) return hot;
+  const starts = g.nodes.map((m) => m.line).filter((l) => l != null && l > n.line);
+  const stop = Math.min(starts.length ? Math.min(...starts) : Infinity, graphEnd(g) + 1, state.text.split("\n").length);
+  for (let l = n.line; l < stop; l++) hot.add(l);
+  // trailing blank lines are not the step's
+  for (let l = stop - 1; l > n.line && !state.text.split("\n")[l].trim(); l--) hot.delete(l);
+  return hot;
+}
+
+/* ---------- pan and zoom ---------- */
+const canvas = $("canvas");
+function applyView() { $("world").style.transform = `translate(${state.view.x}px, ${state.view.y}px) scale(${state.view.k})`; }
+function fit() {
+  const bs = [...state.boxes.values()]; if (!bs.length) return;
+  const minX = Math.min(...bs.map((b) => b.x)), maxX = Math.max(...bs.map((b) => b.x + b.w));
+  const minY = Math.min(...bs.map((b) => b.y)), maxY = Math.max(...bs.map((b) => b.y + b.h));
+  const cw = canvas.clientWidth, ch = canvas.clientHeight, pad = 40;
+  // Fit the width; a tall graph stays readable and scrolls (wheel, drag).
+  const k = Math.max(0.8, Math.min(1, (cw - 2 * pad) / (maxX - minX || 1), (ch - 2 * pad - 30) / (maxY - minY || 1)));
+  const k2 = Math.min(k, (cw - 2 * pad) / (maxX - minX || 1));
+  state.view = { k: Math.max(0.3, k2), x: (cw - (maxX - minX) * Math.max(0.3, k2)) / 2 - minX * Math.max(0.3, k2), y: pad - minY * Math.max(0.3, k2) };
+  applyView();
+}
+function zoom(f, cx, cy) {
+  const v = state.view, k = Math.min(2.5, Math.max(0.2, v.k * f));
+  if (cx == null) { cx = canvas.clientWidth / 2; cy = canvas.clientHeight / 2; }
+  v.x = cx - (cx - v.x) * (k / v.k); v.y = cy - (cy - v.y) * (k / v.k); v.k = k; applyView();
+}
+$("zin").onclick = (e) => { e.stopPropagation(); zoom(1.2); };
+$("zout").onclick = (e) => { e.stopPropagation(); zoom(1 / 1.2); };
+$("fit").onclick = (e) => { e.stopPropagation(); fit(); };
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  if (e.ctrlKey || e.metaKey || Math.abs(e.deltaY) > 40 && !e.shiftKey && e.deltaMode === 0 && Math.abs(e.deltaX) < 1) zoom(Math.exp(-e.deltaY / 400), e.clientX - r.left, e.clientY - r.top);
+  else { state.view.x -= e.deltaX; state.view.y -= e.deltaY; applyView(); }
+}, { passive: false });
+let drag = null;
+canvas.addEventListener("pointerdown", (e) => {
+  if (e.target.closest(".node, .term, .tools, button")) return;
+  drag = { x: e.clientX, y: e.clientY, vx: state.view.x, vy: state.view.y, moved: false };
+  canvas.setPointerCapture(e.pointerId); canvas.classList.add("panning");
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3) drag.moved = true;
+  state.view.x = drag.vx + e.clientX - drag.x; state.view.y = drag.vy + e.clientY - drag.y; applyView();
+});
+canvas.addEventListener("pointerup", () => {
+  if (drag && !drag.moved) { state.sel = null; drawSelection(); paintEditor(); }
+  drag = null; canvas.classList.remove("panning");
+});
+
+/* ---------- split ---------- */
+const divider = $("divider");
+divider.addEventListener("pointerdown", (e) => {
+  divider.setPointerCapture(e.pointerId); divider.classList.add("drag");
+  const move = (ev) => {
+    const w = $("main").clientWidth, p = Math.min(80, Math.max(25, ev.clientX / w * 100));
+    $("main").style.setProperty("--left", p + "%");
+  };
+  const up = () => { divider.classList.remove("drag"); divider.removeEventListener("pointermove", move); divider.removeEventListener("pointerup", up); };
+  divider.addEventListener("pointermove", move); divider.addEventListener("pointerup", up);
+});
+window.addEventListener("resize", () => { if (!state.fitted) fit(); });
+window.addEventListener("beforeunload", (e) => { if (state.dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+poll();
+</script>
+</body>
+</html>
