@@ -73,7 +73,7 @@ commands:
       what it calls, its effect, what it waits for), with its problems as
       you type. Run a graph from there and see each step's calls, tokens
       and answers; reopen past runs, resume them, and deliver the messages
-      a `receive` waits for. Edit there or in your editor: the page follows the files.
+      a `receive` waits for; serve it over MCP and call its tools. Edit there or in your editor: the page follows the files.
       Serves http://127.0.0.1:4180/ (or the next free port), for this
       machine only, and touches only the .clyx files inside the folder.
   worker [--fake-models] [--quiet] [--config FILE] [--every SECONDS] [--max N]

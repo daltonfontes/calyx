@@ -7,6 +7,19 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.25.0 (2026-11-19)
+
+- Calyx Studio's **MCP** tab serves the open program as an MCP server, as
+  Claude Desktop or another agent would start it (`calyx serve`, by
+  stdio, with fake or real models), and shows what that agent sees: each
+  graph as a tool, with its description, its parameters and its
+  annotations (read only, idempotency key). Call one from a form made from
+  its input schema, with an idempotency key if it writes: the answer, the
+  run it made (open it), and every JSON-RPC message both ways. A second
+  call with the same key says it is the first call's answer, from the
+  journal, and nothing ran again. Restart serves the file as saved; Stop
+  ends the server and what it started.
+
 ## 0.24.0 (2026-11-19)
 
 - A text's `{...}` may hold texts and braces of its own:

@@ -657,3 +657,70 @@ graph main(question: Text, items: List[Text]) -> Text:
     );
     assert_eq!(steps[2], ("return".into(), 14, 14));
 }
+
+#[test]
+fn serves_a_program_over_mcp_and_shows_every_message() {
+    let s = Studio::start("mcp", &[]);
+    let (status, out) = s.post("/api/mcp/start?path=sub/q.clyx", r#"{"fake": true}"#);
+    assert_eq!(status, 200, "{out}");
+    let v = json(&out);
+    let key = v["key"].as_u64().unwrap();
+    assert_eq!(v["server"]["serverInfo"]["name"], "calyx");
+    let tool = &v["tools"][0];
+    assert_eq!(tool["name"], "main");
+    assert_eq!(tool["inputSchema"]["properties"]["goal"]["type"], "string");
+    assert_eq!(
+        tool["annotations"]["readOnlyHint"], true,
+        "it only calls models"
+    );
+
+    let (status, out) = s.post(
+        &format!("/api/mcp/call?key={key}"),
+        r#"{"name": "main", "arguments": {"goal": "a trip"}}"#,
+    );
+    assert_eq!(status, 200, "{out}");
+    let reply = json(&out);
+    assert!(reply["result"]["content"][0]["text"].is_string(), "{reply}");
+    let run = reply["result"]["_meta"]["calyx/run"].as_str().unwrap();
+    assert!(
+        s.ws(&format!("sub/.calyx/runs/{run}/journal.jsonl"))
+            .is_file(),
+        "served in the file's folder"
+    );
+
+    // Every message, both ways, in order.
+    let log = json(&s.get(&format!("/api/mcp/log?key={key}")).1);
+    let methods: Vec<String> = log
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["dir"] == "out")
+        .map(|m| m["msg"]["method"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        methods,
+        [
+            "initialize",
+            "notifications/initialized",
+            "tools/list",
+            "tools/call"
+        ]
+    );
+    assert_eq!(
+        log.as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["dir"] == "in")
+            .count(),
+        3
+    );
+
+    assert_eq!(s.post(&format!("/api/mcp/stop?key={key}"), "").0, 200);
+    let (status, _) = s.post(
+        &format!("/api/mcp/call?key={key}"),
+        r#"{"name": "main", "arguments": {"goal": "x"}}"#,
+    );
+    assert_eq!(status, 502, "a stopped server says so");
+    assert_eq!(s.post("/api/mcp/call?key=99", "{}").0, 404);
+    assert_eq!(s.post("/api/mcp/start?path=../secret.clyx", "{}").0, 400);
+}
