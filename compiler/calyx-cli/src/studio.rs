@@ -1327,6 +1327,56 @@ pub(crate) fn analyze(name: &str, text: &str) -> Value {
             .map(|ps| ps.iter().map(|p| src.slice(p.ty.span).to_owned()).collect())
             .unwrap_or_default()
     };
+    // Names for completion, from the syntax alone, so they are there
+    // while the code is being typed and does not check yet.
+    let ty_text = |t: &calyx_syntax::ast::TypeExpr| src.slice(t.span).to_owned();
+    let outline = json!({
+        "decls": ast.decls.iter().map(|d| {
+            let kind = match d {
+                Decl::Model(_) => "model",
+                Decl::Tool(_) => "tool",
+                Decl::Type(t) if t.message => "message",
+                Decl::Type(_) => "type",
+                Decl::Prompt(_) => "prompt",
+                Decl::Graph(_) => "graph",
+                Decl::Entity(_) => "entity",
+                Decl::Def(_) => "def",
+                Decl::Router(_) => "router",
+                Decl::Policy(_) => "policy",
+                Decl::Skill(_) => "skill",
+            };
+            json!({"name": d.name().name, "kind": kind})
+        }).collect::<Vec<_>>(),
+        "types": ast.decls.iter().filter_map(|d| match d {
+            Decl::Type(t) => Some(match &t.ty.kind {
+                calyx_syntax::ast::TypeKind::Record(fields) => json!({
+                    "name": t.name.name,
+                    "fields": fields.iter().map(|f| (f.name.name.clone(), ty_text(&f.ty))).collect::<Vec<_>>(),
+                }),
+                calyx_syntax::ast::TypeKind::Variants(vs) => json!({
+                    "name": t.name.name,
+                    "variants": vs.iter().map(|v| v.name.name.clone()).collect::<Vec<_>>(),
+                }),
+                _ => json!({"name": t.name.name}),
+            }),
+            _ => None,
+        }).collect::<Vec<_>>(),
+        "graphs": ast.decls.iter().filter_map(|d| match d {
+            Decl::Graph(g) => Some(json!({
+                "name": g.name.name,
+                "line": line(g.name.span.start),
+                "end_line": line(g.span.end.saturating_sub(1).max(g.name.span.start)),
+                "params": g.params.iter().map(|p| (p.name.name.clone(), ty_text(&p.ty))).collect::<Vec<_>>(),
+            })),
+            Decl::Def(f) => Some(json!({
+                "name": f.name.name,
+                "line": line(f.name.span.start),
+                "end_line": line(f.span.end.saturating_sub(1).max(f.name.span.start)),
+                "params": f.params.iter().map(|p| (p.name.name.clone(), ty_text(&p.ty))).collect::<Vec<_>>(),
+            })),
+            _ => None,
+        }).collect::<Vec<_>>(),
+    });
     // What the program declares, for the page's forms.
     let decls = if ok {
         let ir = &report.ir;
@@ -1343,6 +1393,7 @@ pub(crate) fn analyze(name: &str, text: &str) -> Value {
         "hash": hash(text),
         "messages": messages,
         "decls": decls,
+        "outline": outline,
         "text": text,
         "ok": ok,
         "diagnostics": diagnostics,

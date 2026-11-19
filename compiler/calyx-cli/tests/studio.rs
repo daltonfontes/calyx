@@ -724,3 +724,69 @@ fn serves_a_program_over_mcp_and_shows_every_message() {
     assert_eq!(s.post("/api/mcp/call?key=99", "{}").0, 404);
     assert_eq!(s.post("/api/mcp/start?path=../secret.clyx", "{}").0, 400);
 }
+
+#[test]
+fn the_page_gets_names_for_completion_even_while_the_code_does_not_check() {
+    let s = Studio::start("outline", &[]);
+    let text = r#"model gemini = "gemini-3.5-flash-lite"
+
+type Order:
+    id: Text
+    total: Float
+
+type Status = Open | Done
+
+def big(o: Order) -> Bool:
+    return o.total > 100
+
+graph main(order: Order, n: Nat) -> Text:
+    x = order.
+"#;
+    let (status, body) = s.post("/api/check?path=p.clyx", text);
+    assert_eq!(status, 200);
+    let p = json(&body);
+    assert_eq!(p["ok"], false, "the code does not check");
+    let o = &p["outline"];
+    let decls: Vec<(String, String)> = o["decls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| {
+            (
+                d["name"].as_str().unwrap().into(),
+                d["kind"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    assert!(decls.contains(&("gemini".into(), "model".into())));
+    assert!(decls.contains(&("big".into(), "def".into())));
+    assert!(decls.contains(&("main".into(), "graph".into())));
+    let order = o["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "Order")
+        .unwrap();
+    assert_eq!(
+        order["fields"],
+        serde_json::json!([["id", "Text"], ["total", "Float"]])
+    );
+    let st = o["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "Status")
+        .unwrap();
+    assert_eq!(st["variants"], serde_json::json!(["Open", "Done"]));
+    let main = o["graphs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["name"] == "main")
+        .unwrap();
+    assert_eq!(
+        main["params"],
+        serde_json::json!([["order", "Order"], ["n", "Nat"]])
+    );
+    assert_eq!(main["line"], 11);
+}

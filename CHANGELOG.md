@@ -7,6 +7,17 @@ the binary of that version, which the installers keep (see
 [docs/operacao.md](docs/operacao.md), section 4). Every release, with its
 binaries, is on the [releases page](https://github.com/daltonfontes/calyx/releases).
 
+## 0.26.0 (2026-11-19)
+
+- Calyx Studio's editor completes names as you type: keywords, built-ins,
+  what the file declares (models, tools, prompts, types and their
+  variants, graphs, `def`s), and the parameters and steps of the graph the
+  caret is in; after `order.`, the fields of `order`'s type, with their
+  types. Inside a text it completes only in `{...}`, and never in a
+  comment. Arrows choose, Enter or Tab take, Escape closes, Ctrl+Space
+  asks. It works from the syntax, so it keeps working while the code does
+  not check yet.
+
 ## 0.25.0 (2026-11-19)
 
 - Calyx Studio's **MCP** tab serves the open program as an MCP server, as
